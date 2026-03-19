@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>@solquicks</title>
+  <meta name="description" content="Spaces Host · Streamer · Solflare Team · Fox" />
+  <meta property="og:title" content="@solquicks" />
+  <meta property="og:description" content="Spaces Host · Streamer · Solflare Team · Fox" />
+  <meta property="og:image" content="./avatar.jpg" />
+  <link rel="icon" href="./avatar.jpg" type="image/jpeg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --yellow: #F5E642;
+      --black: #1a1a1a;
+      --purple: #9945FF;
+      --white: #ffffff;
+      --gray: rgba(26,26,26,0.5);
+    }
+
+    html, body {
+      min-height: 100%;
+      background: var(--yellow);
+      font-family: 'DM Sans', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 48px;
+    }
+
+    /* ── TOP BAR ── */
+    .topbar {
+      width: 100%;
+      max-width: 500px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 20px 0;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--yellow);
+    }
+
+    .tabs { display: flex; gap: 6px; }
+
+    .tab {
+      background: rgba(0,0,0,0.1);
+      border: none;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--black);
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .tab:hover { background: rgba(0,0,0,0.15); }
+    .tab.active { background: var(--black); color: var(--yellow); }
+
+    .tab.locked {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .tab.moon-unlocked {
+      background: var(--purple);
+      color: var(--white);
+      opacity: 1;
+      pointer-events: all;
+      cursor: pointer;
+      animation: pulseTab 2s ease-in-out infinite;
+    }
+
+    @keyframes pulseTab {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(153,69,255,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(153,69,255,0); }
+    }
+
+    .wallet-btn {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--black);
+      color: var(--yellow);
+      border: none;
+      border-radius: 20px;
+      padding: 9px 16px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+      max-width: 160px;
+      overflow: hidden;
+    }
+
+    .wallet-btn.connected { background: var(--purple); color: var(--white); }
+
+    .wallet-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--yellow);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+
+    .wallet-btn.connected .wallet-dot { background: #4ade80; }
+
+    .wallet-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── PAGES ── */
+    .page { display: none; width: 100%; max-width: 500px; padding: 0 20px; }
+    .page.active { display: block; }
+
+    /* ── PROFILE ── */
+    .profile { text-align: center; padding: 28px 0 16px; }
+
+    .avatar-ring {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 3px solid var(--black);
+      overflow: hidden;
+      margin: 0 auto 16px;
+      background: var(--black);
+      animation: fadeDown 0.5s ease both;
+    }
+
+    .avatar-ring img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .handle {
+      font-family: 'Syne', sans-serif;
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--black);
+      margin-bottom: 7px;
+      animation: fadeDown 0.5s 0.1s ease both;
+    }
+
+    .bio {
+      font-size: 13px;
+      color: var(--black);
+      opacity: 0.65;
+      line-height: 1.6;
+      margin-bottom: 18px;
+      animation: fadeDown 0.5s 0.15s ease both;
+    }
+
+    .contacts {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 4px;
+      animation: fadeDown 0.5s 0.2s ease both;
+    }
+
+    .contact-btn {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--black);
+      color: var(--yellow);
+      border: none;
+      border-radius: 20px;
+      padding: 9px 16px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s;
+    }
+
+    .contact-btn:hover { transform: translateY(-2px); }
+
+    /* ── LINKS ── */
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(26,26,26,0.4);
+      text-align: center;
+      margin: 22px 0 12px;
+    }
+
+    .links { display: flex; flex-direction: column; gap: 10px; }
+
+    .link-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--black);
+      color: var(--yellow);
+      border-radius: 16px;
+      padding: 14px 18px;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 600;
+      transition: transform 0.15s, background 0.15s;
+      animation: fadeUp 0.4s ease both;
+    }
+
+    .link-item:hover { transform: translateY(-3px); background: #2d2d2d; }
+
+    .link-item:nth-child(1) { animation-delay: 0.05s; }
+    .link-item:nth-child(2) { animation-delay: 0.1s; }
+    .link-item:nth-child(3) { animation-delay: 0.15s; }
+    .link-item:nth-child(4) { animation-delay: 0.2s; }
+    .link-item:nth-child(5) { animation-delay: 0.25s; }
+
+    .link-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ── SHOP ── */
+    .shop-header { text-align: center; padding: 28px 0 16px; }
+    .page-title { font-family: 'Syne', sans-serif; font-size: 24px; font-weight: 800; color: var(--black); margin-bottom: 6px; }
+    .page-sub { font-size: 13px; color: var(--black); opacity: 0.6; }
+
+    .product-card {
+      background: var(--black);
+      border-radius: 18px;
+      padding: 20px;
+      color: var(--yellow);
+      margin-top: 16px;
+    }
+
+    .product-img {
+      width: 100%;
+      height: 180px;
+      background: rgba(245,230,66,0.08);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: rgba(245,230,66,0.3);
+      font-weight: 500;
+      border: 1px dashed rgba(245,230,66,0.2);
+    }
+
+    .product-name { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .product-desc { font-size: 13px; opacity: 0.55; margin-bottom: 16px; line-height: 1.6; }
+    .product-footer { display: flex; align-items: center; justify-content: space-between; }
+    .price { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800; }
+
+    .buy-btn {
+      background: var(--yellow);
+      color: var(--black);
+      border: none;
+      border-radius: 20px;
+      padding: 10px 22px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+
+    .buy-btn:hover { transform: scale(1.04); }
+
+    .shop-note {
+      text-align: center;
+      margin-top: 16px;
+      font-size: 12px;
+      color: rgba(26,26,26,0.4);
+    }
+
+    /* ── MOON RANGERS LOCKED ── */
+    .locked-screen {
+      text-align: center;
+      padding: 70px 20px;
+    }
+
+    .lock-circle {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--black);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 22px;
+      animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    .locked-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--black);
+      margin-bottom: 12px;
+    }
+
+    .locked-sub {
+      font-size: 14px;
+      color: rgba(26,26,26,0.6);
+      line-height: 1.7;
+      margin-bottom: 28px;
+    }
+
+    .connect-cta {
+      background: var(--purple);
+      color: var(--white);
+      border: none;
+      border-radius: 20px;
+      padding: 13px 30px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+
+    .connect-cta:hover { transform: scale(1.04); }
+
+    /* ── MOON RANGERS UNLOCKED ── */
+    .moon-header { text-align: center; padding: 28px 0 16px; }
+    .moon-title { font-family: 'Syne', sans-serif; font-size: 24px; font-weight: 800; color: var(--black); margin-bottom: 6px; }
+    .moon-sub { font-size: 13px; color: rgba(26,26,26,0.6); margin-bottom: 8px; }
+
+    .wallet-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--purple);
+      background: rgba(153,69,255,0.12);
+      padding: 5px 12px;
+      border-radius: 12px;
+      margin-top: 4px;
+    }
+
+    .divider {
+      width: 36px;
+      height: 3px;
+      background: var(--black);
+      border-radius: 2px;
+      margin: 18px auto 4px;
+    }
+
+    .moon-link {
+      background: var(--purple);
+      color: var(--white);
+    }
+
+    .moon-link:hover { background: #8534ee; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── FOOTER ── */
+    .footer {
+      margin-top: 36px;
+      font-size: 11px;
+      color: rgba(26,26,26,0.35);
+      text-align: center;
+      font-weight: 500;
+    }
+
+    /* ── MOBILE ── */
+    @media (max-width: 420px) {
+      .tab { padding: 7px 11px; font-size: 12px; }
+      .wallet-btn { padding: 8px 12px; font-size: 11px; }
+      .handle { font-size: 21px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('links')">Links</button>
+      <button class="tab" onclick="switchTab('shop')">Shop</button>
+      <button class="tab locked" id="moon-tab" onclick="tryMoonTab()">Moon Rangers</button>
+    </div>
+    <button class="wallet-btn" id="walletBtn" onclick="toggleWallet()">
+      <div class="wallet-dot" id="walletDot"></div>
+      <span class="wallet-label" id="walletLabel">Connect</span>
+    </button>
+  </div>
+
+  <!-- LINKS PAGE -->
+  <div class="page active" id="page-links">
+    <div class="profile">
+      <div class="avatar-ring">
+        <img src="./avatar.jpg" alt="solquicks" />
+      </div>
+      <div class="handle">@solquicks</div>
+      <div class="bio">Spaces Host · Streamer · Solflare Team · Fox</div>
+      <div class="contacts">
+        <a class="contact-btn" href="https://t.me/solquicks" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.32 14.617l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.828.942z"/></svg>
+          Telegram
+        </a>
+        <a class="contact-btn" href="mailto:solquicks@gmail.com">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+          Email
+        </a>
+      </div>
+    </div>
+
+    <div class="section-label">Find me on</div>
+
+    <div class="links">
+      <a class="link-item" href="https://x.com/solquicks" target="_blank" rel="noopener">
+        <div class="link-icon" style="background:#F5E642;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.26 5.632 5.905-5.632zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        </div>
+        X (Twitter)
+      </a>
+      <a class="link-item" href="https://www.youtube.com/@solquicks" target="_blank" rel="noopener">
+        <div class="link-icon" style="background:#FF0000;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="white"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+        </div>
+        YouTube Channel
+      </a>
+      <a class="link-item" href="https://www.tiktok.com/@solquicks" target="_blank" rel="noopener">
+        <div class="link-icon" style="background:#ffffff;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.18 8.18 0 0 0 4.78 1.52V6.76a4.85 4.85 0 0 1-1.01-.07z"/></svg>
+        </div>
+        TikTok
+      </a>
+      <a class="link-item" href="https://www.twitch.tv/solquicks" target="_blank" rel="noopener">
+        <div class="link-icon" style="background:#9146FF;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="white"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+        </div>
+        Twitch Channel
+      </a>
+      <a class="link-item" href="https://kick.com/solquicks" target="_blank" rel="noopener">
+        <div class="link-icon" style="background:#53FC18;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M5 3H3v18h2v-6h2l4 6h3l-4-6 4-6h-3L7 15H5V3z"/><path d="M19 3h-5v6h2V5h3V3zM16 10h-2v4h2v-4zM19 16h-3v-3h-2v5h5v-2z"/></svg>
+        </div>
+        Kick Channel
+      </a>
+    </div>
+
+    <div class="footer">solquicks.com</div>
+  </div>
+
+  <!-- SHOP PAGE -->
+  <div class="page" id="page-shop">
+    <div class="shop-header">
+      <div class="page-title">Shop</div>
+      <div class="page-sub">Official Solquicks merch & digital goods</div>
+    </div>
+    <div class="product-card">
+      <div class="product-img">[ Product image coming soon ]</div>
+      <div class="product-name">Solquicks Item #1</div>
+      <div class="product-desc">Product description coming soon. Check back for official Solquicks merch and exclusive digital items.</div>
+      <div class="product-footer">
+        <div class="price">TBA</div>
+        <button class="buy-btn">Coming Soon</button>
+      </div>
+    </div>
+    <div class="shop-note">store.fun integration · more items coming soon</div>
+    <div class="footer" style="margin-top:24px;">solquicks.com</div>
+  </div>
+
+  <!-- MOON RANGERS PAGE -->
+  <div class="page" id="page-moon">
+    <div id="moon-locked-view">
+      <div class="locked-screen">
+        <div class="lock-circle">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#F5E642" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <div class="locked-title">Moon Rangers</div>
+        <div class="locked-sub">This area is exclusive to holders.<br/>Connect your Solflare wallet to unlock.</div>
+        <button class="connect-cta" onclick="toggleWallet()">Connect Solflare Wallet</button>
+      </div>
+    </div>
+    <div id="moon-unlocked-view" style="display:none;">
+      <div class="moon-header">
+        <div class="moon-title">Moon Rangers</div>
+        <div class="moon-sub">Welcome, Ranger</div>
+        <div class="wallet-badge" id="moonWalletBadge">◎ connecting...</div>
+        <div class="divider"></div>
+      </div>
+      <div class="section-label">Rangers Hub</div>
+      <div class="links">
+        <a class="link-item moon-link" href="#" target="_blank" rel="noopener">
+          <div class="link-icon" style="background:rgba(255,255,255,0.15);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.26 5.632 5.905-5.632z"/></svg>
+          </div>
+          Moon Rangers X
+        </a>
+        <a class="link-item moon-link" href="#" target="_blank" rel="noopener">
+          <div class="link-icon" style="background:rgba(255,255,255,0.15);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+          </div>
+          Staking Site
+        </a>
+        <a class="link-item moon-link" href="#" target="_blank" rel="noopener">
+          <div class="link-icon" style="background:rgba(255,255,255,0.15);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          Mission Site
+        </a>
+      </div>
+      <div class="footer" style="margin-top:32px;">solquicks.com · Moon Rangers</div>
+    </div>
+  </div>
+
+  <script>
+    let walletConnected = false;
+    let currentTab = 'links';
+
+    function switchTab(tab) {
+      if (tab === 'moon' && !walletConnected) return;
+      currentTab = tab;
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('page-' + tab).classList.add('active');
+      const tabOrder = ['links', 'shop', 'moon'];
+      document.querySelectorAll('.tab')[tabOrder.indexOf(tab)].classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function tryMoonTab() {
+      if (!walletConnected) {
+        const btn = document.getElementById('walletBtn');
+        btn.style.transform = 'scale(1.1)';
+        setTimeout(() => btn.style.transform = '', 300);
+      } else {
+        switchTab('moon');
+      }
+    }
+
+    function toggleWallet() {
+      walletConnected = !walletConnected;
+      const btn = document.getElementById('walletBtn');
+      const label = document.getElementById('walletLabel');
+      const moonTab = document.getElementById('moon-tab');
+      const mockAddr = '7xKp...R3mQ';
+
+      if (walletConnected) {
+        btn.classList.add('connected');
+        label.textContent = mockAddr;
+        moonTab.classList.remove('locked');
+        moonTab.classList.add('moon-unlocked');
+        document.getElementById('moon-locked-view').style.display = 'none';
+        document.getElementById('moon-unlocked-view').style.display = 'block';
+        document.getElementById('moonWalletBadge').textContent = '◎ ' + mockAddr;
+        switchTab('moon');
+      } else {
+        btn.classList.remove('connected');
+        label.textContent = 'Connect';
+        moonTab.classList.add('locked');
+        moonTab.classList.remove('moon-unlocked');
+        document.getElementById('moon-locked-view').style.display = 'block';
+        document.getElementById('moon-unlocked-view').style.display = 'none';
+        if (currentTab === 'moon') switchTab('links');
+      }
+    }
+  </script>
+</body>
+</html>
