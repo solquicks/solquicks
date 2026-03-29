@@ -682,7 +682,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.247l-2.03 9.57c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L6.375 14.36l-2.95-.924c-.642-.204-.655-.642.136-.953l11.527-4.444c.535-.194 1.003.131.474 1.208z"/></svg>
           Telegram
         </a>
-        <a href="/cdn-cgi/l/email-protection#d9aab6b5a8acb0bab2aa99beb4b8b0b5f7bab6b4" class="contact-btn">
+        <a href="javascript:void(0)" onclick="window.location='mai'+'lto:sol'+'quicks@gma'+'il.com'" class="contact-btn">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
           Email
         </a>
@@ -865,7 +865,7 @@
 
   </div>
 
-  <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  <script>
     function switchTab(tab, btn) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -878,4 +878,11 @@
         window.solflare.connect().then(() => {
           const key = window.solflare.publicKey.toString();
           alert('Connected: ' + key.slice(0,4) + '...' + key.slice(-4));
-       
+               }).catch(err => console.error(err));
+      } else {
+        window.open('https://solflare.com', '_blank');
+      }
+    }
+  </script>
+</body>
+</html>
