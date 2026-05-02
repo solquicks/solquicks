@@ -640,6 +640,11 @@
     @media (max-width: 360px) {
       .tab { font-size: 9px; padding: 6px 7px; }
     }
+  
+    /* ── MEDIA TAB ── */
+    .media-sub { display: none; }
+    .media-sub.active { display: block; }
+    .media-type-toggle { margin-bottom: 18px; }
   </style>
 </head>
 <body>
@@ -656,16 +661,12 @@
         <button class="tab active" onclick="switchTab('links',this)">Contact</button>
         <button class="tab" onclick="switchTab('businesses',this)">Business</button>
         <button class="tab" onclick="switchTab('store',this)">Store</button>
-        <button class="tab" onclick="switchTab('streams',this)">Streams</button>
-        <button class="tab" onclick="switchTab('spaces',this)">Spaces</button>
+        <button class="tab" onclick="switchTab('media',this)">Media</button>
         <button class="tab" onclick="switchTab('moon',this)">Moon Rangers</button>
       </div>
       <div class="live-badge" id="live-badge">
         <span class="live-dot"></span>LIVE
       </div>
-      <button class="connect-btn" onclick="connectWallet()">
-        <span class="cdot-pulse"></span>Connect
-      </button>
     </nav>
 
     <!-- PROFILE -->
@@ -780,9 +781,24 @@
     </div>
 
     <!-- STREAMS PANEL -->
-    <div id="panel-streams" class="panel">
-      <p class="section-label">Solflare Live — All Episodes</p>
-      <div class="stream-list">
+    <div id="panel-media" class="panel">
+      <p class="section-label">Media</p>
+      <div class="series-toggle media-type-toggle">
+        <button class="series-btn active" onclick="switchMediaType('streams',this)">Streams</button>
+        <button class="series-btn" onclick="switchMediaType('spaces',this)">Spaces</button>
+      </div>
+
+      <!-- STREAMS SUB-PANEL -->
+      <div id="media-streams" class="media-sub active">
+        <div class="series-toggle stream-series-toggle">
+          <button class="series-btn active" onclick="switchStreamSeries('solflare',this)">Solflare Live</button>
+          <button class="series-btn" onclick="switchStreamSeries('moonshow',this)">The Moon Show</button>
+        </div>
+
+        <!-- Solflare Live episodes -->
+        <div id="stream-solflare" class="stream-series-panel">
+          <div class="stream-list">
+
         <a href="https://x.com/i/broadcasts/1PlJQMbnrenJE" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#1</div><div class="stream-info"><div class="stream-title">Portals</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://x.com/i/broadcasts/1YqKDZkmQDzJV" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#2</div><div class="stream-info"><div class="stream-title">Moonwalk Fitness</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://x.com/i/broadcasts/1YpKkBlPLoYxj" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#3</div><div class="stream-info"><div class="stream-title">Sanctum & Sol Brothers</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
@@ -820,18 +836,28 @@
         <a href="https://x.com/i/broadcasts/1rmxPveMkWXGN" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#36</div><div class="stream-info"><div class="stream-title">Boba & Eitherway</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://x.com/i/broadcasts/1ZkKzZrjXwrKv" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#37</div><div class="stream-info"><div class="stream-title">Nomu & Pandu Labs</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://x.com/i/broadcasts/1lDxLBrPnYqGm" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#38</div><div class="stream-info"><div class="stream-title">Maky, NoahAI, Callahan & GMTrade</div><div class="stream-meta">Solflare Live · X</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
-      </div>
-      <p class="streams-cta">Watch live every week on <a href="https://x.com/solflare" target="_blank">@solflare</a></p>
-    </div>
+      
+        
+          </div>
+          <p class="streams-cta">Watch live every week on <a href="https://x.com/solflare" target="_blank">@solflare</a></p>
+        </div>
 
-    <!-- SPACES PANEL -->
-    <div id="panel-spaces" class="panel">
-      <p class="section-label">Spaces</p>
-      <div class="series-toggle">
-        <button class="series-btn active" onclick="switchSeries('hs',this)">Hold Strong</button>
-        <button class="series-btn" onclick="switchSeries('ff',this)">Famous Foxes</button>
-      </div>
-      <div id="series-hs" class="stream-list">
+        <!-- The Moon Show episodes (placeholder) -->
+        <div id="stream-moonshow" class="stream-series-panel" style="display:none">
+          <div class="stream-list">
+            <div class="stream-card" style="opacity:0.5;cursor:default"><div class="stream-num">—</div><div class="stream-info"><div class="stream-title">Episodes coming soon</div><div class="stream-meta">The Moon Show · @solquicks</div></div></div>
+          </div>
+        </div>
+      </div></div>
+
+      <!-- SPACES SUB-PANEL -->
+      <div id="media-spaces" class="media-sub">
+        <div class="series-toggle">
+          <button class="series-btn active" onclick="switchSeries('hs',this)">Hold Strong</button>
+          <button class="series-btn" onclick="switchSeries('ff',this)">Famous Foxes</button>
+        </div>
+        <div id="series-hs" class="stream-list">
+
         <a href="https://x.com/i/spaces/1YqKDkekznAxV" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#1</div><div class="stream-info"><div class="stream-title">MonkeDAO / SMB</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://twitter.com/i/spaces/1yoKMyWrEbRKQ" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#2</div><div class="stream-info"><div class="stream-title">Claynosaurz</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://twitter.com/i/spaces/1vOxwrMpwERJB" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#3</div><div class="stream-info"><div class="stream-title">Portals / ScumSol</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
@@ -851,13 +877,14 @@
         <a href="https://twitter.com/i/spaces/1lDGLzgPAnbxm" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#25</div><div class="stream-info"><div class="stream-title">DeFi Tuna</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://twitter.com/i/spaces/1OyJALgjXPwGb" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#26</div><div class="stream-info"><div class="stream-title">AllDomains</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
         <a href="https://twitter.com/i/spaces/1mnxegaawjQGX" class="stream-card" target="_blank" rel="noopener"><div class="stream-num">#28</div><div class="stream-info"><div class="stream-title">Metaplex</div><div class="stream-meta">Hold Strong · Solflare</div></div><svg class="stream-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg></a>
-      </div>
-      <div id="series-ff" class="stream-list" style="display:none">
+      
+        </div>
+        <div id="series-ff" class="stream-list" style="display:none">
+
         <div class="stream-card" style="opacity:0.5;cursor:default"><div class="stream-num">—</div><div class="stream-info"><div class="stream-title">Famous Foxes Spaces</div><div class="stream-meta">Coming soon</div></div></div>
       </div>
     </div>
 
-    <!-- MOON PANEL -->
     <div id="panel-moon" class="panel">
       <div class="moon-hero">
         <div class="moon-emoji">🌕</div>
@@ -1060,6 +1087,22 @@
     }
     checkLiveStatus();
     setInterval(checkLiveStatus, 180000);
+  
+
+    function switchStreamSeries(series, btn) {
+      document.querySelectorAll('.stream-series-toggle .series-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.stream-series-panel').forEach(el => el.style.display = 'none');
+      document.getElementById('stream-' + series).style.display = 'block';
+    }
+
+    function switchMediaType(type, btn) {
+      document.querySelectorAll('.media-type-toggle .series-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.media-sub').forEach(el => el.classList.remove('active'));
+      document.getElementById('media-' + type).classList.add('active');
+    }
+
   </script>
 </body>
 </html>
