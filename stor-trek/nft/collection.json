@@ -1,0 +1,10 @@
+{
+  "name": "Stor Trek Genesis",
+  "symbol": "STORTREK",
+  "description": "The Stor Trek Genesis collection — soulbound founding member collectibles for the Stor Trek storage network, powered by Solana.",
+  "image": "https://solquicks.com/stor-trek/nft/founder.png",
+  "properties": {
+    "files": [{ "uri": "https://solquicks.com/stor-trek/nft/founder.png", "type": "image/png" }],
+    "category": "image"
+  }
+}

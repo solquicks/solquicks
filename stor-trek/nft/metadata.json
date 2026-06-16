@@ -1,0 +1,17 @@
+{
+  "name": "Stor Trek Founder",
+  "symbol": "STORTREK",
+  "description": "The first item in your Stor Trek storage dashboard. This soulbound collectible marks you as a founding member of the Stor Trek network — Storage of the Future, powered by Solana. Non-transferable.",
+  "image": "https://solquicks.com/stor-trek/nft/founder.png",
+  "attributes": [
+    { "trait_type": "Tier", "value": "Founder" },
+    { "trait_type": "Transferable", "value": "No (Soulbound)" },
+    { "trait_type": "Network", "value": "Solana Devnet" },
+    { "trait_type": "Collection", "value": "Stor Trek Genesis" }
+  ],
+  "properties": {
+    "files": [{ "uri": "https://solquicks.com/stor-trek/nft/founder.png", "type": "image/png" }],
+    "category": "image"
+  },
+  "seller_fee_basis_points": 0
+}
