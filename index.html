@@ -99,6 +99,7 @@
       overflow-x: auto;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      scroll-padding: 0 10px;
     }
     .tabs::-webkit-scrollbar { display: none; }
 
@@ -1117,8 +1118,8 @@
         </div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">🌕</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Stake a Moon Ranger</div><div class="lb-earn-sub">Every day it stays staked</div></div>
-          <div class="lb-earn-pts">+100</div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Stake your Moon Rangers</div><div class="lb-earn-sub">Every day, for each Ranger you hold</div></div>
+          <div class="lb-earn-pts">+100 ea</div>
         </div>
         <div class="lb-earn-row soon">
           <div class="lb-earn-icon">🎮</div>
@@ -1191,7 +1192,7 @@
         <div class="moon-stake-card" id="moon-stake-card" hidden>
           <div class="moon-stake-status" id="moon-stake-status">Not staked yet</div>
           <div class="moon-stake-earned" id="moon-stake-earned">0</div>
-          <div class="moon-stake-rate">points earned · 100 / day</div>
+          <div class="moon-stake-rate" id="moon-stake-rate">100 / day, per Ranger</div>
           <button class="moon-btn" id="moon-stake-btn" onclick="toggleStake()" style="margin-top:16px">Stake Moon Ranger</button>
           <div id="moon-claim-wrap" hidden>
             <button class="moon-unstake-btn" onclick="claimStakePoints()">Claim points</button>
@@ -1275,6 +1276,8 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
+      // keep the active tab fully visible when the row scrolls
+      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (e) {}
       const panel = document.getElementById('panel-' + tab);
       // Reset animation so it replays on every tab switch
       panel.style.animation = 'none';
@@ -1482,6 +1485,7 @@
       renderStaking();
       try {
         rangerCount = await checkRangers(Wallet.pubkey);
+        settleStakeCount(rangerCount);
       } catch (e) {
         console.error('Ranger check failed:', e);
         rangerCount = -1;
@@ -1741,16 +1745,44 @@
     // ── MOON RANGER STAKING ──
     function stakeKey() { return 'moonstake_' + (Wallet.pubkey || 'anon'); }
 
+    const EMPTY_STAKE = { staked: false, since: 0, count: 0, banked: 0 };
+
     function loadStake() {
-      try { return JSON.parse(localStorage.getItem(stakeKey())) || { staked: false, since: 0, claimed: 0 }; }
-      catch (e) { return { staked: false, since: 0, claimed: 0 }; }
+      let s;
+      try { s = JSON.parse(localStorage.getItem(stakeKey())); } catch (e) { s = null; }
+      if (!s) return Object.assign({}, EMPTY_STAKE);
+      // migrate the old single-Ranger record (claimed counter, no count/banked)
+      if (s.claimed !== undefined && s.banked === undefined) {
+        const earned = s.staked && s.since
+          ? Math.max(0, Math.floor(((Date.now() - s.since) / DAY_MS) * STAKE_RATE_PER_DAY) - s.claimed)
+          : 0;
+        s = { staked: !!s.staked, since: s.staked ? Date.now() : 0, count: 1, banked: earned };
+      }
+      if (s.count === undefined) s.count = 1;
+      if (s.banked === undefined) s.banked = 0;
+      return s;
     }
     function saveStake(s) { try { localStorage.setItem(stakeKey(), JSON.stringify(s)); } catch (e) {} }
 
+    // 100 points per day, per Ranger held
+    function stakeRate(s) { return STAKE_RATE_PER_DAY * (s.count || 0); }
+
     function stakeAccrued(s) {
-      if (!s.staked || !s.since) return 0;
-      const elapsed = Date.now() - s.since;
-      return Math.max(0, Math.floor((elapsed / DAY_MS) * STAKE_RATE_PER_DAY) - s.claimed);
+      if (!s.staked) return s.banked || 0;
+      const elapsed = Date.now() - (s.since || Date.now());
+      return (s.banked || 0) + Math.max(0, Math.floor((elapsed / DAY_MS) * stakeRate(s)));
+    }
+
+    // Holdings changed mid-stake: bank what was earned at the old rate, then
+    // continue at the new one. Prevents both retroactive inflation and
+    // earning on Rangers that have since been sold.
+    function settleStakeCount(newCount) {
+      const s = loadStake();
+      if (!s.staked || s.count === newCount) return;
+      s.banked = stakeAccrued(s);
+      s.since = Date.now();
+      s.count = newCount;
+      saveStake(s);
     }
 
     function toggleStake() {
@@ -1765,9 +1797,11 @@
       if (s.staked) {
         const pending = stakeAccrued(s);
         if (pending > 0 && !confirm('You have ' + pending + ' unclaimed points. Unstake anyway?\n\n(Claim them first to keep them.)')) return;
-        saveStake({ staked: false, since: 0, claimed: 0 });
+        saveStake(Object.assign({}, EMPTY_STAKE));
       } else {
-        saveStake({ staked: true, since: Date.now(), claimed: 0 });
+        // -2 means checks aren't configured yet; treat as a single Ranger
+        const count = rangerCount > 0 ? rangerCount : 1;
+        saveStake({ staked: true, since: Date.now(), count: count, banked: 0 });
       }
       renderStaking();
     }
@@ -1775,8 +1809,9 @@
     function claimStakePoints() {
       const s = loadStake();
       const pending = stakeAccrued(s);
-      if (pending <= 0) { alert('Nothing to claim yet — points accrue at 100 per day.'); return; }
-      s.claimed += pending;
+      if (pending <= 0) { alert('Nothing to claim yet — points accrue at 100 per day, per Ranger.'); return; }
+      s.banked = 0;
+      s.since = Date.now();
       saveStake(s);
       FoxPoints.awardCustom('stake', pending);
       renderStaking();
@@ -1792,7 +1827,7 @@
       if (!Wallet.pubkey) {
         card.hidden = true;
         if (connectBtn) connectBtn.hidden = false;
-        if (sub) sub.innerHTML = 'Connect your wallet, stake your Moon Ranger, and earn <strong>100 Fox Points every day</strong> it stays staked.';
+        if (sub) sub.innerHTML = 'Connect your wallet and stake your Moon Rangers — <strong>100 Fox Points a day, for every Ranger you hold</strong>.';
         return;
       }
 
@@ -1834,13 +1869,22 @@
         btn.style.cursor = '';
       }
 
+      const rateEl = document.getElementById('moon-stake-rate');
+
       if (s.staked) {
         const days = (Date.now() - s.since) / DAY_MS;
-        status.textContent = 'Staked for ' + (days < 1 ? Math.floor(days * 24) + 'h' : days.toFixed(1) + ' days');
+        status.textContent = s.count + ' Ranger' + (s.count > 1 ? 's' : '') + ' staked · ' +
+          (days < 1 ? Math.floor(days * 24) + 'h' : days.toFixed(1) + ' days');
         earned.textContent = pending.toLocaleString();
+        if (rateEl) rateEl.textContent = 'points earned · ' + stakeRate(s).toLocaleString() + ' / day';
         btn.textContent = 'Unstake';
         claimWrap.hidden = pending <= 0;
       } else {
+        if (rateEl) {
+          rateEl.textContent = rangerCount > 0
+            ? 'would earn ' + (STAKE_RATE_PER_DAY * rangerCount).toLocaleString() + ' / day'
+            : '100 / day, per Ranger';
+        }
         status.textContent = rangerCount > 0 ? 'Ready to stake' :
           (rangerCount === null ? 'Checking wallet…' : 'Not staked yet');
 
