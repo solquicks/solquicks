@@ -14,7 +14,7 @@
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com; frame-ancestors 'self';"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://*.workers.dev; frame-ancestors 'self';"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
@@ -1448,13 +1448,11 @@
     const MOON_RANGERS_COLLECTION = '5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz';
     const STAKE_RATE_PER_DAY = 100;
     const DAY_MS = 86400000;
-    // Helius key for on-chain ownership checks. This file is public, so only
-    // put a key here that is domain-restricted to solquicks.com in the Helius
-    // dashboard. Empty = ownership checks are skipped.
-    const HELIUS_API_KEY = '';
-    const HELIUS_RPC = HELIUS_API_KEY
-      ? 'https://mainnet.helius-rpc.com/?api-key=' + HELIUS_API_KEY
-      : '';
+    // Endpoint for on-chain ownership checks. This file is public, so put a
+    // PROXY url here (helius-labs/helius-rpc-proxy on Cloudflare) which keeps
+    // the API key server-side — never a raw key. Empty = checks are skipped.
+    const RPC_PROXY_URL = '';
+    const HELIUS_RPC = RPC_PROXY_URL;
 
     // How many Moon Rangers the connected wallet holds.
     // null = checking, -1 = check failed, -2 = checks not configured, 0+ = verified count
