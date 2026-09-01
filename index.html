@@ -14,7 +14,7 @@
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com; frame-ancestors 'self';"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com; frame-ancestors 'self';"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
@@ -45,6 +45,7 @@
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html { scroll-behavior: smooth; }
 
     body {
@@ -88,13 +89,18 @@
       box-shadow: var(--pop);
       padding: 6px;
       margin-bottom: 26px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
       overflow-x: auto;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
     }
-    .nav::-webkit-scrollbar { display: none; }
-
-    .tabs { display: flex; gap: 4px; flex: 1; }
+    .tabs::-webkit-scrollbar { display: none; }
 
     .tab {
       appearance: none;
@@ -875,6 +881,91 @@
       text-align: left;
     }
 
+    /* ── WALLET CHIP ── */
+    .wallet-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      appearance: none;
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 800;
+      color: #fff;
+      background: var(--ink);
+      border: 2px solid var(--ink);
+      border-radius: 999px;
+      padding: 6px 13px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+    .wallet-chip:hover { background: var(--ink-soft); }
+    .wallet-chip.connected { background: var(--green); border-color: var(--ink); }
+
+    /* ── LEADERBOARD TABLE ── */
+    .lb-table-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 2px dashed var(--bg-deep);
+    }
+    .lb-table-row:last-child { border-bottom: none; }
+    .lb-table-row.me {
+      background: var(--orange-soft);
+      border: 2px solid var(--orange-deep);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin: 4px -4px;
+    }
+    .lb-rank {
+      font-family: 'Baloo 2', sans-serif;
+      font-weight: 800;
+      font-size: 0.95rem;
+      width: 34px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .lb-who { flex: 1; min-width: 0; }
+    .lb-who-name { font-weight: 800; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
+    .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
+
+    /* ── MOON STAKING ── */
+    .moon-stake-card {
+      background: rgba(255, 255, 255, 0.07);
+      border: 2px solid rgba(243, 239, 250, 0.25);
+      border-radius: 14px;
+      padding: 18px;
+      margin-top: 20px;
+      text-align: center;
+    }
+    .moon-stake-status { font-size: 0.85rem; font-weight: 700; color: #BCB2D2; }
+    .moon-stake-earned {
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      color: #FFD98A;
+      margin: 6px 0 2px;
+    }
+    .moon-stake-rate { font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; color: #BCB2D2; text-transform: uppercase; }
+    .moon-unstake-btn {
+      appearance: none;
+      background: transparent;
+      color: #BCB2D2;
+      border: 2px solid rgba(243, 239, 250, 0.35);
+      border-radius: 999px;
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 8px 18px;
+      margin-top: 14px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .moon-unstake-btn:hover { border-color: #F3EFFA; color: #F3EFFA; }
+    .moon-note { font-size: 0.72rem; font-weight: 700; color: #8F84A8; margin-top: 16px; }
+
     /* ── FOOTER ── */
     .footer {
       text-align: center;
@@ -947,6 +1038,10 @@
       <div class="live-badge" id="live-badge">
         <span class="live-dot"></span>LIVE
       </div>
+      <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+        <span id="wallet-chip-label">Connect</span>
+      </button>
     </nav>
 
     <!-- PROFILE -->
@@ -1067,6 +1162,13 @@
       </div>
 
       <div class="lb-card">
+        <div class="lb-title">🏆 Top Foxes</div>
+        <div id="lb-table">
+          <div class="lb-log-empty">Loading leaderboard…</div>
+        </div>
+      </div>
+
+      <div class="lb-card">
         <div class="lb-title">How to earn</div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">👋</div>
@@ -1082,6 +1184,11 @@
           <div class="lb-earn-icon">🧸</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Buy a quicks Plushie</div><div class="lb-earn-sub">Extremely foxy, extremely rewarding</div></div>
           <div class="lb-earn-pts">+500</div>
+        </div>
+        <div class="lb-earn-row">
+          <div class="lb-earn-icon">🌕</div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Stake a Moon Ranger</div><div class="lb-earn-sub">Every day it stays staked</div></div>
+          <div class="lb-earn-pts">+100</div>
         </div>
         <div class="lb-earn-row soon">
           <div class="lb-earn-icon">🎮</div>
@@ -1144,11 +1251,24 @@
       <div class="moon-hero">
         <div class="moon-emoji">🌕</div>
         <div class="moon-title">Moon Rangers</div>
-        <p class="moon-sub">Connect your Solflare wallet to verify your Moon Rangers NFT and unlock exclusive content.</p>
-        <button class="moon-btn" onclick="connectWallet()">
+        <p class="moon-sub" id="moon-sub">Connect your wallet, stake your Moon Ranger, and earn <strong>100 Fox Points every day</strong> it stays staked.</p>
+
+        <button class="moon-btn" id="moon-connect-btn" onclick="connectWallet()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
           Connect Wallet
         </button>
+
+        <div class="moon-stake-card" id="moon-stake-card" hidden>
+          <div class="moon-stake-status" id="moon-stake-status">Not staked yet</div>
+          <div class="moon-stake-earned" id="moon-stake-earned">0</div>
+          <div class="moon-stake-rate">points earned · 100 / day</div>
+          <button class="moon-btn" id="moon-stake-btn" onclick="toggleStake()" style="margin-top:16px">Stake Moon Ranger</button>
+          <div id="moon-claim-wrap" hidden>
+            <button class="moon-unstake-btn" onclick="claimStakePoints()">Claim points</button>
+          </div>
+        </div>
+
+        <p class="moon-note" id="moon-note">Staking runs off-chain while the on-chain program is in build. NFT ownership checks go live with it.</p>
       </div>
     </div>
 
@@ -1288,16 +1408,6 @@
     setInterval(() => { slideIdx = (slideIdx + 1) % 3; goSlide(slideIdx); }, 3500);
 
     // ── WALLET ──
-    function connectWallet() {
-      if (window.solflare && window.solflare.isSolflare) {
-        window.solflare.connect().then(() => {
-          const key = window.solflare.publicKey.toString();
-          alert('Connected: ' + key.slice(0, 4) + '...' + key.slice(-4));
-        }).catch(err => console.error(err));
-      } else {
-        window.open('https://solflare.com', '_blank');
-      }
-    }
 
     // ── LIVE STATUS CHECK (Twitch) ──
     // Polls every 3 minutes. Replace CHANNEL_NAME with your actual Twitch handle.
@@ -1343,7 +1453,8 @@
       spin:    { pts: 10,  label: 'Giveaway wheel spin 🎡' },
       plushie: { pts: 500, label: 'Plushie purchase 🧸' },
       game:    { pts: 25,  label: 'Game played 🎮' },
-      gacha:   { pts: 50,  label: 'Gacha pull 🎰' }
+      gacha:   { pts: 50,  label: 'Gacha pull 🎰' },
+      stake:   { pts: 100, label: 'Moon Ranger staking 🌕' }
     };
 
     const FoxPoints = {
@@ -1365,6 +1476,15 @@
         }
         state.total += cfg.pts;
         state.log.unshift({ e: event, p: cfg.pts, t: Date.now() });
+        if (state.log.length > 50) state.log.length = 50;
+        this.save(state);
+        this.render();
+      },
+      awardCustom(event, pts) {
+        if (!pts || pts <= 0) return;
+        const state = this.load();
+        state.total += pts;
+        state.log.unshift({ e: event, p: pts, t: Date.now() });
         if (state.log.length > 50) state.log.length = 50;
         this.save(state);
         this.render();
@@ -1527,6 +1647,299 @@
       });
       drawWheel(0);
     })();
+
+  
+    // ── SOLANA WALLET (dependency-free, Wallet Standard + injected fallback) ──
+    // Moon Rangers collection. Replace with the collection address from the
+    // marketplace listing once confirmed; ownership checks read this.
+    const MOON_RANGERS_COLLECTION = '2A7cvcK9SHUuhtSM93aLuZs6Cmg4wm4xXNMs7NsdGtes';
+    const STAKE_RATE_PER_DAY = 100;
+    const DAY_MS = 86400000;
+
+    const Wallet = {
+      list: [],
+      active: null,
+      pubkey: null,
+
+      discover() {
+        const found = [];
+        // Wallet Standard: wallets register themselves on app-ready
+        const register = function() {
+          for (let i = 0; i < arguments.length; i++) {
+            const w = arguments[i];
+            if (w && w.features && w.features['standard:connect'] &&
+                (w.chains || []).some(function(c) { return String(c).indexOf('solana') === 0; })) {
+              found.push({ kind: 'standard', name: w.name, icon: w.icon, w: w });
+            }
+          }
+        };
+        try {
+          window.addEventListener('wallet-standard:register-wallet', function(e) {
+            try { e.detail({ register: register }); } catch (err) {}
+          });
+          window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
+        } catch (e) {}
+
+        // Legacy injected providers (any wallet that injects a Solana provider)
+        const seen = {};
+        found.forEach(function(f) { seen[f.name] = true; });
+        const injected = [
+          { name: 'Solflare', p: window.solflare },
+          { name: 'Backpack', p: window.backpack },
+          { name: 'Glow', p: window.glow },
+          { name: 'Solana Wallet', p: window.solana }
+        ];
+        injected.forEach(function(entry) {
+          if (entry.p && typeof entry.p.connect === 'function' && !seen[entry.name]) {
+            seen[entry.name] = true;
+            found.push({ kind: 'injected', name: entry.name, icon: null, w: entry.p });
+          }
+        });
+        this.list = found;
+        return found;
+      },
+
+      async connect(choice) {
+        const target = choice || this.list[0];
+        if (!target) throw new Error('no-wallet');
+        let key = null;
+        if (target.kind === 'standard') {
+          const res = await target.w.features['standard:connect'].connect();
+          const acct = (res && res.accounts && res.accounts[0]) || target.w.accounts[0];
+          if (!acct) throw new Error('no-account');
+          key = acct.address;
+        } else {
+          const res = await target.w.connect();
+          key = (res && res.publicKey ? res.publicKey : target.w.publicKey);
+          if (!key) throw new Error('no-account');
+          key = key.toString();
+        }
+        this.active = target;
+        this.pubkey = key;
+        try { localStorage.setItem('wallet_last', key); } catch (e) {}
+        this.render();
+        return key;
+      },
+
+      disconnect() {
+        try {
+          if (this.active && this.active.kind === 'injected' && this.active.w.disconnect) this.active.w.disconnect();
+          if (this.active && this.active.kind === 'standard' && this.active.w.features['standard:disconnect'])
+            this.active.w.features['standard:disconnect'].disconnect();
+        } catch (e) {}
+        this.active = null;
+        this.pubkey = null;
+        try { localStorage.removeItem('wallet_last'); } catch (e) {}
+        this.render();
+        renderStaking();
+        renderLeaderboard();
+      },
+
+      short(k) {
+        k = k || this.pubkey || '';
+        return k ? k.slice(0, 4) + '…' + k.slice(-4) : '';
+      },
+
+      render() {
+        const chip = document.getElementById('wallet-chip');
+        const label = document.getElementById('wallet-chip-label');
+        if (!chip || !label) return;
+        if (this.pubkey) {
+          label.textContent = this.short();
+          chip.classList.add('connected');
+          chip.title = this.pubkey + ' — click to disconnect';
+        } else {
+          label.textContent = 'Connect';
+          chip.classList.remove('connected');
+          chip.title = 'Connect a Solana wallet';
+        }
+      }
+    };
+
+    async function connectWallet() {
+      const wallets = Wallet.discover();
+      if (!wallets.length) {
+        alert('No Solana wallet detected.\n\nInstall a Solana wallet extension (or open this page inside your wallet\'s browser), then tap Connect again.');
+        return;
+      }
+      let pick = wallets[0];
+      if (wallets.length > 1) {
+        const names = wallets.map(function(w, i) { return (i + 1) + ') ' + w.name; }).join('\n');
+        const answer = prompt('Choose a wallet:\n\n' + names + '\n\nEnter a number:', '1');
+        if (answer === null) return;
+        const idx = parseInt(answer, 10) - 1;
+        if (isNaN(idx) || !wallets[idx]) return;
+        pick = wallets[idx];
+      }
+      try {
+        await Wallet.connect(pick);
+        renderStaking();
+        renderLeaderboard();
+      } catch (e) {
+        if (e && e.message === 'no-wallet') return;
+        console.error(e);
+      }
+    }
+
+    function walletChipClick() {
+      if (Wallet.pubkey) {
+        if (confirm('Disconnect ' + Wallet.short() + '?')) Wallet.disconnect();
+      } else {
+        connectWallet();
+      }
+    }
+
+    // silent reconnect if the wallet is already authorized
+    (async function() {
+      Wallet.discover();
+      setTimeout(async function() {
+        Wallet.discover();
+        const prior = (function() { try { return localStorage.getItem('wallet_last'); } catch (e) { return null; } })();
+        if (!prior) { Wallet.render(); return; }
+        for (const w of Wallet.list) {
+          try {
+            if (w.kind === 'injected' && w.w.isConnected && w.w.publicKey) {
+              Wallet.active = w; Wallet.pubkey = w.w.publicKey.toString(); break;
+            }
+            if (w.kind === 'standard' && w.w.accounts && w.w.accounts.length) {
+              Wallet.active = w; Wallet.pubkey = w.w.accounts[0].address; break;
+            }
+          } catch (e) {}
+        }
+        Wallet.render();
+        renderStaking();
+        renderLeaderboard();
+      }, 400);
+    })();
+
+    // ── MOON RANGER STAKING ──
+    function stakeKey() { return 'moonstake_' + (Wallet.pubkey || 'anon'); }
+
+    function loadStake() {
+      try { return JSON.parse(localStorage.getItem(stakeKey())) || { staked: false, since: 0, claimed: 0 }; }
+      catch (e) { return { staked: false, since: 0, claimed: 0 }; }
+    }
+    function saveStake(s) { try { localStorage.setItem(stakeKey(), JSON.stringify(s)); } catch (e) {} }
+
+    function stakeAccrued(s) {
+      if (!s.staked || !s.since) return 0;
+      const elapsed = Date.now() - s.since;
+      return Math.max(0, Math.floor((elapsed / DAY_MS) * STAKE_RATE_PER_DAY) - s.claimed);
+    }
+
+    function toggleStake() {
+      if (!Wallet.pubkey) { connectWallet(); return; }
+      const s = loadStake();
+      if (s.staked) {
+        const pending = stakeAccrued(s);
+        if (pending > 0 && !confirm('You have ' + pending + ' unclaimed points. Unstake anyway?\n\n(Claim them first to keep them.)')) return;
+        saveStake({ staked: false, since: 0, claimed: 0 });
+      } else {
+        saveStake({ staked: true, since: Date.now(), claimed: 0 });
+      }
+      renderStaking();
+    }
+
+    function claimStakePoints() {
+      const s = loadStake();
+      const pending = stakeAccrued(s);
+      if (pending <= 0) { alert('Nothing to claim yet — points accrue at 100 per day.'); return; }
+      s.claimed += pending;
+      saveStake(s);
+      FoxPoints.awardCustom('stake', pending);
+      renderStaking();
+      renderLeaderboard();
+    }
+
+    function renderStaking() {
+      const card = document.getElementById('moon-stake-card');
+      const connectBtn = document.getElementById('moon-connect-btn');
+      const sub = document.getElementById('moon-sub');
+      if (!card) return;
+
+      if (!Wallet.pubkey) {
+        card.hidden = true;
+        if (connectBtn) connectBtn.hidden = false;
+        if (sub) sub.innerHTML = 'Connect your wallet, stake your Moon Ranger, and earn <strong>100 Fox Points every day</strong> it stays staked.';
+        return;
+      }
+
+      if (connectBtn) connectBtn.hidden = true;
+      card.hidden = false;
+      if (sub) sub.innerHTML = 'Connected as <strong>' + Wallet.short() + '</strong>';
+
+      const s = loadStake();
+      const status = document.getElementById('moon-stake-status');
+      const earned = document.getElementById('moon-stake-earned');
+      const btn = document.getElementById('moon-stake-btn');
+      const claimWrap = document.getElementById('moon-claim-wrap');
+      const pending = stakeAccrued(s);
+
+      if (s.staked) {
+        const days = (Date.now() - s.since) / DAY_MS;
+        status.textContent = 'Staked for ' + (days < 1 ? Math.floor(days * 24) + 'h' : days.toFixed(1) + ' days');
+        earned.textContent = pending.toLocaleString();
+        btn.textContent = 'Unstake';
+        claimWrap.hidden = pending <= 0;
+      } else {
+        status.textContent = 'Not staked yet';
+        earned.textContent = '0';
+        btn.textContent = 'Stake Moon Ranger';
+        claimWrap.hidden = true;
+      }
+    }
+    setInterval(function() {
+      if (Wallet.pubkey && document.getElementById('panel-moon').classList.contains('active')) renderStaking();
+    }, 30000);
+
+    // ── LEADERBOARD ──
+    let lbRoster = null;
+
+    async function loadRoster() {
+      if (lbRoster) return lbRoster;
+      try {
+        const res = await fetch('leaderboard.json', { cache: 'no-store' });
+        const data = await res.json();
+        lbRoster = Array.isArray(data.players) ? data.players : [];
+      } catch (e) { lbRoster = []; }
+      return lbRoster;
+    }
+
+    async function renderLeaderboard() {
+      const el = document.getElementById('lb-table');
+      if (!el) return;
+      const roster = await loadRoster();
+      const me = {
+        name: Wallet.pubkey ? Wallet.short() : 'You',
+        wallet: Wallet.pubkey || '',
+        points: FoxPoints.load().total,
+        me: true
+      };
+      const rows = roster.map(function(p) {
+        return { name: p.name, wallet: p.wallet || '', points: p.points || 0, me: false };
+      }).concat([me]).sort(function(a, b) { return b.points - a.points; });
+
+      const medals = ['🥇', '🥈', '🥉'];
+      el.innerHTML = rows.map(function(r, i) {
+        return '<div class="lb-table-row' + (r.me ? ' me' : '') + '">' +
+          '<div class="lb-rank">' + (medals[i] || '#' + (i + 1)) + '</div>' +
+          '<div class="lb-who"><div class="lb-who-name">' + escapeHtml(r.name) + (r.me ? ' ← you' : '') + '</div>' +
+          (r.wallet ? '<div class="lb-who-wallet">' + escapeHtml(r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4)) + '</div>' : '') +
+          '</div><div class="lb-score">' + r.points.toLocaleString() + '</div></div>';
+      }).join('');
+
+      if (rows.length === 1) {
+        el.innerHTML += '<div class="lb-log-empty">You\'re the only fox on the board — global rankings land with the on-chain leaderboard.</div>';
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    renderLeaderboard();
 
   </script>
 
