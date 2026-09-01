@@ -58,7 +58,7 @@
     }
 
     h1, h2, h3, .handle, .tab, .moon-title, .product-name, .biz-name,
-    .section-label, .buy-btn, .moon-btn, .gw-title, .lb-title, .stat-num {
+    .section-label, .buy-btn, .moon-btn, .lb-title, .stat-num {
       font-family: 'Baloo 2', 'Nunito', sans-serif;
     }
 
@@ -625,139 +625,6 @@
     .biz-link svg { transition: transform 0.2s; }
     .biz-card:hover .biz-link svg { transform: translateX(3px); }
 
-    /* ── GIVEAWAY WHEEL ── */
-    .gw-card {
-      background: var(--card);
-      border: var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--pop-big);
-      padding: 22px 20px 26px;
-      text-align: center;
-    }
-    .gw-title { font-size: 1.45rem; font-weight: 800; }
-    .gw-sub { color: var(--ink-soft); font-size: 0.88rem; font-weight: 600; margin-top: 3px; }
-
-    .gw-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: var(--pink-soft);
-      border: 2px solid var(--crimson);
-      color: var(--crimson);
-      font-size: 0.7rem;
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      border-radius: 999px;
-      padding: 4px 12px;
-      margin-top: 10px;
-    }
-
-    .gw-wheel-wrap {
-      position: relative;
-      width: min(320px, 82vw);
-      margin: 22px auto 6px;
-    }
-    #gw-wheel {
-      width: 100%;
-      height: auto;
-      display: block;
-      border-radius: 50%;
-      border: 3.5px solid var(--ink);
-      box-shadow: var(--pop-big);
-      background: var(--cream);
-    }
-    .gw-pointer {
-      position: absolute;
-      top: -16px; left: 50%;
-      transform: translateX(-50%);
-      width: 0; height: 0;
-      border-left: 15px solid transparent;
-      border-right: 15px solid transparent;
-      border-top: 26px solid var(--crimson);
-      filter: drop-shadow(0 2px 0 var(--ink));
-      z-index: 3;
-    }
-    .gw-hub {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 58px; height: 58px;
-      border-radius: 50%;
-      background: var(--card);
-      border: 3px solid var(--ink);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.6rem;
-      z-index: 2;
-      pointer-events: none;
-    }
-
-    .gw-entries {
-      width: 100%;
-      min-height: 92px;
-      background: var(--cream);
-      border: var(--line);
-      border-radius: 14px;
-      color: var(--ink);
-      font-family: 'Nunito', sans-serif;
-      font-weight: 700;
-      font-size: 0.9rem;
-      padding: 12px 14px;
-      margin-top: 16px;
-      resize: vertical;
-      outline: none;
-    }
-    .gw-entries:focus { border-color: var(--orange-deep); }
-
-    .gw-spin-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      appearance: none;
-      background: var(--orange);
-      color: #fff;
-      border: var(--line);
-      border-radius: 999px;
-      box-shadow: 3px 4px 0 rgba(46, 36, 64, 0.22);
-      font-family: 'Baloo 2', sans-serif;
-      font-size: 1.05rem;
-      font-weight: 800;
-      padding: 13px 34px;
-      margin-top: 16px;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-    }
-    .gw-spin-btn:hover:not(:disabled) { background: var(--orange-deep); transform: translate(-1px, -2px); box-shadow: 5px 6px 0 rgba(46, 36, 64, 0.22); }
-    .gw-spin-btn:active:not(:disabled) { transform: translate(1px, 2px); box-shadow: 1px 1px 0 rgba(46, 36, 64, 0.25); }
-    .gw-spin-btn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-    .gw-result {
-      display: none;
-      background: var(--orange-soft);
-      border: var(--line);
-      border-radius: 14px;
-      padding: 16px;
-      margin-top: 18px;
-      animation: panel-in 0.4s ease;
-    }
-    .gw-result.show { display: block; }
-    .gw-result-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--orange-deep); }
-    .gw-result-name { font-family: 'Baloo 2', sans-serif; font-size: 1.7rem; font-weight: 800; margin-top: 2px; word-break: break-word; }
-    .gw-result-note { color: var(--ink-soft); font-size: 0.78rem; font-weight: 700; margin-top: 6px; }
-
-    .gw-confetti {
-      position: fixed;
-      width: 10px; height: 14px;
-      top: -20px;
-      z-index: 99;
-      pointer-events: none;
-      animation: confetti-fall linear forwards;
-    }
-    @keyframes confetti-fall {
-      to { transform: translateY(105vh) rotate(720deg); opacity: 0.9; }
-    }
-
     /* ── LEADERBOARD / FOX POINTS ── */
     .lb-hero {
       background: linear-gradient(160deg, #FFF3E2 0%, #FFE3C4 100%);
@@ -1124,7 +991,6 @@
     <nav class="nav">
       <div class="tabs">
         <button class="tab active" onclick="switchTab('links',this)">Contact</button>
-        <button class="tab" onclick="switchTab('giveaway',this)">Giveaway</button>
         <button class="tab" onclick="switchTab('leaderboard',this)">Leaderboard</button>
         <button class="tab" onclick="switchTab('store',this)">Store</button>
         <button class="tab" onclick="switchTab('moon',this)">Moon Rangers</button>
@@ -1220,28 +1086,6 @@
       </div>
     </div>
 
-    <!-- GIVEAWAY PANEL -->
-    <div id="panel-giveaway" class="panel">
-      <p class="section-label">Provably Fair</p>
-      <div class="gw-card">
-        <div class="gw-title">🎡 Giveaway Wheel</div>
-        <p class="gw-sub">Add the entries, spin the wheel, crown a winner.</p>
-        <div class="gw-badge">⚡ MagicBlock VRF verification — coming online</div>
-        <div class="gw-wheel-wrap">
-          <div class="gw-pointer"></div>
-          <canvas id="gw-wheel" width="640" height="640"></canvas>
-          <div class="gw-hub">🦊</div>
-        </div>
-        <textarea class="gw-entries" id="gw-entries" placeholder="One entry per line — names, handles, or wallets&#10;quicksfan1&#10;moonranger.sol&#10;foxenjoyer"></textarea>
-        <button class="gw-spin-btn" id="gw-spin" onclick="spinWheel()">SPIN 🎉</button>
-        <div class="gw-result" id="gw-result">
-          <div class="gw-result-label">Winner</div>
-          <div class="gw-result-name" id="gw-winner"></div>
-          <div class="gw-result-note">Drawn with cryptographic randomness · on-chain VRF proof coming soon</div>
-        </div>
-      </div>
-    </div>
-
     <!-- LEADERBOARD PANEL -->
     <div id="panel-leaderboard" class="panel">
       <p class="section-label">Fox Points</p>
@@ -1265,11 +1109,6 @@
           <div class="lb-earn-icon">👋</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Daily visit</div><div class="lb-earn-sub">Once per day, just for showing up</div></div>
           <div class="lb-earn-pts">+5</div>
-        </div>
-        <div class="lb-earn-row">
-          <div class="lb-earn-icon">🎡</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Spin the giveaway wheel</div><div class="lb-earn-sub">Every spin counts</div></div>
-          <div class="lb-earn-pts">+10</div>
         </div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">🧸</div>
@@ -1359,7 +1198,7 @@
           </div>
         </div>
 
-        <p class="moon-note" id="moon-note">Staking runs off-chain while the on-chain program is in build. NFT ownership checks go live with it.</p>
+        <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Point accrual runs off-chain while the on-chain program is in build.</p>
       </div>
     </div>
 
@@ -1531,7 +1370,7 @@
     // ── FOX POINTS ──
     const FOX_EVENTS = {
       visit:   { pts: 5,   label: 'Daily visit 👋' },
-      spin:    { pts: 10,  label: 'Giveaway wheel spin 🎡' },
+      spin:    { pts: 0,   label: 'Giveaway wheel spin 🎡' }, // retired; kept so past entries still render
       plushie: { pts: 500, label: 'Plushie purchase 🧸' },
       game:    { pts: 25,  label: 'Game played 🎮' },
       gacha:   { pts: 50,  label: 'Gacha pull 🎰' },
@@ -1600,142 +1439,55 @@
       if (buyBtn) buyBtn.addEventListener('click', function() { FoxPoints.award('plushie'); });
     })();
 
-    // ── GIVEAWAY WHEEL ──
-    const GW_COLORS = ['#F0821E', '#F6A9BC', '#FFD9B0', '#4A90D9', '#2FA463', '#D64570', '#FBF7EF', '#8B5CF6'];
-    let gwEntries = [];
-    let gwAngle = 0;
-    let gwSpinning = false;
-
-    function gwParseEntries() {
-      const raw = document.getElementById('gw-entries').value;
-      return raw.split(/\n|,/).map(function(s) { return s.trim(); }).filter(Boolean).slice(0, 60);
-    }
-
-    function drawWheel(angle) {
-      const canvas = document.getElementById('gw-wheel');
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      const W = canvas.width, cx = W / 2, cy = W / 2, r = W / 2 - 6;
-      ctx.clearRect(0, 0, W, W);
-      const n = Math.max(gwEntries.length, 1);
-      const arc = (Math.PI * 2) / n;
-
-      for (let i = 0; i < n; i++) {
-        const start = angle + i * arc;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, start, start + arc);
-        ctx.closePath();
-        ctx.fillStyle = gwEntries.length ? GW_COLORS[i % GW_COLORS.length] : '#FBF7EF';
-        ctx.fill();
-        ctx.strokeStyle = '#2E2440';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-
-        if (gwEntries.length) {
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.rotate(start + arc / 2);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#2E2440';
-          ctx.font = '800 ' + Math.max(16, 30 - n) + 'px Nunito, sans-serif';
-          let label = gwEntries[i];
-          if (label.length > 14) label = label.slice(0, 12) + '…';
-          ctx.fillText(label, r - 18, 8);
-          ctx.restore();
-        }
-      }
-      if (!gwEntries.length) {
-        ctx.fillStyle = '#8B819D';
-        ctx.font = '800 26px Nunito, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Add entries below 👇', cx, cy + 9);
-      }
-    }
-
-    function gwSecureRandomInt(n) {
-      // unbiased random int in [0, n) via rejection sampling
-      const max = Math.floor(0xFFFFFFFF / n) * n;
-      const buf = new Uint32Array(1);
-      let v;
-      do { crypto.getRandomValues(buf); v = buf[0]; } while (v >= max);
-      return v % n;
-    }
-
-    function spinWheel() {
-      if (gwSpinning) return;
-      gwEntries = gwParseEntries();
-      if (gwEntries.length < 2) {
-        drawWheel(gwAngle);
-        alert('Add at least 2 entries (one per line) to spin!');
-        return;
-      }
-      gwSpinning = true;
-      document.getElementById('gw-spin').disabled = true;
-      document.getElementById('gw-result').classList.remove('show');
-
-      const n = gwEntries.length;
-      const winner = gwSecureRandomInt(n);
-      const arc = (Math.PI * 2) / n;
-      // pointer sits at top (-90deg). Land winner's wedge center under it, with slight jitter.
-      const jitter = (Math.random() - 0.5) * arc * 0.7;
-      const target = -Math.PI / 2 - (winner * arc + arc / 2) + jitter;
-      const spins = 5 + Math.floor(Math.random() * 3);
-      const finalAngle = target - Math.PI * 2 * spins;
-      const startAngle = gwAngle % (Math.PI * 2);
-      const duration = 5200;
-      const t0 = performance.now();
-
-      function frame(t) {
-        const p = Math.min((t - t0) / duration, 1);
-        const ease = 1 - Math.pow(1 - p, 4);
-        gwAngle = startAngle + (finalAngle - startAngle) * ease;
-        drawWheel(gwAngle);
-        if (p < 1) { requestAnimationFrame(frame); }
-        else {
-          gwSpinning = false;
-          document.getElementById('gw-spin').disabled = false;
-          document.getElementById('gw-winner').textContent = gwEntries[winner];
-          document.getElementById('gw-result').classList.add('show');
-          gwConfetti();
-          FoxPoints.award('spin');
-        }
-      }
-      requestAnimationFrame(frame);
-    }
-
-    function gwConfetti() {
-      const colors = GW_COLORS;
-      for (let i = 0; i < 70; i++) {
-        const c = document.createElement('div');
-        c.className = 'gw-confetti';
-        c.style.left = Math.random() * 100 + 'vw';
-        c.style.background = colors[i % colors.length];
-        c.style.border = '1.5px solid #2E2440';
-        c.style.borderRadius = Math.random() > 0.5 ? '50%' : '3px';
-        c.style.animationDuration = (2.2 + Math.random() * 2.2) + 's';
-        c.style.animationDelay = (Math.random() * 0.6) + 's';
-        document.body.appendChild(c);
-        setTimeout(function() { c.remove(); }, 5500);
-      }
-    }
-
-    // live-redraw wheel as entries are typed
-    (function() {
-      const ta = document.getElementById('gw-entries');
-      if (ta) ta.addEventListener('input', function() {
-        if (!gwSpinning) { gwEntries = gwParseEntries(); drawWheel(gwAngle); }
-      });
-      drawWheel(0);
-    })();
-
-  
     // ── SOLANA WALLET (dependency-free, Wallet Standard + injected fallback) ──
     // Moon Rangers (MNRNG) — certified collection, verified on-chain against
     // items 9D2Cgb… and 6ZKk3k…. Verified creator is EhpKLi9zp7NMMgw1gj1QbnH5XXNEuh1eaUa6Uit3ZuLE.
     const MOON_RANGERS_COLLECTION = '5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz';
     const STAKE_RATE_PER_DAY = 100;
     const DAY_MS = 86400000;
+    // Helius key for on-chain ownership checks. This file is public, so only
+    // put a key here that is domain-restricted to solquicks.com in the Helius
+    // dashboard. Empty = ownership checks are skipped.
+    const HELIUS_API_KEY = '';
+    const HELIUS_RPC = HELIUS_API_KEY
+      ? 'https://mainnet.helius-rpc.com/?api-key=' + HELIUS_API_KEY
+      : '';
+
+    // How many Moon Rangers the connected wallet holds.
+    // null = checking, -1 = check failed, -2 = checks not configured, 0+ = verified count
+    let rangerCount = null;
+
+    async function checkRangers(owner) {
+      const res = await fetch(HELIUS_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 'rangers', method: 'searchAssets',
+          params: {
+            ownerAddress: owner,
+            grouping: ['collection', MOON_RANGERS_COLLECTION],
+            page: 1, limit: 1000
+          }
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || 'das-error');
+      return data.result.total || 0;
+    }
+
+    async function refreshRangers() {
+      if (!Wallet.pubkey) { rangerCount = null; renderStaking(); return; }
+      if (!HELIUS_RPC) { rangerCount = -2; renderStaking(); return; }
+      rangerCount = null;
+      renderStaking();
+      try {
+        rangerCount = await checkRangers(Wallet.pubkey);
+      } catch (e) {
+        console.error('Ranger check failed:', e);
+        rangerCount = -1;
+      }
+      renderStaking();
+    }
 
     const Wallet = {
       list: [],
@@ -1810,6 +1562,7 @@
         } catch (e) {}
         this.active = null;
         this.pubkey = null;
+        rangerCount = null;
         try { localStorage.removeItem('wallet_last'); } catch (e) {}
         this.render();
         renderStaking();
@@ -1929,6 +1682,7 @@
               closeWalletModal();
               renderStaking();
               renderLeaderboard();
+              refreshRangers();
             } catch (err) {
               others.forEach(function(o) { o.disabled = false; });
               name.textContent = w.name;
@@ -1980,6 +1734,7 @@
         Wallet.render();
         renderStaking();
         renderLeaderboard();
+        if (Wallet.pubkey) refreshRangers();
       }, 400);
     })();
 
@@ -2001,6 +1756,12 @@
     function toggleStake() {
       if (!Wallet.pubkey) { connectWallet(); return; }
       const s = loadStake();
+      if (!s.staked && rangerCount !== -2 && !(rangerCount > 0)) {
+        alert(rangerCount === -1
+          ? 'Could not check your wallet right now. Try again in a moment.'
+          : 'No Moon Ranger found in this wallet.\n\nStaking is for holders — grab one and reconnect.');
+        return;
+      }
       if (s.staked) {
         const pending = stakeAccrued(s);
         if (pending > 0 && !confirm('You have ' + pending + ' unclaimed points. Unstake anyway?\n\n(Claim them first to keep them.)')) return;
@@ -2037,7 +1798,6 @@
 
       if (connectBtn) connectBtn.hidden = true;
       card.hidden = false;
-      if (sub) sub.innerHTML = 'Connected as <strong>' + Wallet.short() + '</strong>';
 
       const s = loadStake();
       const status = document.getElementById('moon-stake-status');
@@ -2046,6 +1806,34 @@
       const claimWrap = document.getElementById('moon-claim-wrap');
       const pending = stakeAccrued(s);
 
+      // wallet line doubles as the ownership-verification readout
+      if (sub) {
+        if (rangerCount === -2) {
+          sub.innerHTML = 'Connected as <strong>' + Wallet.short() + '</strong>';
+        } else if (rangerCount === null) {
+          sub.innerHTML = 'Checking <strong>' + Wallet.short() + '</strong> for Moon Rangers…';
+        } else if (rangerCount === -1) {
+          sub.innerHTML = 'Connected as <strong>' + Wallet.short() + '</strong> — couldn\'t verify right now.';
+        } else if (rangerCount === 0) {
+          sub.innerHTML = 'No Moon Ranger in <strong>' + Wallet.short() + '</strong>. Staking is for holders.';
+        } else {
+          sub.innerHTML = '<strong>' + rangerCount + ' Moon Ranger' + (rangerCount > 1 ? 's' : '') +
+            '</strong> verified in ' + Wallet.short() + ' ✓';
+        }
+      }
+
+      // block staking until a Ranger is confirmed (an active stake stays visible)
+      if (!s.staked) {
+        const allowed = rangerCount > 0 || rangerCount === -2;
+        btn.disabled = !allowed;
+        btn.style.opacity = allowed ? '' : '0.5';
+        btn.style.cursor = allowed ? '' : 'not-allowed';
+      } else {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.cursor = '';
+      }
+
       if (s.staked) {
         const days = (Date.now() - s.since) / DAY_MS;
         status.textContent = 'Staked for ' + (days < 1 ? Math.floor(days * 24) + 'h' : days.toFixed(1) + ' days');
@@ -2053,7 +1841,9 @@
         btn.textContent = 'Unstake';
         claimWrap.hidden = pending <= 0;
       } else {
-        status.textContent = 'Not staked yet';
+        status.textContent = rangerCount > 0 ? 'Ready to stake' :
+          (rangerCount === null ? 'Checking wallet…' : 'Not staked yet');
+
         earned.textContent = '0';
         btn.textContent = 'Stake Moon Ranger';
         claimWrap.hidden = true;
