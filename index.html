@@ -123,26 +123,6 @@
       box-shadow: 2px 3px 0 rgba(46, 36, 64, 0.25);
     }
 
-    .live-badge {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.72rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      color: var(--crimson);
-      padding: 6px 12px;
-      border-radius: 999px;
-      background: var(--pink-soft);
-      border: 2px solid var(--crimson);
-      flex-shrink: 0;
-    }
-    .live-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--crimson);
-      animation: pulse 1.6s infinite;
-    }
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.4; transform: scale(0.8); }
@@ -902,6 +882,120 @@
     .wallet-chip:hover { background: var(--ink-soft); }
     .wallet-chip.connected { background: var(--green); border-color: var(--ink); }
 
+    /* ── WALLET MODAL ── */
+    .wm-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(46, 36, 64, 0.55);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: wm-fade 0.18s ease;
+    }
+    @keyframes wm-fade { from { opacity: 0; } to { opacity: 1; } }
+
+    .wm-sheet {
+      width: 100%;
+      max-width: 380px;
+      background: var(--card);
+      border: var(--line);
+      border-radius: 20px;
+      box-shadow: var(--pop-big);
+      padding: 22px;
+      animation: wm-pop 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+    }
+    @keyframes wm-pop {
+      from { opacity: 0; transform: translateY(14px) scale(0.96); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .wm-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .wm-title { font-family: 'Baloo 2', sans-serif; font-size: 1.25rem; font-weight: 800; }
+    .wm-sub { color: var(--ink-soft); font-size: 0.84rem; font-weight: 600; margin-bottom: 16px; }
+
+    .wm-close {
+      appearance: none;
+      background: var(--cream);
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      width: 30px; height: 30px;
+      font-size: 1rem;
+      font-weight: 800;
+      color: var(--ink);
+      cursor: pointer;
+      flex-shrink: 0;
+      line-height: 1;
+      transition: background 0.15s ease;
+    }
+    .wm-close:hover { background: var(--orange-soft); }
+
+    .wm-list { display: flex; flex-direction: column; gap: 9px; }
+
+    .wm-option {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      width: 100%;
+      appearance: none;
+      text-align: left;
+      background: var(--card);
+      border: 2px solid var(--ink);
+      border-radius: 14px;
+      box-shadow: 3px 3px 0 rgba(46, 36, 64, 0.12);
+      padding: 11px 14px;
+      cursor: pointer;
+      font-family: 'Nunito', sans-serif;
+      color: var(--ink);
+      transition: transform 0.13s ease, box-shadow 0.13s ease, background 0.13s ease;
+    }
+    .wm-option:hover { transform: translate(-1px, -2px); box-shadow: 5px 5px 0 rgba(46, 36, 64, 0.15); background: var(--orange-soft); }
+    .wm-option:active { transform: translate(1px, 2px); box-shadow: 1px 1px 0 rgba(46, 36, 64, 0.2); }
+    .wm-option:disabled { opacity: 0.6; cursor: wait; }
+
+    .wm-icon {
+      width: 34px; height: 34px;
+      border-radius: 9px;
+      border: 2px solid var(--ink);
+      background: var(--cream);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.05rem;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .wm-icon img { width: 100%; height: 100%; object-fit: cover; }
+    .wm-name { flex: 1; font-weight: 800; font-size: 0.95rem; }
+    .wm-go { color: var(--orange); font-weight: 800; }
+
+    .wm-empty {
+      background: var(--cream);
+      border: 2px dashed var(--muted);
+      border-radius: 14px;
+      padding: 18px;
+      text-align: center;
+      color: var(--ink-soft);
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
+    .wm-err {
+      color: var(--crimson);
+      font-size: 0.82rem;
+      font-weight: 800;
+      margin-top: 12px;
+      text-align: center;
+    }
+
     /* ── LEADERBOARD TABLE ── */
     .lb-table-row {
       display: flex;
@@ -1034,9 +1128,6 @@
         <button class="tab" onclick="switchTab('leaderboard',this)">Leaderboard</button>
         <button class="tab" onclick="switchTab('store',this)">Store</button>
         <button class="tab" onclick="switchTab('moon',this)">Moon Rangers</button>
-      </div>
-      <div class="live-badge" id="live-badge">
-        <span class="live-dot"></span>LIVE
       </div>
       <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
@@ -1409,16 +1500,6 @@
 
     // ── WALLET ──
 
-    // ── LIVE STATUS CHECK (Twitch) ──
-    // Polls every 3 minutes. Replace CHANNEL_NAME with your actual Twitch handle.
-    // Requires a Twitch Client-ID token server-side for production — this is a placeholder.
-    function checkLiveStatus() {
-      const badge = document.getElementById('live-badge');
-      // To activate: swap this fetch for your own status API or Twitch webhook
-      // badge.classList.add('visible'); // uncomment to force-show for testing
-    }
-    checkLiveStatus();
-    setInterval(checkLiveStatus, 180000);
 
     // ── BACK TO TOP ──
     (function() {
@@ -1650,9 +1731,9 @@
 
   
     // ── SOLANA WALLET (dependency-free, Wallet Standard + injected fallback) ──
-    // Moon Rangers collection. Replace with the collection address from the
-    // marketplace listing once confirmed; ownership checks read this.
-    const MOON_RANGERS_COLLECTION = '2A7cvcK9SHUuhtSM93aLuZs6Cmg4wm4xXNMs7NsdGtes';
+    // Moon Rangers (MNRNG) — certified collection, verified on-chain against
+    // items 9D2Cgb… and 6ZKk3k…. Verified creator is EhpKLi9zp7NMMgw1gj1QbnH5XXNEuh1eaUa6Uit3ZuLE.
+    const MOON_RANGERS_COLLECTION = '5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz';
     const STAKE_RATE_PER_DAY = 100;
     const DAY_MS = 86400000;
 
@@ -1756,29 +1837,119 @@
       }
     };
 
-    async function connectWallet() {
+    function closeWalletModal() {
+      const el = document.getElementById('wm-backdrop');
+      if (el) el.remove();
+      document.removeEventListener('keydown', wmEscHandler);
+    }
+
+    function wmEscHandler(e) { if (e.key === 'Escape') closeWalletModal(); }
+
+    function connectWallet() {
+      closeWalletModal();
       const wallets = Wallet.discover();
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'wm-backdrop';
+      backdrop.id = 'wm-backdrop';
+      backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeWalletModal(); });
+
+      const sheet = document.createElement('div');
+      sheet.className = 'wm-sheet';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-modal', 'true');
+      sheet.setAttribute('aria-label', 'Connect a wallet');
+
+      const head = document.createElement('div');
+      head.className = 'wm-head';
+      const title = document.createElement('div');
+      title.className = 'wm-title';
+      title.textContent = 'Connect a wallet';
+      const close = document.createElement('button');
+      close.className = 'wm-close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.textContent = '✕';
+      close.onclick = closeWalletModal;
+      head.appendChild(title);
+      head.appendChild(close);
+      sheet.appendChild(head);
+
+      const sub = document.createElement('div');
+      sub.className = 'wm-sub';
+      sub.textContent = wallets.length
+        ? 'Pick one to stake your Moon Ranger and track Fox Points.'
+        : 'No Solana wallet found in this browser.';
+      sheet.appendChild(sub);
+
       if (!wallets.length) {
-        alert('No Solana wallet detected.\n\nInstall a Solana wallet extension (or open this page inside your wallet\'s browser), then tap Connect again.');
-        return;
+        const empty = document.createElement('div');
+        empty.className = 'wm-empty';
+        empty.textContent = 'Install a Solana wallet extension, or open solquicks.com inside your wallet app\'s built-in browser, then tap Connect again.';
+        sheet.appendChild(empty);
+      } else {
+        const list = document.createElement('div');
+        list.className = 'wm-list';
+        wallets.forEach(function(w) {
+          const btn = document.createElement('button');
+          btn.className = 'wm-option';
+          btn.type = 'button';
+
+          const icon = document.createElement('div');
+          icon.className = 'wm-icon';
+          if (w.icon && /^data:image\//.test(w.icon)) {
+            const img = document.createElement('img');
+            img.src = w.icon;
+            img.alt = '';
+            icon.appendChild(img);
+          } else {
+            icon.textContent = '👛';
+          }
+
+          const name = document.createElement('div');
+          name.className = 'wm-name';
+          name.textContent = w.name;
+
+          const go = document.createElement('div');
+          go.className = 'wm-go';
+          go.textContent = '→';
+
+          btn.appendChild(icon);
+          btn.appendChild(name);
+          btn.appendChild(go);
+
+          btn.onclick = async function() {
+            const others = sheet.querySelectorAll('.wm-option');
+            others.forEach(function(o) { o.disabled = true; });
+            name.textContent = 'Connecting…';
+            const priorErr = sheet.querySelector('.wm-err');
+            if (priorErr) priorErr.remove();
+            try {
+              await Wallet.connect(w);
+              closeWalletModal();
+              renderStaking();
+              renderLeaderboard();
+            } catch (err) {
+              others.forEach(function(o) { o.disabled = false; });
+              name.textContent = w.name;
+              const msg = document.createElement('div');
+              msg.className = 'wm-err';
+              msg.textContent = (err && /reject|denied|cancel/i.test(err.message || ''))
+                ? 'Connection cancelled in your wallet.'
+                : 'Could not connect. Try again.';
+              sheet.appendChild(msg);
+            }
+          };
+          list.appendChild(btn);
+        });
+        sheet.appendChild(list);
       }
-      let pick = wallets[0];
-      if (wallets.length > 1) {
-        const names = wallets.map(function(w, i) { return (i + 1) + ') ' + w.name; }).join('\n');
-        const answer = prompt('Choose a wallet:\n\n' + names + '\n\nEnter a number:', '1');
-        if (answer === null) return;
-        const idx = parseInt(answer, 10) - 1;
-        if (isNaN(idx) || !wallets[idx]) return;
-        pick = wallets[idx];
-      }
-      try {
-        await Wallet.connect(pick);
-        renderStaking();
-        renderLeaderboard();
-      } catch (e) {
-        if (e && e.message === 'no-wallet') return;
-        console.error(e);
-      }
+
+      backdrop.appendChild(sheet);
+      document.body.appendChild(backdrop);
+      document.addEventListener('keydown', wmEscHandler);
+      const first = sheet.querySelector('.wm-option') || close;
+      if (first) first.focus();
     }
 
     function walletChipClick() {
