@@ -1448,11 +1448,11 @@
     const MOON_RANGERS_COLLECTION = '5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz';
     const STAKE_RATE_PER_DAY = 100;
     const DAY_MS = 86400000;
-    // Endpoint for on-chain ownership checks. This file is public, so put a
-    // PROXY url here (helius-labs/helius-rpc-proxy on Cloudflare) which keeps
-    // the API key server-side — never a raw key. Empty = checks are skipped.
-    const RPC_PROXY_URL = '';
-    const HELIUS_RPC = RPC_PROXY_URL;
+    // On-chain reads go through our Cloudflare Worker proxy, which holds the
+    // Helius API key server-side (encrypted secret) so no key is ever public.
+    // The worker only returns CORS headers for solquicks.com. Source:
+    // helius-labs/helius-rpc-proxy. Empty = ownership checks are skipped.
+    const HELIUS_RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
 
     // How many Moon Rangers the connected wallet holds.
     // null = checking, -1 = check failed, -2 = checks not configured, 0+ = verified count
