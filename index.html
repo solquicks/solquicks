@@ -928,6 +928,83 @@
     .moon-unstake-btn:hover { border-color: #F3EFFA; color: #F3EFFA; }
     .moon-note { font-size: 0.72rem; font-weight: 700; color: #8F84A8; margin-top: 16px; }
 
+    /* ── RANGER PICKER ── */
+    .rg-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+      gap: 10px;
+      margin: 16px 0 4px;
+    }
+    .rg-card {
+      position: relative;
+      background: rgba(255,255,255,0.06);
+      border: 2.5px solid rgba(243,239,250,0.22);
+      border-radius: 12px;
+      padding: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+      text-align: center;
+    }
+    .rg-card:hover { transform: translateY(-2px); border-color: rgba(243,239,250,0.5); }
+    .rg-card.picked { border-color: var(--orange); background: rgba(240,130,30,0.16); }
+    .rg-card.locked { cursor: default; opacity: 0.9; border-color: var(--green); background: rgba(47,164,99,0.14); }
+    .rg-card.locked:hover { transform: none; }
+    .rg-img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.25);
+      display: block;
+    }
+    .rg-name {
+      font-size: 0.66rem;
+      font-weight: 800;
+      color: #D9D2E8;
+      margin-top: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rg-tick {
+      position: absolute;
+      top: 9px; right: 9px;
+      width: 21px; height: 21px;
+      border-radius: 50%;
+      background: var(--orange);
+      border: 2px solid #F3EFFA;
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 800;
+      line-height: 17px;
+      display: none;
+    }
+    .rg-card.picked .rg-tick { display: block; }
+    .rg-card.locked .rg-tick { display: block; background: var(--green); }
+    .rg-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .rg-selall {
+      appearance: none;
+      background: transparent;
+      border: none;
+      color: #BCB2D2;
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .rg-selall:hover { color: #F3EFFA; }
+    .rg-cost { font-size: 0.76rem; font-weight: 800; color: #BCB2D2; }
+    .rg-cost strong { color: #FFD98A; }
+
     /* ── FOOTER ── */
     .footer {
       text-align: center;
@@ -1188,6 +1265,14 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
           Connect Wallet
         </button>
+
+        <div id="moon-picker" hidden>
+          <div class="rg-grid" id="rg-grid"></div>
+          <div class="rg-bar">
+            <button class="rg-selall" id="rg-selall" onclick="toggleSelectAll()">Select all</button>
+            <span class="rg-cost" id="rg-cost"></span>
+          </div>
+        </div>
 
         <div class="moon-stake-card" id="moon-stake-card" hidden>
           <div class="moon-stake-status" id="moon-stake-status">Not staked yet</div>
@@ -1534,6 +1619,7 @@
         }
         this.render();
         renderLeaderboard();
+        if (typeof loadRangers === 'function') loadRangers();
       }
     };
 
@@ -1856,6 +1942,83 @@
       }, 400);
     })();
 
+
+    // ── RANGER PICKER ──
+    // Players choose which Rangers to stake rather than staking everything.
+    let rangerList = [];      // [{mint, name, image}]
+    let stakedMints = [];     // mints currently staked, per the server
+    let picked = new Set();   // mints ticked in the UI
+    let stakeFeeLamports = 0;
+    let treasuryWallet = null;
+
+    async function loadRangers() {
+      if (!FoxPoints.token) { rangerList = []; stakedMints = []; renderPicker(); return; }
+      const r = await FoxPoints.api('/api/rangers');
+      if (!r || !r.verified) { rangerList = []; stakedMints = []; renderPicker(); return; }
+      rangerList = r.rangers || [];
+      stakedMints = r.staked || [];
+      stakeFeeLamports = r.feeLamports || 0;
+      treasuryWallet = r.treasury || null;
+      picked = new Set(rangerList
+        .filter(function (x) { return stakedMints.indexOf(x.mint) < 0; })
+        .map(function (x) { return x.mint; }));
+      renderPicker();
+    }
+
+    function renderPicker() {
+      const wrap = document.getElementById('moon-picker');
+      const grid = document.getElementById('rg-grid');
+      if (!wrap || !grid) return;
+
+      if (!rangerList.length) { wrap.hidden = true; return; }
+      wrap.hidden = false;
+
+      grid.innerHTML = rangerList.map(function (r) {
+        const locked = stakedMints.indexOf(r.mint) >= 0;
+        const on = picked.has(r.mint);
+        const cls = 'rg-card' + (locked ? ' locked' : (on ? ' picked' : ''));
+        const img = r.image
+          ? '<img class="rg-img" src="' + escapeHtml(r.image) + '" alt="" loading="lazy"/>'
+          : '<div class="rg-img"></div>';
+        return '<div class="' + cls + '" data-mint="' + escapeHtml(r.mint) + '" ' +
+          (locked ? '' : 'onclick="togglePick(this)"') + '>' +
+          img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' +
+          '<div class="rg-tick">' + (locked ? '✓' : '✓') + '</div></div>';
+      }).join('');
+
+      const unstakedCount = rangerList.filter(function (r) { return stakedMints.indexOf(r.mint) < 0; }).length;
+      const selall = document.getElementById('rg-selall');
+      if (selall) {
+        selall.hidden = unstakedCount === 0;
+        selall.textContent = (picked.size === unstakedCount && unstakedCount > 0) ? 'Clear selection' : 'Select all';
+      }
+
+      const cost = document.getElementById('rg-cost');
+      if (cost) {
+        if (picked.size === 0) {
+          cost.textContent = stakedMints.length ? stakedMints.length + ' staked · earning ' + (stakedMints.length * 100) + ' / day' : '';
+        } else if (stakeFeeLamports > 0) {
+          const sol = (stakeFeeLamports * picked.size) / 1e9;
+          cost.innerHTML = 'Stake ' + picked.size + ' · <strong>' + sol.toFixed(3) + ' SOL</strong> · +' + (picked.size * 100) + ' pts/day';
+        } else {
+          cost.innerHTML = 'Stake ' + picked.size + ' · <strong>+' + (picked.size * 100) + ' pts/day</strong>';
+        }
+      }
+    }
+
+    function togglePick(el) {
+      const mint = el.getAttribute('data-mint');
+      if (picked.has(mint)) picked.delete(mint); else picked.add(mint);
+      renderPicker();
+    }
+
+    function toggleSelectAll() {
+      const available = rangerList.filter(function (r) { return stakedMints.indexOf(r.mint) < 0; });
+      if (picked.size === available.length) picked.clear();
+      else available.forEach(function (r) { picked.add(r.mint); });
+      renderPicker();
+    }
+
     // ── MOON RANGER STAKING ──
     function stakeKey() { return 'moonstake_' + (Wallet.pubkey || 'anon'); }
 
@@ -1902,12 +2065,22 @@
     async function toggleStake() {
       if (!Wallet.pubkey) { connectWallet(); return; }
       if (FoxPoints.token && FoxPoints.server) {
-        const staked = FoxPoints.server.stake && FoxPoints.server.stake.staked;
-        const r = await FoxPoints.api(staked ? '/api/unstake' : '/api/stake', { method: 'POST' });
-        if (r && r.error) { alert(r.error === 'no Moon Ranger in this wallet'
-          ? 'No Moon Ranger found in this wallet.\n\nStaking is for holders — grab one and reconnect.'
-          : r.error); return; }
+        const isStaked = FoxPoints.server.stake && FoxPoints.server.stake.staked;
+        let r;
+        if (isStaked && picked.size === 0) {
+          r = await FoxPoints.api('/api/unstake', { method: 'POST', body: {} });
+        } else {
+          if (picked.size === 0) { alert('Pick at least one Moon Ranger to stake.'); return; }
+          r = await FoxPoints.api('/api/stake', { method: 'POST', body: { mints: [...picked] } });
+        }
+        if (r && r.error) {
+          alert(r.error === 'no Moon Ranger in this wallet'
+            ? 'No Moon Ranger found in this wallet.\n\nStaking is for holders — grab one and reconnect.'
+            : r.error);
+          return;
+        }
         if (r && r.player) FoxPoints.server = r.player;
+        await loadRangers();
         FoxPoints.render(); renderStaking(); renderLeaderboard();
         return;
       }
@@ -2012,7 +2185,7 @@
           (days < 1 ? Math.floor(days * 24) + 'h' : days.toFixed(1) + ' days');
         earned.textContent = pending.toLocaleString();
         if (rateEl) rateEl.textContent = 'points earned · ' + stakeRate(s).toLocaleString() + ' / day';
-        btn.textContent = 'Unstake';
+        btn.textContent = picked.size > 0 ? ('Stake ' + picked.size + ' more') : 'Unstake all';
         claimWrap.hidden = pending <= 0;
       } else {
         if (rateEl) {
@@ -2024,7 +2197,7 @@
           (rangerCount === null ? 'Checking wallet…' : 'Not staked yet');
 
         earned.textContent = '0';
-        btn.textContent = 'Stake Moon Ranger';
+        btn.textContent = picked.size > 1 ? ('Stake ' + picked.size + ' Rangers') : 'Stake Moon Ranger';
         claimWrap.hidden = true;
       }
     }

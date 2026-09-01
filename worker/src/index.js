@@ -96,8 +96,8 @@ async function addPoints(env, wallet, type, points) {
   ]);
 }
 
-async function countRangers(env, wallet) {
-  if (!env.HELIUS_API_KEY) return -2;
+async function listRangers(env, wallet) {
+  if (!env.HELIUS_API_KEY) return null;
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -113,7 +113,62 @@ async function countRangers(env, wallet) {
   if (!res.ok) throw new Error('rpc ' + res.status);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || 'rpc error');
-  return data.result.total || 0;
+  const items = (data.result && data.result.items) || [];
+  return items.map(function (it) {
+    const c = it.content || {};
+    const files = c.files || [];
+    const meta = c.metadata || {};
+    return {
+      mint: it.id,
+      name: meta.name || ('Ranger ' + String(it.id).slice(0, 4)),
+      image: (files[0] && files[0].uri) || (c.links && c.links.image) || null
+    };
+  });
+}
+
+async function countRangers(env, wallet) {
+  const list = await listRangers(env, wallet);
+  return list === null ? -2 : list.length;
+}
+
+async function stakedMints(env, wallet) {
+  const r = await env.DB.prepare('SELECT mint FROM staked_nfts WHERE wallet = ?').bind(wallet).all();
+  return (r.results || []).map(function (x) { return x.mint; });
+}
+
+// Verify a SOL payment on-chain before it unlocks anything.
+async function verifyPayment(env, wallet, signature, minLamports, purpose) {
+  if (!env.TREASURY_WALLET || !minLamports) return { ok: true, skipped: true };
+  if (!signature) return { ok: false, error: 'payment required' };
+
+  const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
+  if (seen) return { ok: false, error: 'this payment was already used' };
+
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 'tx', method: 'getTransaction',
+      params: [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]
+    })
+  });
+  const data = await res.json();
+  const tx = data && data.result;
+  if (!tx) return { ok: false, error: 'payment not found yet — try again in a moment' };
+  if (tx.meta && tx.meta.err) return { ok: false, error: 'that payment failed on-chain' };
+
+  const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
+  const treasuryIdx = keys.indexOf(env.TREASURY_WALLET);
+  const payerIdx = keys.indexOf(wallet);
+  if (treasuryIdx < 0) return { ok: false, error: 'payment did not go to the right wallet' };
+  if (payerIdx !== 0) return { ok: false, error: 'payment was not sent by your wallet' };
+
+  const delta = (tx.meta.postBalances[treasuryIdx] || 0) - (tx.meta.preBalances[treasuryIdx] || 0);
+  if (delta < minLamports) return { ok: false, error: 'payment was too small' };
+
+  await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
+    .bind(signature, wallet, delta, purpose, Date.now()).run();
+  return { ok: true, lamports: delta };
 }
 
 async function loadStake(env, wallet) {
@@ -139,8 +194,10 @@ async function playerState(env, wallet) {
   const p = await env.DB.prepare('SELECT points, last_visit, migrated FROM players WHERE wallet = ?').bind(wallet).first();
   const log = await env.DB.prepare('SELECT type, points, ts FROM events WHERE wallet = ? ORDER BY ts DESC LIMIT 50').bind(wallet).all();
   const s = await loadStake(env, wallet);
+  const staked = await env.DB.prepare('SELECT mint FROM staked_nfts WHERE wallet = ?').bind(wallet).all();
   return {
     wallet,
+    stakedMints: (staked.results || []).map(function (x) { return x.mint; }),
     points: p ? p.points : 0,
     migrated: p ? !!p.migrated : false,
     lastVisit: p ? p.last_visit : null,
@@ -219,25 +276,81 @@ export default {
         return json(request, env, { awarded: AWARDS.visit, player: await playerState(env, wallet) });
       }
 
-      if (path === '/api/stake' && request.method === 'POST') {
-        const count = await countRangers(env, wallet);
-        if (count === 0) return json(request, env, { error: 'no Moon Ranger in this wallet' }, 403);
-        const s = await loadStake(env, wallet);
-        if (s.staked) {
-          // holdings may have changed: bank at the old rate, continue at the new
-          if (count > 0 && count !== s.count) {
-            await saveStake(env, wallet, { staked: 1, since: Date.now(), count, banked: stakeAccrued(s) });
-          }
-        } else {
-          await saveStake(env, wallet, { staked: 1, since: Date.now(), count: count > 0 ? count : 1, banked: s.banked || 0 });
+      // which Rangers this wallet holds, and which are already staked
+      if (path === '/api/rangers' && request.method === 'GET') {
+        const owned = await listRangers(env, wallet);
+        if (owned === null) return json(request, env, { rangers: [], staked: [], verified: false });
+        const staked = await stakedMints(env, wallet);
+        const ownedMints = owned.map(function (r) { return r.mint; });
+        // drop anything that has since left the wallet
+        const stale = staked.filter(function (m) { return ownedMints.indexOf(m) < 0; });
+        if (stale.length) {
+          const s = await loadStake(env, wallet);
+          const remaining = staked.length - stale.length;
+          await saveStake(env, wallet, { staked: remaining > 0 ? 1 : 0, since: remaining > 0 ? Date.now() : 0, count: remaining, banked: stakeAccrued(s) });
+          await env.DB.batch(stale.map(function (m) {
+            return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
+          }));
         }
-        return json(request, env, { player: await playerState(env, wallet), rangers: count });
+        return json(request, env, {
+          rangers: owned,
+          staked: await stakedMints(env, wallet),
+          verified: true,
+          feeLamports: Number(env.STAKE_FEE_LAMPORTS || 0),
+          treasury: env.TREASURY_WALLET || null
+        });
+      }
+
+      if (path === '/api/stake' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const owned = await listRangers(env, wallet);
+        if (owned === null) return json(request, env, { error: 'ownership checks unavailable' }, 503);
+        const ownedMints = owned.map(function (r) { return r.mint; });
+        if (!ownedMints.length) return json(request, env, { error: 'no Moon Ranger in this wallet' }, 403);
+
+        let want = Array.isArray(body.mints) && body.mints.length ? body.mints : ownedMints;
+        want = want.filter(function (m) { return ownedMints.indexOf(m) >= 0; });
+        if (!want.length) return json(request, env, { error: 'those Rangers are not in this wallet' }, 403);
+
+        const already = await stakedMints(env, wallet);
+        const toAdd = want.filter(function (m) { return already.indexOf(m) < 0; });
+        if (!toAdd.length) return json(request, env, { player: await playerState(env, wallet), added: 0 });
+
+        // fee is charged per Ranger newly staked
+        const fee = Number(env.STAKE_FEE_LAMPORTS || 0) * toAdd.length;
+        const pay = await verifyPayment(env, wallet, body.paymentSignature, fee, 'stake');
+        if (!pay.ok) return json(request, env, { error: pay.error, feeLamports: fee }, 402);
+
+        const s = await loadStake(env, wallet);
+        const now = Date.now();
+        await env.DB.batch(toAdd.map(function (m) {
+          return env.DB.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(wallet, m, now);
+        }));
+        const total = already.length + toAdd.length;
+        await saveStake(env, wallet, { staked: 1, since: now, count: total, banked: stakeAccrued(s) });
+        return json(request, env, { player: await playerState(env, wallet), added: toAdd.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/unstake' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const already = await stakedMints(env, wallet);
+        const drop = Array.isArray(body.mints) && body.mints.length
+          ? body.mints.filter(function (m) { return already.indexOf(m) >= 0; })
+          : already;
+        if (!drop.length) return json(request, env, { player: await playerState(env, wallet), removed: 0 });
+
         const s = await loadStake(env, wallet);
-        await saveStake(env, wallet, { staked: 0, since: 0, count: 0, banked: stakeAccrued(s) });
-        return json(request, env, { player: await playerState(env, wallet) });
+        await env.DB.batch(drop.map(function (m) {
+          return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
+        }));
+        const remaining = already.length - drop.length;
+        await saveStake(env, wallet, {
+          staked: remaining > 0 ? 1 : 0,
+          since: remaining > 0 ? Date.now() : 0,
+          count: remaining,
+          banked: stakeAccrued(s)
+        });
+        return json(request, env, { player: await playerState(env, wallet), removed: drop.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/claim' && request.method === 'POST') {

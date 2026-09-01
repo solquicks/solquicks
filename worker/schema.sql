@@ -32,3 +32,17 @@ CREATE TABLE IF NOT EXISTS nonces (
   wallet  TEXT NOT NULL,
   expires INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS staked_nfts (
+  wallet TEXT NOT NULL,
+  mint   TEXT NOT NULL,
+  since  INTEGER NOT NULL,
+  PRIMARY KEY (wallet, mint)
+);
+CREATE TABLE IF NOT EXISTS payments (
+  signature TEXT PRIMARY KEY,
+  wallet    TEXT NOT NULL,
+  lamports  INTEGER NOT NULL,
+  purpose   TEXT NOT NULL,
+  ts        INTEGER NOT NULL
+);
