@@ -1,2 +1,6 @@
 .DS_Store
 .claude/
+
+# wrangler local state
+worker/.wrangler/
+worker/node_modules/

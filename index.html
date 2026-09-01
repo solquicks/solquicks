@@ -14,7 +14,7 @@
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://*.workers.dev; frame-ancestors 'self';"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.workers.dev; frame-ancestors 'self';"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
@@ -1371,26 +1371,88 @@
     }
 
     // ── FOX POINTS ──
+    // Signed-in players are tracked server-side (Cloudflare Worker + D1) so a
+    // balance can't be edited in devtools and follows the wallet across devices.
+    // Anonymous visitors accumulate locally and migrate that total on first sign-in.
+    const POINTS_API = 'https://solquicks-points.solquicks-45c.workers.dev';
+
     const FOX_EVENTS = {
-      visit:   { pts: 5,   label: 'Daily visit 👋' },
-      spin:    { pts: 0,   label: 'Giveaway wheel spin 🎡' }, // retired; kept so past entries still render
-      plushie: { pts: 500, label: 'Plushie purchase 🧸' },
-      game:    { pts: 25,  label: 'Game played 🎮' },
-      gacha:   { pts: 50,  label: 'Gacha pull 🎰' },
-      stake:   { pts: 100, label: 'Moon Ranger staking 🌕' }
+      visit:    { pts: 5,   label: 'Daily visit 👋' },
+      plushie:  { pts: 500, label: 'Plushie purchase 🧸' },
+      game:     { pts: 25,  label: 'Game played 🎮' },
+      gacha:    { pts: 50,  label: 'Gacha pull 🎰' },
+      stake:    { pts: 100, label: 'Moon Ranger staking 🌕' },
+      migrated: { pts: 0,   label: 'Points carried over 📦' },
+      spin:     { pts: 0,   label: 'Giveaway wheel spin 🎡' } // retired; kept so past entries still render
     };
 
     const FoxPoints = {
+      server: null,   // player object from the API when signed in
+      token: null,
+
+      loadToken() {
+        try {
+          const raw = localStorage.getItem('fox_session');
+          if (!raw) return null;
+          const s = JSON.parse(raw);
+          if (!s || !s.token || s.expires < Date.now()) return null;
+          return s;
+        } catch (e) { return null; }
+      },
+      saveToken(token, expires, wallet) {
+        try { localStorage.setItem('fox_session', JSON.stringify({ token, expires, wallet })); } catch (e) {}
+      },
+      clearToken() {
+        try { localStorage.removeItem('fox_session'); } catch (e) {}
+        this.token = null; this.server = null;
+      },
+
+      // local fallback for visitors who haven't signed in
       load() {
         try { return JSON.parse(localStorage.getItem('foxpoints')) || { total: 0, log: [], lastVisit: '' }; }
         catch (e) { return { total: 0, log: [], lastVisit: '' }; }
       },
-      save(state) {
-        try { localStorage.setItem('foxpoints', JSON.stringify(state)); } catch (e) {}
+      save(state) { try { localStorage.setItem('foxpoints', JSON.stringify(state)); } catch (e) {} },
+
+      total() { return this.server ? this.server.points : this.load().total; },
+      logEntries() { return this.server ? this.server.log : this.load().log; },
+
+      async api(path, opts) {
+        opts = opts || {};
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+        const res = await fetch(POINTS_API + path, {
+          method: opts.method || 'GET', headers,
+          body: opts.body ? JSON.stringify(opts.body) : undefined
+        });
+        if (res.status === 401 && this.token) { this.clearToken(); }
+        return res.json().catch(function () { return null; });
       },
-      award(event) {
+
+      async refresh() {
+        if (!this.token) return;
+        const r = await this.api('/api/me');
+        if (r && r.player) this.server = r.player;
+        this.render();
+      },
+
+      // called for client-side actions; server decides the actual award
+      async award(event) {
+        if (this.server && this.token) {
+          if (event === 'visit') {
+            const r = await this.api('/api/visit', { method: 'POST' });
+            if (r && r.player) this.server = r.player;
+          } else if (['plushie', 'game', 'gacha'].includes(event)) {
+            const r = await this.api('/api/award', { method: 'POST', body: { type: event } });
+            if (r && r.player) this.server = r.player;
+          }
+          this.render();
+          renderLeaderboard();
+          return;
+        }
+        // anonymous: keep a local tally to migrate later
         const cfg = FOX_EVENTS[event];
-        if (!cfg) return;
+        if (!cfg || !cfg.pts) return;
         const state = this.load();
         if (event === 'visit') {
           const today = new Date().toISOString().slice(0, 10);
@@ -1402,27 +1464,28 @@
         if (state.log.length > 50) state.log.length = 50;
         this.save(state);
         this.render();
+        renderLeaderboard();
       },
-      awardCustom(event, pts) {
-        if (!pts || pts <= 0) return;
-        const state = this.load();
-        state.total += pts;
-        state.log.unshift({ e: event, p: pts, t: Date.now() });
-        if (state.log.length > 50) state.log.length = 50;
-        this.save(state);
-        this.render();
-      },
+
       render() {
-        const state = this.load();
         const totalEl = document.getElementById('lb-total');
-        if (totalEl) totalEl.textContent = state.total.toLocaleString();
+        if (totalEl) totalEl.textContent = this.total().toLocaleString();
+
+        const noteEl = document.getElementById('lb-rank-note');
+        if (noteEl) {
+          noteEl.innerHTML = this.server
+            ? 'Saved to your wallet — these follow you to any device.'
+            : 'Saved on this device only. <strong>Connect a wallet</strong> to keep them for good.';
+        }
+
         const logEl = document.getElementById('lb-log');
         if (!logEl) return;
-        if (state.log.length === 0) {
+        const log = this.logEntries();
+        if (!log || log.length === 0) {
           logEl.innerHTML = '<div class="lb-log-empty">No points yet — go do something foxy 🦊</div>';
           return;
         }
-        logEl.innerHTML = state.log.map(function(item) {
+        logEl.innerHTML = log.map(function (item) {
           const cfg = FOX_EVENTS[item.e] || { label: item.e };
           const d = new Date(item.t);
           const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -1430,11 +1493,57 @@
             '</span><span class="lb-log-when">' + when +
             '</span><span class="lb-log-pts">+' + item.p + '</span></div>';
         }).join('');
+      },
+
+      // Prove wallet ownership, then move any local points onto the account.
+      async signIn(provider, wallet) {
+        const n = await this.api('/api/nonce', { method: 'POST', body: { wallet } });
+        if (!n || !n.message) throw new Error('could not start sign-in');
+
+        const encoded = new TextEncoder().encode(n.message);
+        let sigBytes;
+        if (provider.kind === 'standard') {
+          const feat = provider.w.features['solana:signMessage'];
+          if (!feat) throw new Error('this wallet cannot sign messages');
+          const out = await feat.signMessage({ account: provider.w.accounts[0], message: encoded });
+          sigBytes = out[0].signature;
+        } else {
+          const out = await provider.w.signMessage(encoded, 'utf8');
+          sigBytes = out.signature || out;
+        }
+        let bin = '';
+        const arr = new Uint8Array(sigBytes);
+        for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+
+        const s = await this.api('/api/session', {
+          method: 'POST',
+          body: { wallet: wallet, nonce: n.nonce, signature: btoa(bin) }
+        });
+        if (!s || !s.token) throw new Error((s && s.error) || 'sign-in failed');
+
+        this.token = s.token;
+        this.server = s.player;
+        this.saveToken(s.token, s.expires, wallet);
+
+        // one-time carry-over of anonymous points
+        if (!s.player.migrated) {
+          const local = this.load();
+          const r = await this.api('/api/migrate', { method: 'POST', body: { points: local.total || 0 } });
+          if (r && r.player) this.server = r.player;
+          try { localStorage.removeItem('foxpoints'); } catch (e) {}
+        }
+        this.render();
+        renderLeaderboard();
       }
     };
 
-    FoxPoints.render();
-    FoxPoints.award('visit');
+    // restore a saved session on load
+    (function () {
+      const s = FoxPoints.loadToken();
+      if (s) { FoxPoints.token = s.token; FoxPoints.refresh(); }
+      FoxPoints.render();
+      FoxPoints.award('visit');
+    })();
 
     // Plushie buy click → points
     (function() {
@@ -1565,6 +1674,7 @@
         this.active = null;
         this.pubkey = null;
         rangerCount = null;
+        FoxPoints.clearToken();
         try { localStorage.removeItem('wallet_last'); } catch (e) {}
         this.render();
         renderStaking();
@@ -1681,6 +1791,12 @@
             if (priorErr) priorErr.remove();
             try {
               await Wallet.connect(w);
+              name.textContent = 'Sign in…';
+              try {
+                await FoxPoints.signIn(w, Wallet.pubkey);
+              } catch (e) {
+                console.warn('sign-in skipped:', e && e.message);
+              }
               closeWalletModal();
               renderStaking();
               renderLeaderboard();
@@ -1783,8 +1899,18 @@
       saveStake(s);
     }
 
-    function toggleStake() {
+    async function toggleStake() {
       if (!Wallet.pubkey) { connectWallet(); return; }
+      if (FoxPoints.token && FoxPoints.server) {
+        const staked = FoxPoints.server.stake && FoxPoints.server.stake.staked;
+        const r = await FoxPoints.api(staked ? '/api/unstake' : '/api/stake', { method: 'POST' });
+        if (r && r.error) { alert(r.error === 'no Moon Ranger in this wallet'
+          ? 'No Moon Ranger found in this wallet.\n\nStaking is for holders — grab one and reconnect.'
+          : r.error); return; }
+        if (r && r.player) FoxPoints.server = r.player;
+        FoxPoints.render(); renderStaking(); renderLeaderboard();
+        return;
+      }
       const s = loadStake();
       if (!s.staked && rangerCount !== -2 && !(rangerCount > 0)) {
         alert(rangerCount === -1
@@ -1804,7 +1930,14 @@
       renderStaking();
     }
 
-    function claimStakePoints() {
+    async function claimStakePoints() {
+      if (FoxPoints.token && FoxPoints.server) {
+        const r = await FoxPoints.api('/api/claim', { method: 'POST' });
+        if (r && r.player) FoxPoints.server = r.player;
+        if (r && r.awarded === 0) alert('Nothing to claim yet — points accrue at 100 per day, per Ranger.');
+        FoxPoints.render(); renderStaking(); renderLeaderboard();
+        return;
+      }
       const s = loadStake();
       const pending = stakeAccrued(s);
       if (pending <= 0) { alert('Nothing to claim yet — points accrue at 100 per day, per Ranger.'); return; }
@@ -1832,12 +1965,16 @@
       if (connectBtn) connectBtn.hidden = true;
       card.hidden = false;
 
-      const s = loadStake();
+      let s = loadStake();
+      if (FoxPoints.token && FoxPoints.server && FoxPoints.server.stake) {
+        const ss = FoxPoints.server.stake;
+        s = { staked: ss.staked, since: ss.since, count: ss.count, banked: 0, _serverAccrued: ss.accrued };
+      }
       const status = document.getElementById('moon-stake-status');
       const earned = document.getElementById('moon-stake-earned');
       const btn = document.getElementById('moon-stake-btn');
       const claimWrap = document.getElementById('moon-claim-wrap');
-      const pending = stakeAccrued(s);
+      const pending = (s._serverAccrued !== undefined) ? s._serverAccrued : stakeAccrued(s);
 
       // wallet line doubles as the ownership-verification readout
       if (sub) {
@@ -1896,6 +2033,8 @@
     }, 30000);
 
     // ── LEADERBOARD ──
+    // Real rankings from the points API, with the curated roster in
+    // leaderboard.json merged in for anyone not yet signed in.
     let lbRoster = null;
 
     async function loadRoster() {
@@ -1908,31 +2047,57 @@
       return lbRoster;
     }
 
+    function shortWallet(w) {
+      return w ? w.slice(0, 4) + '\u2026' + w.slice(-4) : '';
+    }
+
     async function renderLeaderboard() {
       const el = document.getElementById('lb-table');
       if (!el) return;
-      const roster = await loadRoster();
-      const me = {
-        name: Wallet.pubkey ? Wallet.short() : 'You',
-        wallet: Wallet.pubkey || '',
-        points: FoxPoints.load().total,
-        me: true
-      };
-      const rows = roster.map(function(p) {
-        return { name: p.name, wallet: p.wallet || '', points: p.points || 0, me: false };
-      }).concat([me]).sort(function(a, b) { return b.points - a.points; });
 
-      const medals = ['🥇', '🥈', '🥉'];
-      el.innerHTML = rows.map(function(r, i) {
+      let server = [];
+      try {
+        const res = await fetch(POINTS_API + '/api/leaderboard', { cache: 'no-store' });
+        const data = await res.json();
+        server = (data && data.players) ? data.players : [];
+      } catch (e) { server = []; }
+
+      const roster = await loadRoster();
+      const mine = Wallet.pubkey;
+
+      const rows = server.map(function (p) {
+        return { name: shortWallet(p.wallet), wallet: p.wallet, points: p.points, me: mine === p.wallet };
+      });
+
+      // curated names for wallets that haven't signed in
+      roster.forEach(function (p) {
+        if (p.wallet && rows.some(function (r) { return r.wallet === p.wallet; })) return;
+        rows.push({ name: p.name, wallet: p.wallet || '', points: p.points || 0, me: false });
+      });
+
+      // an unsigned visitor still sees their own local tally
+      if (!FoxPoints.server) {
+        const localTotal = FoxPoints.total();
+        if (localTotal > 0 || rows.length === 0) {
+          rows.push({ name: mine ? shortWallet(mine) : 'You', wallet: '', points: localTotal, me: true });
+        }
+      } else if (!rows.some(function (r) { return r.me; })) {
+        rows.push({ name: shortWallet(mine), wallet: mine || '', points: FoxPoints.total(), me: true });
+      }
+
+      rows.sort(function (a, b) { return b.points - a.points; });
+
+      const medals = ['\ud83e\udd47', '\ud83e\udd48', '\ud83e\udd49'];
+      el.innerHTML = rows.map(function (r, i) {
         return '<div class="lb-table-row' + (r.me ? ' me' : '') + '">' +
           '<div class="lb-rank">' + (medals[i] || '#' + (i + 1)) + '</div>' +
-          '<div class="lb-who"><div class="lb-who-name">' + escapeHtml(r.name) + (r.me ? ' ← you' : '') + '</div>' +
-          (r.wallet ? '<div class="lb-who-wallet">' + escapeHtml(r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4)) + '</div>' : '') +
+          '<div class="lb-who"><div class="lb-who-name">' + escapeHtml(r.name) + (r.me ? ' \u2190 you' : '') + '</div>' +
+          (r.wallet ? '<div class="lb-who-wallet">' + escapeHtml(shortWallet(r.wallet)) + '</div>' : '') +
           '</div><div class="lb-score">' + r.points.toLocaleString() + '</div></div>';
       }).join('');
 
-      if (rows.length === 1) {
-        el.innerHTML += '<div class="lb-log-empty">You\'re the only fox on the board — global rankings land with the on-chain leaderboard.</div>';
+      if (rows.length <= 1) {
+        el.innerHTML += '<div class="lb-log-empty">Be the first fox on the board \u2014 connect a wallet and start earning.</div>';
       }
     }
 

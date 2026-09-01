@@ -1,0 +1,5 @@
+{
+  "name": "solquicks-points",
+  "private": true,
+  "scripts": { "deploy": "wrangler deploy" }
+}

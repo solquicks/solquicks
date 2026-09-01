@@ -1,0 +1,34 @@
+CREATE TABLE IF NOT EXISTS players (
+  wallet     TEXT PRIMARY KEY,
+  points     INTEGER NOT NULL DEFAULT 0,
+  last_visit TEXT,
+  migrated   INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  wallet TEXT NOT NULL,
+  type   TEXT NOT NULL,
+  points INTEGER NOT NULL,
+  ts     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_wallet ON events(wallet, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_players_points ON players(points DESC);
+CREATE TABLE IF NOT EXISTS stakes (
+  wallet TEXT PRIMARY KEY,
+  staked INTEGER NOT NULL DEFAULT 0,
+  since  INTEGER NOT NULL DEFAULT 0,
+  count  INTEGER NOT NULL DEFAULT 0,
+  banked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token   TEXT PRIMARY KEY,
+  wallet  TEXT NOT NULL,
+  expires INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nonces (
+  nonce   TEXT PRIMARY KEY,
+  wallet  TEXT NOT NULL,
+  expires INTEGER NOT NULL
+);
