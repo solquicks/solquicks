@@ -957,6 +957,12 @@
       background: rgba(0,0,0,0.25);
       display: block;
     }
+    .rg-fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+    }
     .rg-name {
       font-size: 0.66rem;
       font-weight: 800;
@@ -1977,9 +1983,11 @@
         const locked = stakedMints.indexOf(r.mint) >= 0;
         const on = picked.has(r.mint);
         const cls = 'rg-card' + (locked ? ' locked' : (on ? ' picked' : ''));
+        // if the artwork fails to load, fall back to the Ranger's number
         const img = r.image
-          ? '<img class="rg-img" src="' + escapeHtml(r.image) + '" alt="" loading="lazy"/>'
-          : '<div class="rg-img"></div>';
+          ? '<img class="rg-img" src="' + escapeHtml(r.image) + '" alt="" loading="lazy" ' +
+            'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'rg-img rg-fallback\',textContent:\'\ud83c\udf15\'}))"/>'
+          : '<div class="rg-img rg-fallback">\ud83c\udf15</div>';
         return '<div class="' + cls + '" data-mint="' + escapeHtml(r.mint) + '" ' +
           (locked ? '' : 'onclick="togglePick(this)"') + '>' +
           img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' +

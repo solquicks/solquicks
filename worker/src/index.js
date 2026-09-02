@@ -121,7 +121,8 @@ async function listRangers(env, wallet) {
     return {
       mint: it.id,
       name: meta.name || ('Ranger ' + String(it.id).slice(0, 4)),
-      image: (files[0] && files[0].uri) || (c.links && c.links.image) || null
+      // prefer Helius's resized CDN copy; raw IPFS originals are ~750KB each
+      image: (files[0] && (files[0].cdn_uri || files[0].uri)) || (c.links && c.links.image) || null
     };
   });
 }
