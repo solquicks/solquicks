@@ -19,3 +19,19 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = "1.1.2"
 anchor-spl = "1.1.2"
+
+[dev-dependencies]
+# match litesvm 0.16's own crate versions; the umbrella solana-sdk pulls
+# secp256r1 -> openssl and an older Pubkey type, so it is avoided here
+litesvm = "0.16.0"
+solana-address = "2.6"
+solana-account = "4.3"
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-instruction = "3.4"
+solana-message = "4.4"
+solana-transaction = "4.1"
+solana-system-interface = "2.0"
+
+spl-token = { version = "8.0", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "7.0", features = ["no-entrypoint"] }
