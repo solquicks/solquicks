@@ -1983,12 +1983,10 @@
         const locked = stakedMints.indexOf(r.mint) >= 0;
         const on = picked.has(r.mint);
         const cls = 'rg-card' + (locked ? ' locked' : (on ? ' picked' : ''));
-        // CDN thumbnail first; on failure retry the original, then show a glyph
-        const img = r.image
-          ? '<img class="rg-img" src="' + escapeHtml(r.image) + '" alt="" loading="lazy"' +
-            (r.imageAlt && r.imageAlt !== r.image ? ' data-alt="' + escapeHtml(r.imageAlt) + '"' : '') +
-            ' onerror="rgImgFallback(this)"/>'
-          : '<div class="rg-img rg-fallback">\ud83c\udf15</div>';
+        // Served through our own worker: IPFS gateways 403 browser User-Agents,
+        // so the artwork has to be fetched server-side. Falls back to a glyph.
+        const img = '<img class="rg-img" src="' + POINTS_API + '/api/img?mint=' +
+          encodeURIComponent(r.mint) + '" alt="" loading="lazy" onerror="rgImgFallback(this)"/>';
         return '<div class="' + cls + '" data-mint="' + escapeHtml(r.mint) + '" ' +
           (locked ? '' : 'onclick="togglePick(this)"') + '>' +
           img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' +
@@ -2016,8 +2014,6 @@
     }
 
     function rgImgFallback(img) {
-      const alt = img.getAttribute('data-alt');
-      if (alt && img.src !== alt) { img.removeAttribute('data-alt'); img.src = alt; return; }
       const div = document.createElement('div');
       div.className = 'rg-img rg-fallback';
       div.textContent = '\ud83c\udf15';

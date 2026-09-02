@@ -209,7 +209,7 @@ async function playerState(env, wallet) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
 
@@ -218,6 +218,57 @@ export default {
     }
 
     try {
+      // ── public: Ranger artwork ──
+      // IPFS gateways serve a 403 challenge to browser User-Agents, so the
+      // image has to be fetched server-side. Deliberately keyed by MINT, not
+      // by URL: the source is read from on-chain metadata and must belong to
+      // the configured collection, so this can never be used to proxy
+      // arbitrary content.
+      if (path === '/api/img' && request.method === 'GET') {
+        const mint = url.searchParams.get('mint');
+        if (!isWallet(mint)) return new Response('bad mint', { status: 400 });
+        if (!env.HELIUS_API_KEY) return new Response('unavailable', { status: 503 });
+
+        const cache = caches.default;
+        const cacheKey = new Request(new URL('/api/img?mint=' + mint, url.origin).toString(), request);
+        const hit = await cache.match(cacheKey);
+        if (hit) return hit;
+
+        const assetRes = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'a', method: 'getAsset', params: { id: mint } })
+        });
+        const asset = await assetRes.json();
+        const result = asset && asset.result;
+        if (!result) return new Response('not found', { status: 404 });
+
+        const inCollection = (result.grouping || []).some(function (g) {
+          return g.group_key === 'collection' && g.group_value === env.MOON_RANGERS_COLLECTION;
+        });
+        if (!inCollection) return new Response('not a Moon Ranger', { status: 403 });
+
+        const files = (result.content && result.content.files) || [];
+        const src = (files[0] && files[0].uri) ||
+          (result.content && result.content.links && result.content.links.image);
+        if (!src || !/^https:\/\//.test(src)) return new Response('no image', { status: 404 });
+
+        // no browser User-Agent here, so the gateway serves the real bytes
+        const imgRes = await fetch(src, { headers: { Accept: 'image/*' }, redirect: 'follow' });
+        if (!imgRes.ok) return new Response('upstream ' + imgRes.status, { status: 502 });
+
+        const out = new Response(imgRes.body, {
+          status: 200,
+          headers: {
+            'Content-Type': imgRes.headers.get('Content-Type') || 'image/jpeg',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+        ctx.waitUntil(cache.put(cacheKey, out.clone()));
+        return out;
+      }
+
       // ── public: leaderboard ──
       if (path === '/api/leaderboard' && request.method === 'GET') {
         const rows = await env.DB.prepare(
