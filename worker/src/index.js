@@ -96,6 +96,46 @@ async function addPoints(env, wallet, type, points) {
   ]);
 }
 
+
+const IPFS_GATEWAYS = [
+  'https://nftstorage.link/ipfs/',
+  'https://ipfs.io/ipfs/',
+  'https://dweb.link/ipfs/',
+  'https://w3s.link/ipfs/'
+];
+
+/// Race the metadata's own URL against the same CID on other gateways and take
+/// whichever answers first. Racing rather than trying in turn matters: a stalled
+/// gateway would otherwise add its whole timeout to the wait, and a genuinely
+/// missing file would cost the sum of them all before falling back.
+async function fetchFirstAvailable(src) {
+  const candidates = [src];
+  const m = src.match(/\/ipfs\/(.+)$/);
+  if (m) {
+    for (const gw of IPFS_GATEWAYS) {
+      const alt = gw + m[1];
+      if (!candidates.includes(alt)) candidates.push(alt);
+    }
+  }
+  const attempts = candidates.map(function (url) {
+    return fetch(url, {
+      headers: { Accept: 'image/*' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(9000)
+    }).then(function (res) {
+      if (res.ok && (res.headers.get('Content-Type') || '').startsWith('image/')) return res;
+      throw new Error('no image');
+    });
+  });
+  // AbortSignal is not reliably honoured for subrequests here, so cap the whole
+  // race with an explicit deadline: a missing file must not stall the page.
+  const deadline = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 6000); });
+  return Promise.race([
+    Promise.any(attempts).catch(function () { return null; }),
+    deadline
+  ]);
+}
+
 async function listRangers(env, wallet) {
   if (!env.HELIUS_API_KEY) return null;
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
@@ -253,9 +293,19 @@ export default {
           (result.content && result.content.links && result.content.links.image);
         if (!src || !/^https:\/\//.test(src)) return new Response('no image', { status: 404 });
 
-        // no browser User-Agent here, so the gateway serves the real bytes
-        const imgRes = await fetch(src, { headers: { Accept: 'image/*' }, redirect: 'follow' });
-        if (!imgRes.ok) return new Response('upstream ' + imgRes.status, { status: 502 });
+        // Individual files are not always well pinned, so try several gateways
+        // rather than trusting whichever one the metadata happens to name.
+        // No browser User-Agent here, so gateways serve the real bytes.
+        const imgRes = await fetchFirstAvailable(src);
+        if (!imgRes) {
+          // cache the miss briefly so a missing file is not re-fetched on every view
+          const miss = new Response('artwork unavailable', {
+            status: 502,
+            headers: { 'Cache-Control': 'public, max-age=300', 'Access-Control-Allow-Origin': '*' }
+          });
+          ctx.waitUntil(cache.put(cacheKey, miss.clone()));
+          return miss;
+        }
 
         const out = new Response(imgRes.body, {
           status: 200,
