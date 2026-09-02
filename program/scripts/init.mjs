@@ -1,5 +1,6 @@
-// Initialize the moon-stake config on devnet.
-// Treasury is a placeholder until the owner supplies a real one; fee starts at 0.
+// Initialize the moon-stake config.
+// Treasury defaults to the owner's stake-fee wallet; override with TREASURY=...
+// Fee starts at 0 — set it with set_fee once on-chain staking is live.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import {
@@ -16,7 +17,8 @@ const disc = (name) =>
 const kp = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync(process.env.HOME + '/.config/solana/id.json', 'utf8')))
 );
-const treasury = process.env.TREASURY ? new PublicKey(process.env.TREASURY) : kp.publicKey;
+const DEFAULT_TREASURY = '39gxzvkugoEVc4Qd5imJdJ8EiqqwnUGq4RT7f4i4MPGr';
+const treasury = new PublicKey(process.env.TREASURY || DEFAULT_TREASURY);
 
 const conn = new Connection('https://api.devnet.solana.com', 'confirmed');
 const [config] = PublicKey.findProgramAddressSync([Buffer.from('config')], PROGRAM_ID);

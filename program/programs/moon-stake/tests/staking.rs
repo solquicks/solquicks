@@ -31,6 +31,7 @@ fn from_anchor(p: &anchor_lang::prelude::Pubkey) -> Address {
     Address::new_from_array(p.to_bytes())
 }
 
+#[allow(dead_code)]
 struct World {
     svm: LiteSVM,
     admin: Keypair,
@@ -760,5 +761,83 @@ fn fee_cannot_be_diverted_to_another_wallet() {
     assert!(
         !err.is_empty(),
         "fees must only go to the configured treasury"
+    );
+}
+
+#[test]
+fn admin_can_rotate_the_treasury_and_fees_follow_it() {
+    const FEE: u64 = 10_000_000;
+    let mut w = setup(FEE);
+    let new_treasury = Keypair::new().pubkey();
+
+    let ix = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::SetTreasury {
+                admin: to_anchor(&w.admin.pubkey()),
+                config: to_anchor(&w.config),
+                new_treasury: to_anchor(&new_treasury),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetTreasury {}.data(),
+    };
+    let admin = w.admin.insecure_clone();
+    send(&mut w.svm, &[ix], &admin, &[]).expect("admin should be able to rotate the treasury");
+
+    // the fee must now land in the new wallet, and the old one must be refused
+    let owner = Keypair::new();
+    w.svm.airdrop(&owner.pubkey(), 10_000_000_000).unwrap();
+    let (mint, owner_token, metadata) =
+        mint_ranger(&mut w.svm, &owner.pubkey(), Some((true, w.collection)));
+
+    let old_treasury = w.treasury;
+    w.treasury = new_treasury;
+    let before = w
+        .svm
+        .get_account(&new_treasury)
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    let __ix = stake_ix(&w, &owner.pubkey(), &mint, &owner_token, &metadata);
+    send(&mut w.svm, &[__ix], &owner, &[]).expect("staking should pay the new treasury");
+    let after = w
+        .svm
+        .get_account(&new_treasury)
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    assert_eq!(after - before, FEE, "new treasury should receive the fee");
+
+    // paying the old treasury must now fail
+    let (m2, t2, md2) = mint_ranger(&mut w.svm, &owner.pubkey(), Some((true, w.collection)));
+    w.treasury = old_treasury;
+    w.svm.expire_blockhash();
+    let __ix = stake_ix(&w, &owner.pubkey(), &m2, &t2, &md2);
+    let err = send(&mut w.svm, &[__ix], &owner, &[]).unwrap_err();
+    assert!(!err.is_empty(), "the superseded treasury must be refused");
+}
+
+#[test]
+fn non_admin_cannot_rotate_the_treasury() {
+    let mut w = setup(0);
+    let rando = Keypair::new();
+    w.svm.airdrop(&rando.pubkey(), 10_000_000_000).unwrap();
+    let attacker_wallet = Keypair::new().pubkey();
+
+    let ix = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::SetTreasury {
+                admin: to_anchor(&rando.pubkey()),
+                config: to_anchor(&w.config),
+                new_treasury: to_anchor(&attacker_wallet),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetTreasury {}.data(),
+    };
+    let err = send(&mut w.svm, &[ix], &rando, &[]).unwrap_err();
+    assert!(
+        !err.is_empty(),
+        "a stranger must not be able to redirect fees to themselves"
     );
 }

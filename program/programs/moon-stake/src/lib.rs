@@ -57,6 +57,17 @@ pub mod moon_stake {
         Ok(())
     }
 
+    /// Rotate where stake fees are paid. Without this the treasury would be
+    /// fixed at initialization, so a compromised or lost treasury wallet would
+    /// mean redeploying the program.
+    pub fn set_treasury(ctx: Context<SetTreasury>) -> Result<()> {
+        ctx.accounts.config.treasury = ctx.accounts.new_treasury.key();
+        emit!(TreasuryChanged {
+            treasury: ctx.accounts.config.treasury,
+        });
+        Ok(())
+    }
+
     /// Move one Ranger into escrow and record who it came from.
     pub fn stake(ctx: Context<Stake>) -> Result<()> {
         let config = &ctx.accounts.config;
@@ -307,6 +318,20 @@ pub struct AdminOnly<'info> {
 }
 
 #[derive(Accounts)]
+pub struct SetTreasury<'info> {
+    pub admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"config"],
+        bump = config.bump,
+        has_one = admin @ StakeError::NotAdmin
+    )]
+    pub config: Account<'info, Config>,
+    /// CHECK: only recorded as a payout destination; never signs, never read
+    pub new_treasury: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
 pub struct Stake<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
@@ -466,6 +491,11 @@ pub struct Unstaked {
     pub nft_mint: Pubkey,
     pub staked_at: i64,
     pub unstaked_at: i64,
+}
+
+#[event]
+pub struct TreasuryChanged {
+    pub treasury: Pubkey,
 }
 
 #[event]
