@@ -31,7 +31,11 @@ pub mod moon_stake {
 
     /// One-time setup. `admin` can pause staking and trigger emergency returns,
     /// but can never take custody of an NFT.
-    pub fn initialize(ctx: Context<Initialize>, collection: Pubkey, fee_lamports: u64) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        collection: Pubkey,
+        fee_lamports: u64,
+    ) -> Result<()> {
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
         config.treasury = ctx.accounts.treasury.key();
@@ -68,7 +72,7 @@ pub mod moon_stake {
         if config.fee_lamports > 0 {
             anchor_lang::system_program::transfer(
                 CpiContext::new(
-                    ctx.accounts.system_program.to_account_info(),
+                    ctx.accounts.system_program.key(),
                     anchor_lang::system_program::Transfer {
                         from: ctx.accounts.owner.to_account_info(),
                         to: ctx.accounts.treasury.to_account_info(),
@@ -80,7 +84,7 @@ pub mod moon_stake {
 
         transfer(
             CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.token_program.key(),
                 Transfer {
                     from: ctx.accounts.owner_token.to_account_info(),
                     to: ctx.accounts.vault_token.to_account_info(),
@@ -115,7 +119,7 @@ pub mod moon_stake {
             &ctx.accounts.vault_token,
             &ctx.accounts.owner_token,
             &ctx.accounts.stake_record,
-            &ctx.accounts.owner,
+            ctx.accounts.owner.to_account_info(),
             &ctx.accounts.token_program,
         )?;
 
@@ -138,7 +142,7 @@ pub mod moon_stake {
             &ctx.accounts.vault_token,
             &ctx.accounts.owner_token,
             &ctx.accounts.stake_record,
-            &ctx.accounts.owner,
+            ctx.accounts.owner.to_account_info(),
             &ctx.accounts.token_program,
         )?;
 
@@ -158,7 +162,7 @@ fn release_nft<'info>(
     vault_token: &Account<'info, TokenAccount>,
     owner_token: &Account<'info, TokenAccount>,
     stake_record: &Account<'info, StakeRecord>,
-    owner: &UncheckedAccount<'info>,
+    owner: AccountInfo<'info>,
     token_program: &Program<'info, Token>,
 ) -> Result<()> {
     require!(vault_token.amount == 1, StakeError::VaultEmpty);
@@ -169,7 +173,7 @@ fn release_nft<'info>(
 
     transfer(
         CpiContext::new_with_signer(
-            token_program.to_account_info(),
+            token_program.key(),
             Transfer {
                 from: vault_token.to_account_info(),
                 to: owner_token.to_account_info(),
@@ -182,10 +186,10 @@ fn release_nft<'info>(
 
     // reclaim the vault's rent for the owner
     close_account(CpiContext::new_with_signer(
-        token_program.to_account_info(),
+        token_program.key(),
         CloseAccount {
             account: vault_token.to_account_info(),
-            destination: owner.to_account_info(),
+            destination: owner,
             authority: stake_record.to_account_info(),
         },
         signer,
@@ -206,12 +210,19 @@ fn verify_collection_member(
     )
     .0;
     require_keys_eq!(metadata.key(), expected_pda, StakeError::BadMetadata);
-    require!(metadata.owner == &TOKEN_METADATA_ID, StakeError::BadMetadata);
+    require!(
+        metadata.owner == &TOKEN_METADATA_ID,
+        StakeError::BadMetadata
+    );
 
     let data = metadata.try_borrow_data()?;
     let collection = read_collection(&data).ok_or(StakeError::NoCollection)?;
     require!(collection.0, StakeError::CollectionUnverified);
-    require_keys_eq!(collection.1, *expected_collection, StakeError::WrongCollection);
+    require_keys_eq!(
+        collection.1,
+        *expected_collection,
+        StakeError::WrongCollection
+    );
     Ok(())
 }
 
@@ -271,7 +282,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + Config::INIT_SPACE,
+        space = Config::DISCRIMINATOR.len() + Config::INIT_SPACE,
         seeds = [b"config"],
         bump
     )]
@@ -319,7 +330,7 @@ pub struct Stake<'info> {
     #[account(
         init,
         payer = owner,
-        space = 8 + StakeRecord::INIT_SPACE,
+        space = StakeRecord::DISCRIMINATOR.len() + StakeRecord::INIT_SPACE,
         seeds = [b"stake", nft_mint.key().as_ref()],
         bump
     )]
