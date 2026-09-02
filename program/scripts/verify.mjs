@@ -1,0 +1,13 @@
+import { Connection, PublicKey } from '@solana/web3.js';
+const conn = new Connection('https://api.devnet.solana.com', 'confirmed');
+const config = new PublicKey('DQLKuWCTgba6eZt9MieMmyBgGeNw9z6MtjuwCzUrNyFZ');
+const a = await conn.getAccountInfo(config);
+const d = a.data.subarray(8);
+const pk = (o) => new PublicKey(d.subarray(o, o + 32)).toBase58();
+console.log('admin       :', pk(0));
+console.log('treasury    :', pk(32));
+console.log('collection  :', pk(64));
+console.log('fee_lamports:', d.readBigUInt64LE(96).toString());
+console.log('total_staked:', d.readBigUInt64LE(104).toString());
+console.log('paused      :', d[112] === 1);
+console.log('collection matches Moon Rangers:', pk(64) === '5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz');

@@ -233,8 +233,9 @@ fn read_collection(data: &[u8]) -> Option<(bool, Pubkey)> {
 
     // three borsh strings: name, symbol, uri
     for _ in 0..3 {
-        let len = u32::from_le_bytes(data.get(o..o + 4)?.try_into().ok()?) as usize;
-        o = o.checked_add(4)?.checked_add(len)?;
+        let end = o.checked_add(4)?;
+        let len = u32::from_le_bytes(data.get(o..end)?.try_into().ok()?) as usize;
+        o = end.checked_add(len)?;
     }
     o = o.checked_add(2)?; // seller_fee_basis_points
 
@@ -243,8 +244,9 @@ fn read_collection(data: &[u8]) -> Option<(bool, Pubkey)> {
         0 => o = o.checked_add(1)?,
         1 => {
             o = o.checked_add(1)?;
-            let n = u32::from_le_bytes(data.get(o..o + 4)?.try_into().ok()?) as usize;
-            o = o.checked_add(4)?.checked_add(n.checked_mul(34)?)?;
+            let end = o.checked_add(4)?;
+            let n = u32::from_le_bytes(data.get(o..end)?.try_into().ok()?) as usize;
+            o = end.checked_add(n.checked_mul(34)?)?;
         }
         _ => return None,
     }
@@ -257,8 +259,10 @@ fn read_collection(data: &[u8]) -> Option<(bool, Pubkey)> {
     match data.get(o)? {
         0 => None,
         1 => {
-            let verified = *data.get(o + 1)? == 1;
-            let key = Pubkey::try_from(data.get(o + 2..o + 34)?).ok()?;
+            let verified = *data.get(o.checked_add(1)?)? == 1;
+            let start = o.checked_add(2)?;
+            let end = o.checked_add(34)?;
+            let key = Pubkey::try_from(data.get(start..end)?).ok()?;
             Some((verified, key))
         }
         _ => None,
