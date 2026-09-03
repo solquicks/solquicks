@@ -239,7 +239,7 @@ fn verify_collection_member(
 
 /// Walk the Token Metadata layout to the optional `collection` field.
 /// Returns (verified, collection_key).
-fn read_collection(data: &[u8]) -> Option<(bool, Pubkey)> {
+pub(crate) fn read_collection(data: &[u8]) -> Option<(bool, Pubkey)> {
     let mut o: usize = 1 + 32 + 32; // key + update_authority + mint
 
     // three borsh strings: name, symbol, uri
@@ -530,4 +530,127 @@ pub enum StakeError {
     WrongCollection,
     #[msg("Treasury does not match config")]
     WrongTreasury,
+}
+
+#[cfg(test)]
+mod parser_fuzz {
+    //! `read_collection` walks attacker-influenceable bytes with raw offsets,
+    //! which makes it the most likely place for a panic to hide. A panic here
+    //! is not a vulnerability on its own — a failed transaction is not a stolen
+    //! NFT — but it would be a denial of service and a sign the bounds checks
+    //! are not doing what they claim. These tests assert it always returns
+    //! rather than unwinding, whatever it is handed.
+    use super::read_collection;
+
+    /// A well-formed metadata body, so mutations start from something valid.
+    fn valid() -> Vec<u8> {
+        let mut d = Vec::new();
+        d.push(4u8);
+        d.extend_from_slice(&[7u8; 32]); // update authority
+        d.extend_from_slice(&[9u8; 32]); // mint
+        for (len, text) in [
+            (32usize, "RANGER #1"),
+            (10, "MNRNG"),
+            (200, "https://x/1.json"),
+        ] {
+            let mut buf = vec![0u8; len];
+            buf[..text.len()].copy_from_slice(text.as_bytes());
+            d.extend_from_slice(&(len as u32).to_le_bytes());
+            d.extend_from_slice(&buf);
+        }
+        d.extend_from_slice(&500u16.to_le_bytes());
+        d.push(0); // creators: None
+        d.push(1); // primary_sale_happened
+        d.push(1); // is_mutable
+        d.push(0); // edition_nonce: None
+        d.push(0); // token_standard: None
+        d.push(1); // collection: Some
+        d.push(1); // verified
+        d.extend_from_slice(&[3u8; 32]);
+        d
+    }
+
+    /// Cheap deterministic noise — no dev-dependency needed, and a fixed seed
+    /// means a failure can be reproduced exactly.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn byte(&mut self) -> u8 {
+            (self.next() >> 24) as u8
+        }
+    }
+
+    #[test]
+    fn valid_input_parses() {
+        let got = read_collection(&valid()).expect("a well-formed body should parse");
+        assert!(got.0, "collection should read as verified");
+        assert_eq!(got.1.to_bytes(), [3u8; 32]);
+    }
+
+    #[test]
+    fn never_panics_on_random_bytes() {
+        let mut rng = Rng(0x5eed_1234);
+        for len in 0..400usize {
+            for _ in 0..25 {
+                let data: Vec<u8> = (0..len).map(|_| rng.byte()).collect();
+                let _ = read_collection(&data);
+            }
+        }
+    }
+
+    #[test]
+    fn never_panics_on_truncation() {
+        let full = valid();
+        for cut in 0..full.len() {
+            let _ = read_collection(&full[..cut]);
+        }
+    }
+
+    #[test]
+    fn never_panics_on_bit_flips() {
+        let full = valid();
+        let mut rng = Rng(0xfeed_9876);
+        for _ in 0..4000 {
+            let mut d = full.clone();
+            let flips = 1 + (rng.next() % 6) as usize;
+            for _ in 0..flips {
+                let i = (rng.next() as usize) % d.len();
+                d[i] ^= 1 << (rng.next() % 8);
+            }
+            let _ = read_collection(&d);
+        }
+    }
+
+    #[test]
+    fn absurd_length_prefixes_are_refused_not_fatal() {
+        // a hostile length field is the classic way to walk a parser off the end
+        for bogus in [u32::MAX, u32::MAX / 2, 0x7fff_ffff, 1_000_000] {
+            let mut d = valid();
+            d[65..69].copy_from_slice(&bogus.to_le_bytes()); // the name length
+            assert!(
+                read_collection(&d).is_none(),
+                "an impossible length must not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn creator_count_cannot_overflow_the_offset() {
+        let mut d = valid();
+        let creators_at = 1 + 32 + 32 + (4 + 32) + (4 + 10) + (4 + 200) + 2;
+        d[creators_at] = 1; // creators: Some
+        let mut tail = u32::MAX.to_le_bytes().to_vec(); // an impossible count
+        tail.extend_from_slice(&d[creators_at + 1..]);
+        d.truncate(creators_at + 1);
+        d.extend_from_slice(&tail);
+        assert!(
+            read_collection(&d).is_none(),
+            "an impossible creator count must not parse"
+        );
+    }
 }

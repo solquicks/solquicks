@@ -46,12 +46,17 @@ bugs can be patched. This is centralisation: the authority holder could deploy
 code that moves staked NFTs. Accepted while the operator and holders are the
 same small group. Move to a multisig before opening to the public.
 
-### AR-3 — no fuzzing yet
+### AR-3 — fuzzing is hand-rolled, not Trident *(largely closed)*
 
-Trident fuzzing has not been run. The metadata parser is the natural target,
-since it walks attacker-influenced bytes. Its offsets were validated against two
-live mainnet Rangers and it is fully bounds-checked, but fuzzing should happen
-before mainnet.
+Trident is not installed and pulls a heavy toolchain, so the parser is fuzzed
+directly in `parser_fuzz` instead: random bytes at every length, every possible
+truncation of a valid body, several thousand bit-flip mutations, and
+deliberately impossible length and count prefixes. Roughly 14,000 hostile
+inputs, none of which panic; the impossible-length cases are asserted to be
+*refused* rather than merely survived.
+
+This covers the same failure class Trident would target for this function. It
+does not cover cross-instruction state sequences, which Trident would.
 
 ## Verified properties
 
@@ -87,16 +92,18 @@ Each is covered by a passing test in `programs/moon-stake/tests/staking.rs`.
 - [x] Distinct PDA seed prefixes (`config`, `stake`)
 - [x] `cargo fmt` and `clippy` clean
 - [x] 15/15 tests passing
-- [ ] Trident fuzzing — **outstanding**
-- [ ] Independent human review — **outstanding**
-- [ ] Verifiable build — **outstanding**
-- [ ] Devnet soak — **in progress from today**
+- [x] Parser fuzzing — 6 tests, ~14,000 hostile inputs, no panics
+- [ ] Independent human review — **with Tony**, brief at `program/REVIEW.md`
+- [ ] Verifiable build — **blocked**: needs Docker, which is not installed
+- [x] Devnet deployment reached and parsed a real transaction from the site
+- [ ] Devnet soak with real staking — **blocked on devnet SOL** (faucets rate-limited)
 
 ## Before mainnet
 
-1. Fuzz the metadata parser with Trident
-2. Independent human review of `lib.rs` (~490 lines)
-3. `anchor build --verifiable`
-4. Devnet soak with real staking flows
+1. ~~Fuzz the metadata parser~~ — done, see AR-3
+2. Independent human review of `lib.rs` — with Tony, brief at `program/REVIEW.md`
+3. `anchor build --verifiable` — needs Docker installed
+4. Devnet soak with real staking flows — needs devnet SOL and a devnet test
+   collection, which needs a `set_collection` instruction and a redeploy
 5. Mainnet staged: owner's own 3 Rangers → a few holders → open
 6. Move upgrade authority to a multisig before opening publicly
