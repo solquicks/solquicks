@@ -1740,6 +1740,10 @@
         const r = await this.api('/api/me');
         if (r && r.player) this.server = r.player;
         this.render();
+        renderStaking();
+        // A restored session skipped this, so the Ranger grid stayed empty on
+        // every page reload — it only ever appeared right after signing in.
+        if (typeof loadRangers === 'function') loadRangers();
       },
 
       // called for client-side actions; server decides the actual award
