@@ -3,6 +3,11 @@
 The strip at the top of solquicks.com. Sold by hand for now — the point is to
 find out what it's worth before building an auction around it.
 
+## Price
+
+**$250 / week.** Change it whenever — the point is having a number to quote
+when someone asks on stream.
+
 ## Booking one
 
 Edit `banner.json`, commit, push. Live in about a minute.
@@ -17,6 +22,9 @@ Edit `banner.json`, commit, push. Live in about a minute.
   "until": "2026-09-30"
 }
 ```
+
+`image` fills a wide 3:1 hero, so ask for artwork around 1200x400. Without one
+the emoji is used on a gradient.
 
 `until` is the safety net: the slot reverts to your own promos the day after,
 so a finished campaign can never quietly keep running. `image` is optional —

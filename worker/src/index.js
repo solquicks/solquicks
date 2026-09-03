@@ -237,15 +237,83 @@ async function playerState(env, wallet) {
   const log = await env.DB.prepare('SELECT type, points, ts FROM events WHERE wallet = ? ORDER BY ts DESC LIMIT 50').bind(wallet).all();
   const s = await loadStake(env, wallet);
   const staked = await env.DB.prepare('SELECT mint FROM staked_nfts WHERE wallet = ?').bind(wallet).all();
+  const claimed = p ? p.points : 0;
+  const pending = stakeAccrued(s);
   return {
     wallet,
     stakedMints: (staked.results || []).map(function (x) { return x.mint; }),
-    points: p ? p.points : 0,
+    points: claimed,
+    pending: pending,
+    total: claimed + pending,
     migrated: p ? !!p.migrated : false,
     lastVisit: p ? p.last_visit : null,
     log: (log.results || []).map(r => ({ e: r.type, p: r.points, t: r.ts })),
     stake: { staked: !!s.staked, since: s.since, count: s.count, accrued: stakeAccrued(s) }
   };
+}
+
+
+// ── RATE LIMITING ──
+// Counted in D1 rather than the Workers rate-limit binding: that binding
+// accepted 16 calls against a limit of 10 in testing, so it is not enforcing
+// here. Keyed by wallet when the caller is signed in (so one wallet cannot
+// spread abuse across IPs) and by IP otherwise. The window is folded into the
+// key, which makes each window self-contained and cheap to expire.
+//
+// The scarce resource is Helius credits — the free tier allows only 2 DAS
+// requests per second — so chain-reading routes are held well below that.
+const RATE_RULES = [
+  { match: ['/api/nonce', '/api/session'], name: 'auth', by: 'ip', limit: 10, windowMs: 60000 },
+  { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
+  { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake', '/api/migrate'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/leaderboard'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 }
+];
+
+async function rateLimited(request, env, path, wallet) {
+  const rule = RATE_RULES.find(function (r) { return r.match.indexOf(path) >= 0; });
+  if (!rule) return false;
+
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const who = (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
+  const now = Date.now();
+  const window = Math.floor(now / rule.windowMs);
+  const key = rule.name + ':' + who + ':' + window;
+  const expires = (window + 1) * rule.windowMs;
+
+  try {
+    // RETURNING gives the post-increment count from the write itself; a
+    // separate SELECT reads a replica and can lag behind, which silently
+    // defeated the limit.
+    const row = await env.DB.prepare(
+      'INSERT INTO rate_limits (k, n, expires) VALUES (?, 1, ?) ' +
+      'ON CONFLICT(k) DO UPDATE SET n = n + 1 ' +
+      'RETURNING n'
+    ).bind(key, expires).first();
+    return !!row && row.n > rule.limit;
+  } catch (e) {
+    return false; // fail open rather than lock everyone out of a working site
+  }
+}
+
+function tooMany(request, env) {
+  return new Response(
+    JSON.stringify({ error: 'Slow down a moment and try again.' }),
+    { status: 429, headers: Object.assign({ 'Retry-After': '60' }, corsHeaders(request, env)) }
+  );
+}
+
+// Expired nonces, sessions and rate-limit windows would otherwise accumulate
+// forever. Swept opportunistically to keep this to a single worker.
+async function sweepExpired(env) {
+  if (Math.random() > 0.02) return;
+  const now = Date.now();
+  try {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM nonces WHERE expires < ?').bind(now),
+      env.DB.prepare('DELETE FROM sessions WHERE expires < ?').bind(now),
+      env.DB.prepare('DELETE FROM rate_limits WHERE expires < ?').bind(now)
+    ]);
+  } catch (e) { /* housekeeping only */ }
 }
 
 export default {
@@ -258,6 +326,16 @@ export default {
     }
 
     try {
+      ctx.waitUntil(sweepExpired(env));
+
+
+
+      // public routes are limited by IP before any work is done
+      if (path === '/api/img' || path === '/api/leaderboard' ||
+          path === '/api/nonce' || path === '/api/session') {
+        if (await rateLimited(request, env, path, null)) return tooMany(request, env);
+      }
+
       // ── public: Ranger artwork ──
       // IPFS gateways serve a 403 challenge to browser User-Agents, so the
       // image has to be fetched server-side. Deliberately keyed by MINT, not
@@ -322,9 +400,16 @@ export default {
       // ── public: leaderboard ──
       if (path === '/api/leaderboard' && request.method === 'GET') {
         const rows = await env.DB.prepare(
-          'SELECT wallet, points FROM players WHERE points > 0 ORDER BY points DESC, wallet ASC LIMIT 100'
-        ).all();
-        return json(request, env, { players: rows.results || [] });
+          'SELECT p.wallet AS wallet, ' +
+          '  p.points + COALESCE(s.banked, 0) + ' +
+          '  CASE WHEN s.staked = 1 AND s.since > 0 ' +
+          '    THEN CAST(((? - s.since) / 86400000.0) * ? * s.count AS INTEGER) ' +
+          '    ELSE 0 END AS points ' +
+          'FROM players p LEFT JOIN stakes s ON s.wallet = p.wallet ' +
+          'WHERE p.points > 0 OR s.staked = 1 ' +
+          'ORDER BY points DESC, p.wallet ASC LIMIT 100'
+        ).bind(Date.now(), STAKE_RATE_PER_DAY).all();
+        return json(request, env, { players: (rows.results || []).filter(function (r) { return r.points > 0; }) });
       }
 
       // ── step 1: request a nonce ──
@@ -363,6 +448,8 @@ export default {
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
+
+      if (await rateLimited(request, env, path, wallet)) return tooMany(request, env);
 
       if (path === '/api/me' && request.method === 'GET') {
         return json(request, env, { player: await playerState(env, wallet) });
