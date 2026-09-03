@@ -1,26 +1,27 @@
 {
-  "_readme": "Top-of-site banner slot. Set `active` to sell the spot; leave it null and the site rotates your own `house` promos so the slot is never empty. Edit, commit, push — live in about a minute.",
+  "_readme": "Top-of-site banner slot. Set `active` to sell the spot; leave it null and the site rotates your own `house` promos so the slot is never empty. Edit, commit, push \u2014 live in about a minute.",
   "_fields": {
     "sponsor": "advertiser name, shown under the headline",
     "headline": "one short line, roughly 60 characters",
     "url": "where the banner links to",
     "image": "optional square logo/art URL (https), falls back to the emoji",
     "emoji": "optional, used when there is no image",
-    "until": "YYYY-MM-DD — the slot auto-reverts to house promos after this date, so a finished campaign never runs on past its booking"
+    "until": "YYYY-MM-DD \u2014 the slot auto-reverts to house promos after this date, so a finished campaign never runs on past its booking",
+    "id": "optional; stats are keyed by the sponsor name if omitted"
   },
   "active": null,
   "house": [
     {
       "sponsor": "solquicks",
-      "headline": "quicks Plushie — handmade, extremely foxy",
+      "headline": "quicks Plushie \u2014 handmade, extremely foxy",
       "url": "https://store.fun/quicks/quicks-plushie",
-      "emoji": "🧸"
+      "emoji": "\ud83e\uddf8"
     },
     {
       "sponsor": "Moon Rangers",
-      "headline": "Stake your Rangers — 100 Fox Points a day, each",
+      "headline": "Stake your Rangers \u2014 100 Fox Points a day, each",
       "url": "#moon",
-      "emoji": "🌕"
+      "emoji": "\ud83c\udf15"
     }
   ]
 }

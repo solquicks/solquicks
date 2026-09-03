@@ -1639,6 +1639,26 @@
       }
 
       el.classList.add('visible');
+
+      // Delivery stats: one view per page load, plus clicks. Counts only —
+      // no cookies, no IPs, no third-party tracker. House promos are counted
+      // separately so they never inflate a sponsor's numbers.
+      const slotId = (booked ? 'ad:' : 'house:') +
+        (slot.sponsor || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+      const report = function (kind) {
+        try {
+          const body = JSON.stringify({ slot: slotId, kind: kind });
+          // keepalive so the click is still recorded as the page navigates away
+          fetch(POINTS_API + '/api/banner/event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body,
+            keepalive: true
+          }).catch(function () {});
+        } catch (e) {}
+      };
+      report('view');
+      el.addEventListener('click', function () { report('click'); });
     })();
 
     // ── FOX POINTS ──

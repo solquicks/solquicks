@@ -54,3 +54,21 @@ Track: who asked, what they paid, whether they came back. Build the auction
 only once you are turning people away — an auction discovers a price when
 demand exceeds supply, and does nothing at all when one advertiser wants the
 slot. See the roadmap for the full argument.
+
+## What a booking delivered
+
+Views and clicks are counted per booking, privately — no cookies, no IPs, no
+third-party tracker. House promos are counted separately so they can never
+inflate a sponsor's numbers.
+
+```bash
+# everything, newest first
+curl "https://solquicks-points.solquicks-45c.workers.dev/api/banner/stats"
+
+# one sponsor, day by day
+curl "https://solquicks-points.solquicks-45c.workers.dev/api/banner/stats?slot=ad:their-name"
+```
+
+Send the sponsor their figure at the end of a booking. It is also your own
+evidence when pricing the next one — and the thing that decides whether $250
+is too low.

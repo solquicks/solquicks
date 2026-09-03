@@ -266,7 +266,8 @@ const RATE_RULES = [
   { match: ['/api/nonce', '/api/session'], name: 'auth', by: 'ip', limit: 10, windowMs: 60000 },
   { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake', '/api/migrate'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
-  { match: ['/api/leaderboard'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 }
+  { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
 
 async function rateLimited(request, env, path, wallet) {
@@ -332,7 +333,8 @@ export default {
 
       // public routes are limited by IP before any work is done
       if (path === '/api/img' || path === '/api/leaderboard' ||
-          path === '/api/nonce' || path === '/api/session') {
+          path === '/api/nonce' || path === '/api/session' ||
+          path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
       }
 
@@ -395,6 +397,41 @@ export default {
         });
         ctx.waitUntil(cache.put(cacheKey, out.clone()));
         return out;
+      }
+
+      // ── banner delivery stats ──
+      // Counts only. No IPs, no cookies, no third party — just enough to tell
+      // an advertiser what they got, and to know what the slot is worth.
+      if (path === '/api/banner/event' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const slot = String(body.slot || '').slice(0, 64);
+        const kind = body.kind === 'click' ? 'clicks' : 'views';
+        if (!slot) return json(request, env, { ok: false }, 400);
+        const day = new Date().toISOString().slice(0, 10);
+        await env.DB.prepare(
+          'INSERT INTO banner_stats (slot, day, ' + kind + ') VALUES (?, ?, 1) ' +
+          'ON CONFLICT(slot, day) DO UPDATE SET ' + kind + ' = ' + kind + ' + 1'
+        ).bind(slot, day).run();
+        return json(request, env, { ok: true });
+      }
+
+      // what a booking actually delivered, for reporting back to a sponsor
+      if (path === '/api/banner/stats' && request.method === 'GET') {
+        const slot = url.searchParams.get('slot');
+        const rows = slot
+          ? await env.DB.prepare(
+              'SELECT slot, day, views, clicks FROM banner_stats WHERE slot = ? ORDER BY day DESC LIMIT 60'
+            ).bind(slot).all()
+          : await env.DB.prepare(
+              'SELECT slot, SUM(views) AS views, SUM(clicks) AS clicks, MIN(day) AS first_day, MAX(day) AS last_day ' +
+              'FROM banner_stats GROUP BY slot ORDER BY last_day DESC LIMIT 50'
+            ).all();
+        const out = rows.results || [];
+        const totals = out.reduce(function (a, r) {
+          a.views += r.views || 0; a.clicks += r.clicks || 0; return a;
+        }, { views: 0, clicks: 0 });
+        totals.ctr = totals.views ? +(100 * totals.clicks / totals.views).toFixed(2) : 0;
+        return json(request, env, { rows: out, totals: totals });
       }
 
       // ── public: leaderboard ──
