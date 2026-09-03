@@ -7,6 +7,8 @@ const STAKE_RATE_PER_DAY = 100;
 const SESSION_TTL_MS = 30 * DAY_MS;
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const MAX_MIGRATE = 5000; // ceiling on one-time localStorage import
+const FLIP_MIN = 10;
+const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
 
 const AWARDS = { visit: 5, plushie: 500, game: 25, gacha: 50 };
 
@@ -266,6 +268,7 @@ const RATE_RULES = [
   { match: ['/api/nonce', '/api/session'], name: 'auth', by: 'ip', limit: 10, windowMs: 60000 },
   { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake', '/api/migrate'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/flip'], name: 'flip', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
@@ -317,7 +320,87 @@ async function sweepExpired(env) {
   } catch (e) { /* housekeeping only */ }
 }
 
+
+// ── OPERATIONS ──
+// Errors were previously swallowed into a 500 with no record, so a fault only
+// surfaced if someone happened to mention it. They are now recorded, and a
+// scheduled check reports failures rather than waiting to be noticed.
+async function logError(env, route, message) {
+  try {
+    await env.DB.prepare('INSERT INTO error_log (ts, route, message) VALUES (?, ?, ?)')
+      .bind(Date.now(), String(route).slice(0, 120), String(message).slice(0, 500)).run();
+  } catch (e) { /* logging must never itself break a request */ }
+}
+
+/// Optional: set TELEGRAM_ALERT_TOKEN and TELEGRAM_ALERT_CHAT and failures get
+/// pushed to Telegram. Without them everything still records, just silently.
+async function alert(env, text) {
+  if (!env.TELEGRAM_ALERT_TOKEN || !env.TELEGRAM_ALERT_CHAT) return;
+  try {
+    await fetch('https://api.telegram.org/bot' + env.TELEGRAM_ALERT_TOKEN + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_ALERT_CHAT, text: text.slice(0, 3500) })
+    });
+  } catch (e) { /* an alert failing must not cascade */ }
+}
+
+async function healthCheck(env) {
+  const detail = {};
+  let ok = true;
+
+  try {
+    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM players').first();
+    detail.players = r ? r.n : 0;
+  } catch (e) { ok = false; detail.db = 'FAIL: ' + e.message; }
+
+  if (env.HELIUS_API_KEY) {
+    try {
+      const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'h', method: 'getHealth' })
+      });
+      detail.helius = res.status;
+      if (!res.ok) ok = false;
+    } catch (e) { ok = false; detail.helius = 'FAIL: ' + e.message; }
+  }
+
+  try {
+    const since = Date.now() - 3600000;
+    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM error_log WHERE ts > ?').bind(since).first();
+    detail.errorsLastHour = r ? r.n : 0;
+    if (detail.errorsLastHour > 25) ok = false;
+  } catch (e) { /* already covered by the db check */ }
+
+  return { ok, detail };
+}
+
 export default {
+  /// Runs on a schedule so an outage is reported rather than stumbled upon.
+  /// Alerts only on a change of state, so a long outage does not spam.
+  async scheduled(event, env, ctx) {
+    const h = await healthCheck(env);
+    let previous = null;
+    try {
+      const row = await env.DB.prepare('SELECT ok FROM health_log ORDER BY ts DESC LIMIT 1').first();
+      previous = row ? !!row.ok : null;
+    } catch (e) { /* first run */ }
+
+    try {
+      await env.DB.prepare('INSERT INTO health_log (ts, ok, detail) VALUES (?, ?, ?)')
+        .bind(Date.now(), h.ok ? 1 : 0, JSON.stringify(h.detail)).run();
+      // keep a week
+      await env.DB.prepare('DELETE FROM health_log WHERE ts < ?').bind(Date.now() - 7 * 86400000).run();
+    } catch (e) { /* nothing useful to do here */ }
+
+    if (previous !== null && previous !== h.ok) {
+      await alert(env, h.ok
+        ? '✅ solquicks points API recovered.\n' + JSON.stringify(h.detail)
+        : '🔴 solquicks points API is unhealthy.\n' + JSON.stringify(h.detail));
+    }
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
@@ -434,6 +517,35 @@ export default {
         return json(request, env, { rows: out, totals: totals });
       }
 
+      // ── health ──
+      if (path === '/api/health' && request.method === 'GET') {
+        const h = await healthCheck(env);
+        return json(request, env, h, h.ok ? 200 : 503);
+      }
+
+      // ── admin: full export ──
+      // Cloudflare keeps 30 days of point-in-time recovery, so this is for
+      // holding a copy outside the account entirely.
+      if (path === '/api/admin/export' && request.method === 'GET') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const dump = {};
+        for (const t of ['players', 'events', 'stakes', 'staked_nfts', 'banner_stats', 'payments', 'flips']) {
+          const r = await env.DB.prepare('SELECT * FROM ' + t).all();
+          dump[t] = r.results || [];
+        }
+        dump._exportedAt = new Date().toISOString();
+        return new Response(JSON.stringify(dump, null, 2), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Disposition': 'attachment; filename="solquicks-points-' +
+              new Date().toISOString().slice(0, 10) + '.json"'
+          }
+        });
+      }
+
       // ── public: leaderboard ──
       if (path === '/api/leaderboard' && request.method === 'GET') {
         const rows = await env.DB.prepare(
@@ -487,6 +599,65 @@ export default {
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
 
       if (await rateLimited(request, env, path, wallet)) return tooMany(request, env);
+
+      // ── coin flip (points only) ──
+      // No money in or out — points are staked against points. The outcome is
+      // decided here, with cryptographic randomness, and the wager is deducted
+      // before the coin is flipped so a dropped connection cannot mean a free
+      // win. Rejection sampling keeps heads and tails exactly even.
+      if (path === '/api/flip' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const wager = Math.floor(Number(body.wager) || 0);
+        const call = body.call === 'tails' ? 'tails' : 'heads';
+
+        if (wager < FLIP_MIN) return json(request, env, { error: 'Minimum wager is ' + FLIP_MIN + ' points.' }, 400);
+        if (wager > FLIP_MAX) return json(request, env, { error: 'Maximum wager is ' + FLIP_MAX + ' points.' }, 400);
+
+        const p = await env.DB.prepare('SELECT points FROM players WHERE wallet = ?').bind(wallet).first();
+        const balance = p ? p.points : 0;
+        if (balance < wager) {
+          return json(request, env, { error: 'Not enough points. You have ' + balance + '.' }, 400);
+        }
+
+        // take the wager first, so a crash mid-flip can never pay out for free
+        await env.DB.prepare('UPDATE players SET points = points - ?, updated_at = ? WHERE wallet = ?')
+          .bind(wager, Date.now(), wallet).run();
+
+        const buf = new Uint32Array(1);
+        let v;
+        do { crypto.getRandomValues(buf); v = buf[0]; } while (v >= 0xFFFFFFFE); // keep it exactly even
+        const result = (v % 2 === 0) ? 'heads' : 'tails';
+        const won = result === call;
+
+        if (won) {
+          await addPoints(env, wallet, 'flip_win', wager * 2);
+        } else {
+          await env.DB.prepare('INSERT INTO events (wallet, type, points, ts) VALUES (?, ?, ?, ?)')
+            .bind(wallet, 'flip_loss', -wager, Date.now()).run();
+        }
+        await env.DB.prepare('INSERT INTO flips (wallet, wager, won, ts) VALUES (?, ?, ?, ?)')
+          .bind(wallet, wager, won ? 1 : 0, Date.now()).run();
+
+        return json(request, env, {
+          call: call, result: result, won: won,
+          delta: won ? wager : -wager,
+          player: await playerState(env, wallet)
+        });
+      }
+
+      // how the coin has actually landed, so the odds are checkable
+      if (path === '/api/flip/stats' && request.method === 'GET') {
+        const r = await env.DB.prepare(
+          'SELECT COUNT(*) AS total, SUM(won) AS wins FROM flips'
+        ).first();
+        const mine = await env.DB.prepare(
+          'SELECT COUNT(*) AS total, SUM(won) AS wins FROM flips WHERE wallet = ?'
+        ).bind(wallet).first();
+        return json(request, env, {
+          all: { total: (r && r.total) || 0, wins: (r && r.wins) || 0 },
+          mine: { total: (mine && mine.total) || 0, wins: (mine && mine.wins) || 0 }
+        });
+      }
 
       if (path === '/api/me' && request.method === 'GET') {
         return json(request, env, { player: await playerState(env, wallet) });
@@ -621,7 +792,9 @@ export default {
 
       return json(request, env, { error: 'not found' }, 404);
     } catch (err) {
-      return json(request, env, { error: 'server error', detail: String(err && err.message || err) }, 500);
+      const message = String((err && err.message) || err);
+      ctx.waitUntil(logError(env, path, message));
+      return json(request, env, { error: 'server error', detail: message }, 500);
     }
   }
 };

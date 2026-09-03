@@ -6,6 +6,10 @@ compatibility_date = "2025-09-23"
 ALLOWED_ORIGINS = "https://solquicks.com,https://www.solquicks.com"
 MOON_RANGERS_COLLECTION = "5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"
 
+# health check every 30 minutes; alerts only when the state changes
+[triggers]
+crons = ["*/30 * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "solquicks-points"

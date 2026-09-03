@@ -711,6 +711,86 @@
     .biz-link svg { transition: transform 0.2s; }
     .biz-card:hover .biz-link svg { transform: translateX(3px); }
 
+    /* ── COIN FLIP ── */
+    .cf-card {
+      background: var(--card);
+      border: var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--pop);
+      padding: 20px;
+      margin-top: 14px;
+      text-align: center;
+    }
+    .cf-coin {
+      font-size: 3.4rem;
+      line-height: 1;
+      margin: 6px 0 10px;
+      display: inline-block;
+    }
+    .cf-coin.spinning { animation: cf-spin 0.45s linear infinite; }
+    @keyframes cf-spin {
+      0% { transform: rotateY(0deg) scale(1); }
+      50% { transform: rotateY(180deg) scale(1.12); }
+      100% { transform: rotateY(360deg) scale(1); }
+    }
+    .cf-sides { display: flex; gap: 10px; justify-content: center; margin-bottom: 12px; }
+    .cf-side {
+      appearance: none;
+      flex: 1;
+      max-width: 130px;
+      background: var(--card);
+      border: 2.5px solid var(--ink);
+      border-radius: 14px;
+      box-shadow: 3px 3px 0 rgba(46,36,64,0.12);
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: var(--ink);
+      padding: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .cf-side:hover { background: var(--orange-soft); }
+    .cf-side.on { background: var(--orange); color: #fff; box-shadow: 3px 4px 0 rgba(46,36,64,0.25); }
+
+    .cf-wagers { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .cf-wager {
+      appearance: none;
+      background: var(--cream);
+      border: 2px solid var(--ink);
+      border-radius: 999px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--ink);
+      padding: 6px 13px;
+      cursor: pointer;
+    }
+    .cf-wager.on { background: var(--ink); color: #fff; }
+    .cf-wager:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .cf-go {
+      appearance: none;
+      background: var(--orange);
+      color: #fff;
+      border: var(--line);
+      border-radius: 999px;
+      box-shadow: 3px 4px 0 rgba(46,36,64,0.22);
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 800;
+      padding: 12px 32px;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    .cf-go:hover:not(:disabled) { background: var(--orange-deep); transform: translate(-1px,-2px); }
+    .cf-go:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .cf-outcome { font-weight: 800; font-size: 1rem; margin-top: 12px; min-height: 1.3em; }
+    .cf-outcome.win { color: var(--green); }
+    .cf-outcome.lose { color: var(--crimson); }
+    .cf-fine { font-size: 0.74rem; font-weight: 700; color: var(--muted); margin-top: 10px; }
+
     /* ── LEADERBOARD / FOX POINTS ── */
     .lb-hero {
       background: linear-gradient(160deg, #FFF3E2 0%, #FFE3C4 100%);
@@ -1293,6 +1373,19 @@
         </div>
       </div>
 
+      <div class="cf-card" id="cf-card" hidden>
+        <div class="lb-title">🪙 Coin Flip</div>
+        <div class="cf-coin" id="cf-coin">🪙</div>
+        <div class="cf-sides">
+          <button class="cf-side on" id="cf-heads" onclick="cfPick('heads')">Heads</button>
+          <button class="cf-side" id="cf-tails" onclick="cfPick('tails')">Tails</button>
+        </div>
+        <div class="cf-wagers" id="cf-wagers"></div>
+        <button class="cf-go" id="cf-go" onclick="cfFlip()">Flip</button>
+        <div class="cf-outcome" id="cf-outcome"></div>
+        <div class="cf-fine" id="cf-fine">Double your wager or lose it. Points only — no money in, no money out.</div>
+      </div>
+
       <div class="lb-card">
         <div class="lb-title">How to earn</div>
         <div class="lb-earn-row">
@@ -1309,6 +1402,11 @@
           <div class="lb-earn-icon">🌕</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Stake your Moon Rangers</div><div class="lb-earn-sub">Every day, for each Ranger you hold</div></div>
           <div class="lb-earn-pts">+100 ea</div>
+        </div>
+        <div class="lb-earn-row">
+          <div class="lb-earn-icon">🪙</div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Win a coin flip</div><div class="lb-earn-sub">Double your wager — or lose it</div></div>
+          <div class="lb-earn-pts">×2</div>
         </div>
         <div class="lb-earn-row soon">
           <div class="lb-earn-icon">🎮</div>
@@ -1573,6 +1671,91 @@
     }
 
 
+
+    // ── COIN FLIP ──
+    // Points only, and the outcome is decided by the server — nothing here
+    // determines the result, it just shows it.
+    const CF_WAGERS = [10, 50, 100, 500, 1000];
+    let cfCall = 'heads';
+    let cfWager = 10;
+    let cfBusy = false;
+
+    function cfPick(side) {
+      cfCall = side;
+      document.getElementById('cf-heads').classList.toggle('on', side === 'heads');
+      document.getElementById('cf-tails').classList.toggle('on', side === 'tails');
+    }
+
+    function cfRenderWagers() {
+      const wrap = document.getElementById('cf-wagers');
+      if (!wrap) return;
+      const balance = FoxPoints.total();
+      wrap.innerHTML = CF_WAGERS.map(function (w) {
+        const afford = balance >= w;
+        return '<button class="cf-wager' + (w === cfWager ? ' on' : '') + '"' +
+          (afford ? '' : ' disabled') +
+          ' onclick="cfSetWager(' + w + ')">' + w.toLocaleString() + '</button>';
+      }).join('');
+    }
+
+    function cfSetWager(w) { cfWager = w; cfRenderWagers(); }
+
+    function cfRender() {
+      const card = document.getElementById('cf-card');
+      if (!card) return;
+      // signed-in only: the balance has to be one the server can verify
+      card.hidden = !(FoxPoints.token && FoxPoints.server);
+      if (card.hidden) return;
+      cfRenderWagers();
+      const go = document.getElementById('cf-go');
+      const canAfford = FoxPoints.total() >= cfWager;
+      go.disabled = cfBusy || !canAfford;
+      go.textContent = cfBusy ? 'Flipping…' : ('Flip ' + cfWager.toLocaleString());
+      if (!canAfford && !cfBusy) {
+        document.getElementById('cf-outcome').textContent = 'Not enough points for that wager.';
+      }
+    }
+
+    async function cfFlip() {
+      if (cfBusy) return;
+      cfBusy = true;
+      const coin = document.getElementById('cf-coin');
+      const out = document.getElementById('cf-outcome');
+      out.className = 'cf-outcome';
+      out.textContent = '';
+      coin.classList.add('spinning');
+      cfRender();
+
+      let r;
+      try {
+        r = await FoxPoints.api('/api/flip', { method: 'POST', body: { wager: cfWager, call: cfCall } });
+      } catch (e) {
+        r = { error: 'Could not reach the server.' };
+      }
+
+      // let the coin actually spin a moment, otherwise the result feels fake
+      await new Promise(function (res) { setTimeout(res, 700); });
+      coin.classList.remove('spinning');
+      cfBusy = false;
+
+      if (!r || r.error) {
+        out.textContent = (r && r.error) || 'Something went wrong.';
+        cfRender();
+        return;
+      }
+
+      if (r.player) FoxPoints.server = r.player;
+      coin.textContent = r.result === 'heads' ? '🪙' : '🌕';
+      out.className = 'cf-outcome ' + (r.won ? 'win' : 'lose');
+      out.textContent = r.won
+        ? 'It was ' + r.result + ' — you won ' + cfWager.toLocaleString() + '!'
+        : 'It was ' + r.result + ' — you lost ' + cfWager.toLocaleString() + '.';
+
+      FoxPoints.render();
+      cfRender();
+      renderLeaderboard();
+    }
+
     // ── SPONSOR BANNER ──
     // Sold manually for now: set `active` in banner.json to fill the slot.
     // With nothing booked (or a booking past its `until` date) the slot falls
@@ -1793,6 +1976,8 @@
               : 'Saved on this device only. <strong>Connect a wallet</strong> to keep them for good.';
           }
         }
+
+        if (typeof cfRender === 'function') cfRender();
 
         const logEl = document.getElementById('lb-log');
         if (!logEl) return;
