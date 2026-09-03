@@ -14,12 +14,13 @@
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://*.workers.dev; frame-ancestors 'self';"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev; frame-ancestors 'self';"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js" defer></script>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -1387,6 +1388,7 @@
         </div>
 
         <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Point accrual runs off-chain while the on-chain program is in build.</p>
+      <p class="moon-note" id="moon-devnet" hidden style="color:#FFD98A">⚠︎ DEVNET MODE — staking runs against the test network. Real Rangers are untouched.</p>
       </div>
     </div>
 
@@ -1395,6 +1397,10 @@
   </div>
 
   <script>
+    // Devnet mode is opt-in via ?devnet=1. Declared first: anything below may
+    // reference it, and a `const` cannot be read before its declaration runs.
+    const DEVNET_MODE = new URLSearchParams(location.search).has('devnet');
+
     // ── PARTICLES ──
     (function() {
       const canvas = document.getElementById('particle-canvas');
@@ -1817,6 +1823,10 @@
 
     // restore a saved session on load
     (function () {
+      if (typeof DEVNET_MODE !== 'undefined' && DEVNET_MODE) {
+        const el = document.getElementById('moon-devnet');
+        if (el) el.hidden = false;
+      }
       const s = FoxPoints.loadToken();
       if (s) { FoxPoints.token = s.token; FoxPoints.refresh(); }
       FoxPoints.render();
@@ -2135,6 +2145,221 @@
     })();
 
 
+
+    // ── ON-CHAIN STAKING (devnet) ──
+    // Off by default. Add ?devnet=1 to the URL to drive the real program on
+    // devnet; ordinary visitors never touch this path and keep the off-chain
+    // staking they have today.
+    const CHAIN = {
+      programId: 'AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG',
+      rpc: 'https://api.devnet.solana.com',
+      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      ataProgram: 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+      metadataProgram: 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+      systemProgram: '11111111111111111111111111111111'
+    };
+
+    function w3() {
+      const lib = window.solanaWeb3;
+      if (!lib) throw new Error('Solana library is still loading — try again in a second.');
+      return lib;
+    }
+
+    /// Anchor identifies an instruction by the first 8 bytes of
+    /// sha256("global:<name>"), so the discriminator has to be derived, not guessed.
+    async function anchorDiscriminator(name) {
+      const bytes = new TextEncoder().encode('global:' + name);
+      const hash = await crypto.subtle.digest('SHA-256', bytes);
+      return new Uint8Array(hash).slice(0, 8);
+    }
+
+    function pda(seeds, programId) {
+      const { PublicKey } = w3();
+      return PublicKey.findProgramAddressSync(seeds, new PublicKey(programId))[0];
+    }
+
+    function ataFor(owner, mint) {
+      const { PublicKey } = w3();
+      return PublicKey.findProgramAddressSync(
+        [owner.toBuffer(), new PublicKey(CHAIN.tokenProgram).toBuffer(), mint.toBuffer()],
+        new PublicKey(CHAIN.ataProgram)
+      )[0];
+    }
+
+    function chainAccounts(ownerStr, mintStr) {
+      const { PublicKey } = w3();
+      const owner = new PublicKey(ownerStr);
+      const mint = new PublicKey(mintStr);
+      const config = pda([new TextEncoder().encode('config')], CHAIN.programId);
+      const record = pda([new TextEncoder().encode('stake'), mint.toBuffer()], CHAIN.programId);
+      const metadata = pda(
+        [new TextEncoder().encode('metadata'),
+         new PublicKey(CHAIN.metadataProgram).toBuffer(),
+         mint.toBuffer()],
+        CHAIN.metadataProgram
+      );
+      return {
+        owner, mint, config, record, metadata,
+        ownerToken: ataFor(owner, mint),
+        vaultToken: ataFor(record, mint)
+      };
+    }
+
+    /// Read the treasury out of the on-chain config rather than hardcoding it,
+    /// so a rotated treasury does not silently break staking.
+    async function readTreasury(connection, config) {
+      const info = await connection.getAccountInfo(config);
+      if (!info) throw new Error('The staking program has not been set up on this network.');
+      const { PublicKey } = w3();
+      return new PublicKey(info.data.subarray(8 + 32, 8 + 64)); // after discriminator + admin
+    }
+
+    async function buildStakeTx(connection, ownerStr, mintStr) {
+      const { PublicKey, TransactionInstruction, Transaction } = w3();
+      const a = chainAccounts(ownerStr, mintStr);
+      const treasury = await readTreasury(connection, a.config);
+      const keys = [
+        { pubkey: a.owner, isSigner: true, isWritable: true },
+        { pubkey: a.config, isSigner: false, isWritable: true },
+        { pubkey: treasury, isSigner: false, isWritable: true },
+        { pubkey: a.mint, isSigner: false, isWritable: false },
+        { pubkey: a.ownerToken, isSigner: false, isWritable: true },
+        { pubkey: a.record, isSigner: false, isWritable: true },
+        { pubkey: a.vaultToken, isSigner: false, isWritable: true },
+        { pubkey: a.metadata, isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(CHAIN.tokenProgram), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(CHAIN.ataProgram), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(CHAIN.systemProgram), isSigner: false, isWritable: false }
+      ];
+      const ix = new TransactionInstruction({
+        programId: new PublicKey(CHAIN.programId),
+        keys,
+        data: await anchorDiscriminator('stake') // Uint8Array; Buffer is not available in the browser
+      });
+      return new Transaction().add(ix);
+    }
+
+    async function buildUnstakeTx(connection, ownerStr, mintStr) {
+      const { PublicKey, TransactionInstruction, Transaction } = w3();
+      const a = chainAccounts(ownerStr, mintStr);
+      const keys = [
+        { pubkey: a.owner, isSigner: true, isWritable: true },
+        { pubkey: a.config, isSigner: false, isWritable: true },
+        { pubkey: a.record, isSigner: false, isWritable: true },
+        { pubkey: a.vaultToken, isSigner: false, isWritable: true },
+        { pubkey: a.ownerToken, isSigner: false, isWritable: true },
+        { pubkey: new PublicKey(CHAIN.tokenProgram), isSigner: false, isWritable: false }
+      ];
+      const ix = new TransactionInstruction({
+        programId: new PublicKey(CHAIN.programId),
+        keys,
+        data: await anchorDiscriminator('unstake')
+      });
+      return new Transaction().add(ix);
+    }
+
+    /// Sign and send through whichever wallet is connected, then wait for
+    /// confirmation so the UI never claims success before the chain agrees.
+    async function sendChainTx(tx) {
+      const { Connection } = w3();
+      const connection = new Connection(CHAIN.rpc, 'confirmed');
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+
+      tx.feePayer = new (w3().PublicKey)(Wallet.pubkey);
+      tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+
+      let signature;
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        signature = res.signature || res;
+      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        signature = await connection.sendRawTransaction(signed.serialize());
+      } else if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: provider.w.accounts[0],
+          chain: 'solana:devnet',
+          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        const { PublicKey } = w3();
+        signature = new PublicKey(out[0].signature).toBase58();
+      } else {
+        throw new Error('This wallet cannot send transactions.');
+      }
+
+      await connection.confirmTransaction(signature, 'confirmed');
+      return signature;
+    }
+
+    async function chainStake(mintStr) {
+      const { Connection } = w3();
+      const connection = new Connection(CHAIN.rpc, 'confirmed');
+      const tx = await buildStakeTx(connection, Wallet.pubkey, mintStr);
+      return sendChainTx(tx);
+    }
+
+    async function chainUnstake(mintStr) {
+      const { Connection } = w3();
+      const connection = new Connection(CHAIN.rpc, 'confirmed');
+      const tx = await buildUnstakeTx(connection, Wallet.pubkey, mintStr);
+      return sendChainTx(tx);
+    }
+
+
+    /// Devnet path: stake or unstake the picked Rangers through the on-chain
+    /// program, one transaction each, reporting what actually happened rather
+    /// than assuming success.
+    async function chainToggleStake() {
+      const btn = document.getElementById('moon-stake-btn');
+      const status = document.getElementById('moon-stake-status');
+      const staked = stakedMints.slice();
+      const toStake = [...picked].filter(function (m) { return staked.indexOf(m) < 0; });
+      const targets = toStake.length ? toStake : staked;
+      if (!targets.length) { alert('Pick a Ranger first.'); return; }
+
+      const unstaking = toStake.length === 0;
+      btn.disabled = true;
+      const done = [];
+      const failed = [];
+
+      for (const mint of targets) {
+        try {
+          status.textContent = (unstaking ? 'Unstaking' : 'Staking') + ' ' +
+            (done.length + failed.length + 1) + ' of ' + targets.length + '…';
+          const sig = unstaking ? await chainUnstake(mint) : await chainStake(mint);
+          done.push({ mint: mint, sig: sig });
+        } catch (e) {
+          failed.push({ mint: mint, why: (e && e.message) || String(e) });
+        }
+      }
+
+      btn.disabled = false;
+      if (done.length) {
+        // reflect the new on-chain truth rather than guessing
+        stakedMints = unstaking
+          ? stakedMints.filter(function (m) { return !done.some(function (d) { return d.mint === m; }); })
+          : stakedMints.concat(done.map(function (d) { return d.mint; }));
+        picked.clear();
+        renderPicker();
+        renderStaking();
+      }
+
+      const lines = [];
+      if (done.length) {
+        lines.push(done.length + ' ' + (unstaking ? 'unstaked' : 'staked') + ' on devnet.');
+        lines.push('View: https://solscan.io/tx/' + done[0].sig + '?cluster=devnet');
+      }
+      if (failed.length) {
+        lines.push('');
+        lines.push(failed.length + ' failed:');
+        failed.forEach(function (f) { lines.push('  ' + f.mint.slice(0, 6) + '… — ' + f.why); });
+      }
+      alert(lines.join('\n'));
+    }
+
     // ── RANGER PICKER ──
     // Players choose which Rangers to stake rather than staking everything.
     let rangerList = [];      // [{mint, name, image}]
@@ -2264,6 +2489,8 @@
 
     async function toggleStake() {
       if (!Wallet.pubkey) { connectWallet(); return; }
+      if (DEVNET_MODE) { return chainToggleStake(); }
+
       if (FoxPoints.token && FoxPoints.server) {
         const isStaked = FoxPoints.server.stake && FoxPoints.server.stake.staked;
         let r;
