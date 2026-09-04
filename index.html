@@ -1084,6 +1084,50 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    /* ── QUARTERLY MISSION ── */
+    .mission-card {
+      background: linear-gradient(160deg, rgba(240,130,30,0.14), rgba(255,255,255,0.05));
+      border: 2px solid rgba(255, 217, 138, 0.4);
+      border-radius: 14px;
+      padding: 18px;
+      margin-top: 18px;
+      text-align: left;
+    }
+    .mission-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .mission-name { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 800; color: #FFD98A; }
+    .mission-left { font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #BCB2D2; }
+    .mission-prize { font-size: 0.86rem; font-weight: 700; color: #F3EFFA; margin: 8px 0 14px; line-height: 1.45; }
+    .mission-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .mission-stat {
+      background: rgba(0,0,0,0.18);
+      border-radius: 10px;
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .mission-stat-val { font-family: 'Baloo 2', sans-serif; font-size: 1.35rem; font-weight: 800; color: #FFD98A; line-height: 1.1; }
+    .mission-stat-key { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: #BCB2D2; margin-top: 2px; }
+    .mission-bar { height: 7px; border-radius: 999px; background: rgba(0,0,0,0.25); margin: 14px 0 6px; overflow: hidden; }
+    .mission-bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--orange), #FFD98A); transition: width 0.6s ease; }
+    .mission-foot { font-size: 0.74rem; font-weight: 700; color: #BCB2D2; line-height: 1.5; }
+    .mission-foot strong { color: #FFD98A; }
+    .mission-reward {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-top: 8px;
+    }
+    .mission-reward-what { font-size: 0.82rem; font-weight: 700; color: #F3EFFA; }
+    .mission-reward-when { font-size: 0.68rem; font-weight: 700; color: #BCB2D2; }
+    .mission-claim {
+      appearance: none; border: none; cursor: pointer;
+      background: var(--orange); color: #fff;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.8rem;
+      border-radius: 999px; padding: 7px 16px; flex-shrink: 0;
+    }
+    .mission-claim:hover:not(:disabled) { background: var(--orange-deep); }
+    .mission-claim:disabled { background: rgba(255,255,255,0.12); color: #8E85A6; cursor: default; }
+
     /* ── MOON STAKING ── */
     .moon-stake-card {
       background: rgba(255, 255, 255, 0.07);
@@ -1519,6 +1563,22 @@
           <div id="moon-claim-wrap" hidden>
             <button class="moon-unstake-btn" onclick="claimStakePoints()">Claim points</button>
           </div>
+        </div>
+
+        <div class="mission-card" id="mission-card" hidden>
+          <div class="mission-head">
+            <div class="mission-name" id="mission-name">Quarterly Mission</div>
+            <div class="mission-left" id="mission-left"></div>
+          </div>
+          <div class="mission-prize" id="mission-prize"></div>
+          <div class="mission-stats">
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-tickets">0</div><div class="mission-stat-key">Entries</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-mult">1×</div><div class="mission-stat-key">Streak</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-proj">0</div><div class="mission-stat-key">If you hold</div></div>
+          </div>
+          <div class="mission-bar"><span id="mission-bar-fill" style="width:0%"></span></div>
+          <div class="mission-foot" id="mission-foot"></div>
+          <div id="mission-rewards"></div>
         </div>
 
         <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Point accrual runs off-chain while the on-chain program is in build.</p>
@@ -2000,6 +2060,7 @@
         // A restored session skipped this, so the Ranger grid stayed empty on
         // every page reload — it only ever appeared right after signing in.
         if (typeof loadRangers === 'function') loadRangers();
+        if (typeof loadMission === 'function') loadMission();
       },
 
       // called for client-side actions; server decides the actual award
@@ -2819,6 +2880,71 @@
         saveStake({ staked: true, since: Date.now(), count: count, banked: 0 });
       }
       renderStaking();
+    }
+
+    // ── QUARTERLY MISSIONS ──
+    // Entries come from ranger-days: one Ranger locked one day = one entry,
+    // multiplied by how many consecutive quarters you have finished. Everyone
+    // who finishes gets a guaranteed share; entries only decide the big prizes.
+    async function loadMission() {
+      const card = document.getElementById('mission-card');
+      if (!card) return;
+      if (!FoxPoints.token || !FoxPoints.server) { card.hidden = true; return; }
+      const r = await FoxPoints.api('/api/mission');
+      if (!r || !r.standing) { card.hidden = true; return; }
+      renderMission(r);
+    }
+
+    function renderMission(r) {
+      const s = r.standing;
+      const card = document.getElementById('mission-card');
+      card.hidden = false;
+
+      document.getElementById('mission-name').textContent = s.label + ' Mission';
+      document.getElementById('mission-left').textContent =
+        s.daysLeft > 0 ? s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left' : 'closing';
+
+      document.getElementById('mission-prize').textContent = s.prize
+        ? s.prize
+        : 'Finish the quarter with a Ranger locked and you are guaranteed points and discount codes. Entries also go into the draw for the headline prizes.';
+
+      document.getElementById('mission-tickets').textContent = s.tickets.toLocaleString();
+      document.getElementById('mission-mult').textContent = s.multiplier + '×';
+      document.getElementById('mission-proj').textContent = s.projectedTickets.toLocaleString();
+
+      // how far through the quarter we are
+      const span = s.ends - s.starts;
+      const done = Math.min(1, Math.max(0, (Date.now() - s.starts) / span));
+      document.getElementById('mission-bar-fill').style.width = (done * 100).toFixed(1) + '%';
+
+      const bits = [];
+      bits.push('<strong>' + s.rangers + '</strong> Ranger' + (s.rangers === 1 ? '' : 's') + ' locked');
+      if (s.streak > 0) bits.push('<strong>' + s.streak + '</strong> quarter streak');
+      if (r.field && r.field.rangers) bits.push('<strong>' + r.field.rangers + '</strong> Rangers locked site-wide');
+      document.getElementById('mission-foot').innerHTML = bits.join(' &nbsp;·&nbsp; ') +
+        (s.rangers === 0 ? '<br>Lock a Ranger above to start earning entries.' : '');
+
+      const wrap = document.getElementById('mission-rewards');
+      const rewards = r.rewards || [];
+      wrap.innerHTML = rewards.length === 0 ? '' : rewards.map(function (w) {
+        const what = w.kind === 'points'
+          ? w.amount.toLocaleString() + ' Fox Points'
+          : (w.detail || w.kind);
+        return '<div class="mission-reward">' +
+          '<div><div class="mission-reward-what">' + escapeHtml(what) + '</div>' +
+          '<div class="mission-reward-when">' + escapeHtml(w.mission_id) + '</div></div>' +
+          '<button class="mission-claim" onclick="claimReward(' + w.id + ')"' +
+          (w.claimed ? ' disabled>Claimed' : '>Claim') + '</button></div>';
+      }).join('');
+    }
+
+    async function claimReward(id) {
+      const r = await FoxPoints.api('/api/mission/claim', { method: 'POST', body: { id: id } });
+      if (!r || r.error) { alert(r && r.error ? r.error : 'Could not claim that yet.'); return; }
+      if (r.player) FoxPoints.server = r.player;
+      FoxPoints.render();
+      renderLeaderboard();
+      loadMission();
     }
 
     async function claimStakePoints() {
