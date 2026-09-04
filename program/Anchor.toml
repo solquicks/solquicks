@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-moon_stake = "AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG"
+moon_stake = "DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5"
 
 [registry]
 url = "https://api.apr.dev"

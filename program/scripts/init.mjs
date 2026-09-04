@@ -7,7 +7,7 @@ import {
   Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction,
 } from '@solana/web3.js';
 
-const PROGRAM_ID = new PublicKey('AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG');
+const PROGRAM_ID = new PublicKey('DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5');
 const COLLECTION = new PublicKey('5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz');
 const FEE_LAMPORTS = 0n;
 

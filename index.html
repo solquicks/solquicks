@@ -711,7 +711,33 @@
     .biz-link svg { transition: transform 0.2s; }
     .biz-card:hover .biz-link svg { transform: translateX(3px); }
 
-    /* ── COIN FLIP ── */
+    .daily-claim {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--orange);
+      color: #fff;
+      border: var(--line);
+      border-radius: 999px;
+      box-shadow: 3px 4px 0 rgba(46,36,64,0.22);
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.98rem;
+      font-weight: 800;
+      padding: 11px 24px;
+      margin-top: 14px;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    .daily-claim:hover:not(:disabled) { background: var(--orange-deep); transform: translate(-1px,-2px); }
+    .daily-claim:disabled {
+      background: var(--cream);
+      color: var(--muted);
+      box-shadow: 2px 2px 0 rgba(46,36,64,0.1);
+      cursor: default;
+    }
+
+    /* ── POINTS FLIP ── */
     .cf-card {
       background: var(--card);
       border: var(--line);
@@ -1282,7 +1308,7 @@
           <div class="avatar-ring"></div>
         </div>
         <div class="handle"><span>@</span>solquicks</div>
-        <div class="bio-tags">Streamer<br/>Most Famous Fox</div>
+        <div class="bio-tags">The Most Famous Fox</div>
         <div class="contact-row">
           <a href="https://t.me/solquicks" class="contact-btn" target="_blank" rel="noopener noreferrer">
             <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -1364,6 +1390,7 @@
         <div class="lb-points" id="lb-total">0</div>
         <div class="lb-points-label">Your Fox Points</div>
         <p class="lb-rank-note" id="lb-rank-note">Everything you do here earns points. Stack 'em.</p>
+        <button class="daily-claim" id="daily-claim" onclick="claimDaily()" hidden></button>
       </div>
 
       <div class="lb-card">
@@ -1374,7 +1401,7 @@
       </div>
 
       <div class="cf-card" id="cf-card" hidden>
-        <div class="lb-title">🪙 Coin Flip</div>
+        <div class="lb-title">🪙 Points Flip</div>
         <div class="cf-coin" id="cf-coin">🪙</div>
         <div class="cf-sides">
           <button class="cf-side on" id="cf-heads" onclick="cfPick('heads')">Heads</button>
@@ -1390,8 +1417,8 @@
         <div class="lb-title">How to earn</div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">👋</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Daily visit</div><div class="lb-earn-sub">Once per day, just for showing up</div></div>
-          <div class="lb-earn-pts">+5</div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Daily points</div><div class="lb-earn-sub">Claim once a day, just for showing up</div></div>
+          <div class="lb-earn-pts">+10</div>
         </div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">🧸</div>
@@ -1672,7 +1699,53 @@
 
 
 
-    // ── COIN FLIP ──
+
+    // ── DAILY POINTS ──
+    // Claimed on a button rather than automatically: the automatic version ran
+    // before the session finished restoring, so it took the anonymous path and
+    // the points landed in local storage where a signed-in player never saw them.
+    async function claimDaily() {
+      const btn = document.getElementById('daily-claim');
+      if (!btn || btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = 'Claiming…';
+
+      if (FoxPoints.token && FoxPoints.server) {
+        const r = await FoxPoints.api('/api/visit', { method: 'POST' });
+        if (r && r.player) FoxPoints.server = r.player;
+      } else {
+        // not signed in: a local tally that migrates on first sign-in
+        const state = FoxPoints.load();
+        const today = new Date().toISOString().slice(0, 10);
+        if (state.lastVisit !== today) {
+          state.lastVisit = today;
+          state.total += FOX_EVENTS.visit.pts;
+          state.log.unshift({ e: 'visit', p: FOX_EVENTS.visit.pts, t: Date.now() });
+          FoxPoints.save(state);
+        }
+      }
+      FoxPoints.render();
+      renderLeaderboard();
+      renderDailyClaim();
+    }
+
+    function renderDailyClaim() {
+      const btn = document.getElementById('daily-claim');
+      if (!btn) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const available = FoxPoints.server
+        ? FoxPoints.server.dailyAvailable !== false
+        : FoxPoints.load().lastVisit !== today;
+      const amount = (FoxPoints.server && FoxPoints.server.dailyAmount) || FOX_EVENTS.visit.pts;
+
+      btn.hidden = false;
+      btn.disabled = !available;
+      btn.textContent = available
+        ? 'Claim ' + amount + ' daily points'
+        : 'Claimed today — back tomorrow';
+    }
+
+    // ── POINTS FLIP ──
     // Points only, and the outcome is decided by the server — nothing here
     // determines the result, it just shows it.
     const CF_WAGERS = [10, 50, 100, 500, 1000];
@@ -1860,7 +1933,7 @@
     const POINTS_API = 'https://solquicks-points.solquicks-45c.workers.dev';
 
     const FOX_EVENTS = {
-      visit:    { pts: 5,   label: 'Daily visit 👋' },
+      visit:    { pts: 10,  label: 'Daily points 👋' },
       plushie:  { pts: 500, label: 'Plushie purchase 🧸' },
       game:     { pts: 25,  label: 'Game played 🎮' },
       gacha:    { pts: 50,  label: 'Gacha pull 🎰' },
@@ -1978,6 +2051,7 @@
         }
 
         if (typeof cfRender === 'function') cfRender();
+        if (typeof renderDailyClaim === 'function') renderDailyClaim();
 
         const logEl = document.getElementById('lb-log');
         if (!logEl) return;
@@ -2048,7 +2122,6 @@
       const s = FoxPoints.loadToken();
       if (s) { FoxPoints.token = s.token; FoxPoints.refresh(); }
       FoxPoints.render();
-      FoxPoints.award('visit');
     })();
 
     // Plushie buy click → points

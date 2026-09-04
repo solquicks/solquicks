@@ -10,7 +10,7 @@ const MAX_MIGRATE = 5000; // ceiling on one-time localStorage import
 const FLIP_MIN = 10;
 const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
 
-const AWARDS = { visit: 5, plushie: 500, game: 25, gacha: 50 };
+const AWARDS = { visit: 10, plushie: 500, game: 25, gacha: 50 };
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function b58decode(s) {
@@ -241,6 +241,7 @@ async function playerState(env, wallet) {
   const staked = await env.DB.prepare('SELECT mint FROM staked_nfts WHERE wallet = ?').bind(wallet).all();
   const claimed = p ? p.points : 0;
   const pending = stakeAccrued(s);
+  const today = new Date().toISOString().slice(0, 10);
   return {
     wallet,
     stakedMints: (staked.results || []).map(function (x) { return x.mint; }),
@@ -249,6 +250,8 @@ async function playerState(env, wallet) {
     total: claimed + pending,
     migrated: p ? !!p.migrated : false,
     lastVisit: p ? p.last_visit : null,
+    dailyAvailable: !p || p.last_visit !== today,
+    dailyAmount: AWARDS.visit,
     log: (log.results || []).map(r => ({ e: r.type, p: r.points, t: r.ts })),
     stake: { staked: !!s.staked, since: s.since, count: s.count, accrued: stakeAccrued(s) }
   };

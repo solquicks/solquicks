@@ -20,7 +20,7 @@ use anchor_spl::{
     token::{close_account, transfer, CloseAccount, Mint, Token, TokenAccount, Transfer},
 };
 
-declare_id!("AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG");
+declare_id!("DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5");
 
 /// Metaplex Token Metadata program.
 pub const TOKEN_METADATA_ID: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");

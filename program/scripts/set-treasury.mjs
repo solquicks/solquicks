@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 
-const PROGRAM_ID = new PublicKey('AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG');
+const PROGRAM_ID = new PublicKey('DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5');
 const RPC = process.env.RPC || 'https://api.devnet.solana.com';
 const treasury = new PublicKey(process.env.TREASURY || '39gxzvkugoEVc4Qd5imJdJ8EiqqwnUGq4RT7f4i4MPGr');
 
