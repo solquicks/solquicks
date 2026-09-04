@@ -1572,9 +1572,9 @@
           </div>
           <div class="mission-prize" id="mission-prize"></div>
           <div class="mission-stats">
-            <div class="mission-stat"><div class="mission-stat-val" id="mission-tickets">0</div><div class="mission-stat-key">Entries</div></div>
-            <div class="mission-stat"><div class="mission-stat-val" id="mission-mult">1×</div><div class="mission-stat-key">Streak</div></div>
-            <div class="mission-stat"><div class="mission-stat-val" id="mission-proj">0</div><div class="mission-stat-key" id="mission-proj-key">If you hold</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-tickets">0</div><div class="mission-stat-key">Your entries</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-mult">1×</div><div class="mission-stat-key">Streak bonus</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-days">90</div><div class="mission-stat-key">Days in quarter</div></div>
           </div>
           <div class="mission-bar" id="mission-bar"><span id="mission-bar-fill" style="width:0%"></span></div>
           <div class="mission-foot" id="mission-foot"></div>
@@ -1695,6 +1695,11 @@
       const btn = tabButton(name);
       if (btn) switchTab(name, btn);
     })();
+
+    window.addEventListener('hashchange', function () {
+      const btn = tabButton(location.hash.replace('#', '') || 'links');
+      if (btn && !btn.classList.contains('active')) switchTab(btn.dataset.tab, btn);
+    });
 
     // ── SERIES ──
     function switchSeries(s, btn) {
@@ -2925,8 +2930,7 @@
 
       document.getElementById('mission-tickets').textContent = s.tickets.toLocaleString();
       document.getElementById('mission-mult').textContent = s.multiplier + '×';
-      document.getElementById('mission-proj').textContent = s.projectedTickets.toLocaleString();
-      document.getElementById('mission-proj-key').textContent = upcoming ? 'Full quarter' : 'If you hold';
+      document.getElementById('mission-days').textContent = s.missionDays;
 
       // how far through the quarter we are
       const span = s.ends - s.starts;
@@ -2938,13 +2942,22 @@
       bits.push('<strong>' + s.rangers + '</strong> Ranger' + (s.rangers === 1 ? '' : 's') + ' locked');
       if (s.streak > 0) bits.push('<strong>' + s.streak + '</strong> quarter streak');
       if (r.field && r.field.rangers) bits.push('<strong>' + r.field.rangers + '</strong> Rangers locked site-wide');
+      // One entry per Ranger per day, so spell the arithmetic out rather than
+      // leaving a big number to be read as a duration.
+      const sum = s.rangers > 0
+        ? '<strong>' + s.rangers + '</strong> Ranger' + (s.rangers === 1 ? '' : 's') + ' \u00d7 <strong>' +
+          s.missionDays + '</strong> days' + (s.multiplier > 1 ? ' \u00d7 <strong>' + s.multiplier + '\u00d7</strong> streak' : '') +
+          ' = <strong>' + s.projectedTickets.toLocaleString() + '</strong> entries if you stay locked the whole quarter.'
+        : '';
       let tail;
       if (upcoming) {
         tail = s.rangers === 0
-          ? '<br>Entries start counting on ' + missionDate(s.starts) + '. One entry per Ranger, per day locked \u2014 so a Ranger locked on day one is worth a full quarter of entries.'
-          : '<br>Your locked Rangers start earning entries on ' + missionDate(s.starts) + '. Nothing to do until then.';
+          ? '<br>Entries start counting on ' + missionDate(s.starts) + '. One entry per Ranger, per day locked.'
+          : '<br>' + sum + ' Counting starts ' + missionDate(s.starts) + ' \u2014 nothing to do until then.';
       } else {
-        tail = s.rangers === 0 ? '<br>Lock a Ranger above to start earning entries.' : '';
+        tail = s.rangers === 0
+          ? '<br>Lock a Ranger above to start earning entries.'
+          : '<br>' + sum;
       }
       document.getElementById('mission-foot').innerHTML = bits.join(' &nbsp;·&nbsp; ') + tail;
 
