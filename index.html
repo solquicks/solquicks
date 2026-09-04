@@ -1314,10 +1314,10 @@
     <!-- NAV -->
     <nav class="nav">
       <div class="tabs">
-        <button class="tab active" onclick="switchTab('links',this)">Contact</button>
-        <button class="tab" onclick="switchTab('leaderboard',this)">Leaderboard</button>
-        <button class="tab" onclick="switchTab('store',this)">Store</button>
-        <button class="tab" onclick="switchTab('moon',this)">Moon Rangers</button>
+        <button class="tab active" data-tab="links" onclick="switchTab('links',this)">Contact</button>
+        <button class="tab" data-tab="leaderboard" onclick="switchTab('leaderboard',this)">Leaderboard</button>
+        <button class="tab" data-tab="store" onclick="switchTab('store',this)">Store</button>
+        <button class="tab" data-tab="moon" onclick="switchTab('moon',this)">Moon Rangers</button>
       </div>
       <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
@@ -1679,7 +1679,22 @@
       }
       // Trigger stat counters when Media tab opens
       if (tab === 'media') { runStatCounters(); }
+      // Remember the tab so a refresh lands where you were, and so a tab can
+      // be linked to directly.
+      try { history.replaceState(null, '', tab === 'links' ? location.pathname : '#' + tab); } catch (e) {}
     }
+
+    function tabButton(name) {
+      return document.querySelector('.tab[data-tab="' + name + '"]');
+    }
+
+    // Restore the tab from the URL on load.
+    (function restoreTab() {
+      const name = location.hash.replace('#', '');
+      if (!name) return;
+      const btn = tabButton(name);
+      if (btn) switchTab(name, btn);
+    })();
 
     // ── SERIES ──
     function switchSeries(s, btn) {
@@ -1954,9 +1969,7 @@
         el.removeAttribute('target');
         el.addEventListener('click', function (ev) {
           ev.preventDefault();
-          const btn = [...document.querySelectorAll('.tab')].find(function (t) {
-            return t.getAttribute('onclick') && t.getAttribute('onclick').indexOf("'" + tabName + "'") >= 0;
-          });
+          const btn = tabButton(tabName);
           if (btn) { switchTab(tabName, btn); window.scrollTo({ top: 0, behavior: 'smooth' }); }
         });
       } else {
@@ -2903,7 +2916,7 @@
       document.getElementById('mission-name').textContent = s.label + ' Mission';
       const upcoming = s.status === 'upcoming';
       document.getElementById('mission-left').textContent = upcoming
-        ? 'opens in ' + s.opensIn + ' day' + (s.opensIn === 1 ? '' : 's')
+        ? 'opens ' + missionDate(s.starts)
         : (s.daysLeft > 0 ? s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left' : 'closing');
 
       document.getElementById('mission-prize').textContent = s.prize
