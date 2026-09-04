@@ -1574,9 +1574,9 @@
           <div class="mission-stats">
             <div class="mission-stat"><div class="mission-stat-val" id="mission-tickets">0</div><div class="mission-stat-key">Entries</div></div>
             <div class="mission-stat"><div class="mission-stat-val" id="mission-mult">1×</div><div class="mission-stat-key">Streak</div></div>
-            <div class="mission-stat"><div class="mission-stat-val" id="mission-proj">0</div><div class="mission-stat-key">If you hold</div></div>
+            <div class="mission-stat"><div class="mission-stat-val" id="mission-proj">0</div><div class="mission-stat-key" id="mission-proj-key">If you hold</div></div>
           </div>
-          <div class="mission-bar"><span id="mission-bar-fill" style="width:0%"></span></div>
+          <div class="mission-bar" id="mission-bar"><span id="mission-bar-fill" style="width:0%"></span></div>
           <div class="mission-foot" id="mission-foot"></div>
           <div id="mission-rewards"></div>
         </div>
@@ -2901,8 +2901,10 @@
       card.hidden = false;
 
       document.getElementById('mission-name').textContent = s.label + ' Mission';
-      document.getElementById('mission-left').textContent =
-        s.daysLeft > 0 ? s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left' : 'closing';
+      const upcoming = s.status === 'upcoming';
+      document.getElementById('mission-left').textContent = upcoming
+        ? 'opens in ' + s.opensIn + ' day' + (s.opensIn === 1 ? '' : 's')
+        : (s.daysLeft > 0 ? s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left' : 'closing');
 
       document.getElementById('mission-prize').textContent = s.prize
         ? s.prize
@@ -2911,18 +2913,27 @@
       document.getElementById('mission-tickets').textContent = s.tickets.toLocaleString();
       document.getElementById('mission-mult').textContent = s.multiplier + '×';
       document.getElementById('mission-proj').textContent = s.projectedTickets.toLocaleString();
+      document.getElementById('mission-proj-key').textContent = upcoming ? 'Full quarter' : 'If you hold';
 
       // how far through the quarter we are
       const span = s.ends - s.starts;
       const done = Math.min(1, Math.max(0, (Date.now() - s.starts) / span));
       document.getElementById('mission-bar-fill').style.width = (done * 100).toFixed(1) + '%';
+      document.getElementById('mission-bar').hidden = upcoming;
 
       const bits = [];
       bits.push('<strong>' + s.rangers + '</strong> Ranger' + (s.rangers === 1 ? '' : 's') + ' locked');
       if (s.streak > 0) bits.push('<strong>' + s.streak + '</strong> quarter streak');
       if (r.field && r.field.rangers) bits.push('<strong>' + r.field.rangers + '</strong> Rangers locked site-wide');
-      document.getElementById('mission-foot').innerHTML = bits.join(' &nbsp;·&nbsp; ') +
-        (s.rangers === 0 ? '<br>Lock a Ranger above to start earning entries.' : '');
+      let tail;
+      if (upcoming) {
+        tail = s.rangers === 0
+          ? '<br>Entries start counting on ' + missionDate(s.starts) + '. One entry per Ranger, per day locked \u2014 so a Ranger locked on day one is worth a full quarter of entries.'
+          : '<br>Your locked Rangers start earning entries on ' + missionDate(s.starts) + '. Nothing to do until then.';
+      } else {
+        tail = s.rangers === 0 ? '<br>Lock a Ranger above to start earning entries.' : '';
+      }
+      document.getElementById('mission-foot').innerHTML = bits.join(' &nbsp;·&nbsp; ') + tail;
 
       const wrap = document.getElementById('mission-rewards');
       const rewards = r.rewards || [];
@@ -2936,6 +2947,10 @@
           '<button class="mission-claim" onclick="claimReward(' + w.id + ')"' +
           (w.claimed ? ' disabled>Claimed' : '>Claim') + '</button></div>';
       }).join('');
+    }
+
+    function missionDate(ts) {
+      return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
     }
 
     async function claimReward(id) {
