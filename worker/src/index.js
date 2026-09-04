@@ -272,6 +272,8 @@ const RATE_RULES = [
   { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake', '/api/migrate'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/flip'], name: 'flip', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/mission', '/api/mission/claim'], name: 'mission', by: 'wallet', limit: 40, windowMs: 60000 },
+  { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
@@ -379,6 +381,241 @@ async function healthCheck(env) {
   return { ok, detail };
 }
 
+
+// ── MISSIONS ──
+// A mission runs for a fiscal quarter. Holders join whenever they like; weight
+// is earned per Ranger per day locked inside the quarter, so joining late costs
+// you tickets rather than locking you out. Longer and more Rangers both raise
+// weight, which is what decides both the guaranteed reward and the draw odds.
+// Bumped on every deploy so /api/health says which build is actually live.
+const BUILD = 'missions-draw-1';
+
+const TICKETS_PER_RANGER_DAY = 1;
+// Missions launch with Q1 2027. Until then the card shows the rules and a
+// countdown rather than a quarter nobody could have entered from the start.
+const FIRST_MISSION_ID = '2027-Q1';
+const STREAK_MULTIPLIERS = [1, 1.5, 2];   // 1st, 2nd, 3rd+ consecutive quarter
+
+/// Calendar quarters. If the fiscal year ever differs from the calendar year,
+/// this is the single place to change it.
+function quarterFor(ts) {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  const q = Math.floor(d.getUTCMonth() / 3);
+  return {
+    id: y + '-Q' + (q + 1),
+    label: 'Q' + (q + 1) + ' ' + y,
+    starts: Date.UTC(y, q * 3, 1),
+    ends: Date.UTC(y, q * 3 + 3, 1) - 1
+  };
+}
+
+function quarterById(id) {
+  const [y, q] = id.split('-Q').map(Number);
+  return {
+    id: id,
+    label: 'Q' + q + ' ' + y,
+    starts: Date.UTC(y, (q - 1) * 3, 1),
+    ends: Date.UTC(y, q * 3, 1) - 1
+  };
+}
+
+function previousQuarterId(id) {
+  const [y, q] = id.split('-Q').map(Number);
+  return q === 1 ? (y - 1) + '-Q4' : y + '-Q' + (q - 1);
+}
+
+async function currentMission(env) {
+  const first = quarterById(FIRST_MISSION_ID);
+  const q = Date.now() < first.starts ? first : quarterFor(Date.now());
+  let row = await env.DB.prepare('SELECT * FROM missions WHERE id = ?').bind(q.id).first();
+  if (!row) {
+    await env.DB.prepare(
+      'INSERT INTO missions (id, label, starts, ends, status) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING'
+    ).bind(q.id, q.label, q.starts, q.ends, Date.now() < q.starts ? 'upcoming' : 'open').run();
+    row = await env.DB.prepare('SELECT * FROM missions WHERE id = ?').bind(q.id).first();
+  }
+  // a mission that has not started yet reports as upcoming whatever the row says
+  if (Date.now() < row.starts) row.status = 'upcoming';
+  return row;
+}
+
+/// How many consecutive quarters this wallet has completed, ending with the one
+/// before the mission given. Used to pick the streak multiplier.
+async function streakFor(env, wallet, missionId) {
+  let streak = 0;
+  let id = previousQuarterId(missionId);
+  for (let i = 0; i < 12; i++) { // three years is plenty of lookback
+    const row = await env.DB.prepare(
+      'SELECT tickets FROM mission_results WHERE mission_id = ? AND wallet = ?'
+    ).bind(id, wallet).first();
+    if (!row || row.tickets <= 0) break;
+    streak++;
+    id = previousQuarterId(id);
+  }
+  return streak;
+}
+
+function multiplierFor(streak) {
+  return STREAK_MULTIPLIERS[Math.min(streak, STREAK_MULTIPLIERS.length - 1)];
+}
+
+/// Live standing, computed from the stake records rather than stored, so it is
+/// always current and cannot drift out of sync with what is actually locked.
+async function missionStanding(env, wallet, mission) {
+  const now = Date.now();
+  const windowEnd = Math.min(now, mission.ends);
+  const rows = await env.DB.prepare(
+    'SELECT mint, since FROM staked_nfts WHERE wallet = ?'
+  ).bind(wallet).all();
+  const staked = rows.results || [];
+
+  let rangerDays = 0;
+  for (const nft of staked) {
+    const from = Math.max(nft.since, mission.starts);
+    if (windowEnd <= from) continue;
+    rangerDays += (windowEnd - from) / DAY_MS;
+  }
+
+  const streak = await streakFor(env, wallet, mission.id);
+  const multiplier = multiplierFor(streak);
+  const tickets = Math.floor(rangerDays * TICKETS_PER_RANGER_DAY * multiplier);
+
+  // what the same lock would be worth if held to the end of the quarter
+  let projectedDays = 0;
+  for (const nft of staked) {
+    const from = Math.max(nft.since, mission.starts);
+    if (mission.ends <= from) continue;
+    projectedDays += (mission.ends - from) / DAY_MS;
+  }
+
+  return {
+    missionId: mission.id,
+    label: mission.label,
+    starts: mission.starts,
+    ends: mission.ends,
+    status: mission.status,
+    sponsor: mission.sponsor || null,
+    prize: mission.prize || null,
+    rangers: staked.length,
+    rangerDays: Math.floor(rangerDays),
+    streak: streak,
+    multiplier: multiplier,
+    tickets: tickets,
+    projectedTickets: Math.round(projectedDays * TICKETS_PER_RANGER_DAY * multiplier),
+    missionDays: Math.round((mission.ends - mission.starts) / DAY_MS),
+    daysLeft: Math.max(0, Math.ceil((mission.ends - now) / DAY_MS)),
+    opensIn: now < mission.starts ? Math.ceil((mission.starts - now) / DAY_MS) : 0
+  };
+}
+
+
+// ── THE DRAW ────────────────────────────────────────────────────────────────
+// Split between chain and server so it stays cheap without becoming a
+// "trust me". The entry list is hashed and committed on-chain before any
+// randomness exists; the randomness is written on-chain exactly once; the
+// selection below is pure arithmetic over those two published values. Anyone
+// can re-run it and get the same winners.
+
+const DRAW_PROGRAM_ID = '8BqrCR3hdX6o1P3tnEjX5xuV9FbTJLU2F8aNBNF5XvCp';
+
+function hex(bytes) {
+  return Array.from(new Uint8Array(bytes)).map(function (b) {
+    return b.toString(16).padStart(2, '0');
+  }).join('');
+}
+
+function unhex(s) {
+  const clean = String(s || '').replace(/^0x/, '');
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return out;
+}
+
+async function sha256(bytes) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+}
+
+/// One line per entrant, `wallet:entries`, ordered by wallet. Deterministic
+/// and diffable — the published file and the hashed bytes are the same thing.
+function canonicalSnapshot(entries) {
+  return entries
+    .slice()
+    .sort(function (a, b) { return a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0; })
+    .map(function (e) { return e.wallet + ':' + e.tickets; })
+    .join('\n');
+}
+
+/// Winners, without replacement. Draw n hashes randomness with the draw index;
+/// the result picks a point in the cumulative entry range. A wallet already
+/// drawn is skipped and the next index tried, so more entries means more
+/// chances but never two prizes for the same wallet.
+function selectWinners(randomnessHex, snapshotText, winnerCount) {
+  const entries = snapshotText.split('\n').filter(Boolean).map(function (line) {
+    const at = line.lastIndexOf(':');
+    return { wallet: line.slice(0, at), tickets: Number(line.slice(at + 1)) };
+  });
+
+  let total = 0;
+  const cumulative = entries.map(function (e) { return (total += e.tickets); });
+  if (total <= 0) return [];
+
+  const rnd = unhex(randomnessHex);
+  const winners = [];
+  const taken = new Set();
+  const maxDraws = Math.min(4096, entries.length * 64 + winnerCount * 64);
+
+  for (let draw = 0; draw < maxDraws && winners.length < winnerCount && taken.size < entries.length; draw++) {
+    const seed = new Uint8Array(rnd.length + 4);
+    seed.set(rnd, 0);
+    new DataView(seed.buffer).setUint32(rnd.length, draw, false);
+    // synchronous hash so the whole selection stays a pure function
+    const pick = fnvPick(seed, total);
+
+    let lo = 0, hi = cumulative.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pick < cumulative[mid]) hi = mid; else lo = mid + 1;
+    }
+    const chosen = entries[lo];
+    if (taken.has(chosen.wallet)) continue;
+    taken.add(chosen.wallet);
+    winners.push({ rank: winners.length + 1, wallet: chosen.wallet, tickets: chosen.tickets, draw: draw });
+  }
+  return winners;
+}
+
+/// 128-bit FNV-1a over the seed, reduced into the entry range. Chosen over
+/// SHA-256 here only because it is synchronous and trivial to reimplement in
+/// any language — the unpredictability comes from the VRF, not from this.
+function fnvPick(seed, total) {
+  let h = 0x6c62272e07bb0142n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= BigInt(seed[i]);
+    h = (h * prime) & mask;
+  }
+  // fold once more so single-byte changes propagate across the whole word
+  h ^= h >> 33n;
+  h = (h * prime) & mask;
+  return Number(h % BigInt(total));
+}
+
+/// Build the entry list for a mission from the settled results.
+async function drawSnapshot(env, missionId) {
+  const rows = await env.DB.prepare(
+    'SELECT wallet, tickets FROM mission_results WHERE mission_id = ? AND tickets > 0'
+  ).bind(missionId).all();
+  const entries = (rows.results || []).map(function (r) {
+    return { wallet: r.wallet, tickets: r.tickets };
+  });
+  const text = canonicalSnapshot(entries);
+  const hash = hex(await sha256(new TextEncoder().encode(text)));
+  const total = entries.reduce(function (s, e) { return s + e.tickets; }, 0);
+  return { entries: entries, text: text, hash: hash, total: total };
+}
+
 export default {
   /// Runs on a schedule so an outage is reported rather than stumbled upon.
   /// Alerts only on a change of state, so a long outage does not spam.
@@ -419,6 +656,7 @@ export default {
 
       // public routes are limited by IP before any work is done
       if (path === '/api/img' || path === '/api/leaderboard' ||
+          path === '/api/mission/draw' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -520,9 +758,150 @@ export default {
         return json(request, env, { rows: out, totals: totals });
       }
 
+      // ── admin: mission configuration and settlement ──
+      if (path.startsWith('/api/admin/mission') && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const body = await request.json().catch(function () { return {}; });
+        const mission = await currentMission(env);
+
+        if (path === '/api/admin/mission/configure') {
+          await env.DB.prepare('UPDATE missions SET sponsor = ?, prize = ? WHERE id = ?')
+            .bind(body.sponsor || null, body.prize || null, body.missionId || mission.id).run();
+          return json(request, env, { ok: true });
+        }
+
+        // Settlement: snapshot everyone's weight, then issue the guaranteed
+        // rewards. The draw for headline prizes is a separate step so the
+        // randomness can be published with a proof.
+        if (path === '/api/admin/mission/settle') {
+          const target = body.missionId || mission.id;
+          const m = await env.DB.prepare('SELECT * FROM missions WHERE id = ?').bind(target).first();
+          if (!m) return json(request, env, { error: 'no such mission' }, 404);
+
+          const wallets = await env.DB.prepare(
+            'SELECT DISTINCT wallet FROM staked_nfts'
+          ).all();
+
+          const pointsPool = Math.max(0, Math.floor(Number(body.pointsPool) || 0));
+          const rows = [];
+          let totalTickets = 0;
+          for (const w of (wallets.results || [])) {
+            const s = await missionStanding(env, w.wallet, m);
+            if (s.tickets <= 0) continue;
+            rows.push({ wallet: w.wallet, s: s });
+            totalTickets += s.tickets;
+          }
+
+          for (const r of rows) {
+            await env.DB.prepare(
+              'INSERT INTO mission_results (mission_id, wallet, tickets, rangers, ranger_days, streak) ' +
+              'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(mission_id, wallet) DO UPDATE SET ' +
+              'tickets=excluded.tickets, rangers=excluded.rangers, ranger_days=excluded.ranger_days, streak=excluded.streak'
+            ).bind(target, r.wallet, r.s.tickets, r.s.rangers, r.s.rangerDays, r.s.streak).run();
+
+            // guaranteed share of the points pool, proportional to weight
+            if (pointsPool > 0 && totalTickets > 0) {
+              const share = Math.floor(pointsPool * (r.s.tickets / totalTickets));
+              if (share > 0) {
+                await env.DB.prepare(
+                  'INSERT INTO mission_rewards (mission_id, wallet, kind, amount, detail) VALUES (?, ?, ?, ?, ?)'
+                ).bind(target, r.wallet, 'points', share, m.label + ' — guaranteed share').run();
+              }
+            }
+          }
+
+          await env.DB.prepare("UPDATE missions SET status = 'settled' WHERE id = ?").bind(target).run();
+          return json(request, env, { mission: target, entrants: rows.length, totalTickets: totalTickets });
+        }
+
+        // Freeze the entry list. Runs before any randomness exists; the hash
+        // it returns is what gets committed on-chain.
+        if (path === '/api/admin/mission/snapshot') {
+          const missionId = body.missionId || mission.id;
+          const winnerCount = Math.max(1, Math.min(64, Number(body.winnerCount) || 3));
+          const existing = await env.DB.prepare(
+            'SELECT snapshot_hash FROM mission_draws WHERE mission_id = ?'
+          ).bind(missionId).first();
+          if (existing) {
+            return json(request, env, { error: 'already snapshotted', snapshotHash: existing.snapshot_hash }, 409);
+          }
+          const snap = await drawSnapshot(env, missionId);
+          if (snap.total <= 0) return json(request, env, { error: 'no entries to draw from' }, 400);
+
+          await env.DB.prepare(
+            'INSERT INTO mission_draws (mission_id, snapshot, snapshot_hash, total_tickets, winner_count, created_at) ' +
+            'VALUES (?, ?, ?, ?, ?, ?)'
+          ).bind(missionId, snap.text, snap.hash, snap.total, winnerCount, Date.now()).run();
+
+          return json(request, env, {
+            mission: missionId,
+            snapshotHash: snap.hash,
+            totalTickets: snap.total,
+            entrants: snap.entries.length,
+            winnerCount: winnerCount,
+            commitWith: { programId: DRAW_PROGRAM_ID, mission: missionId }
+          });
+        }
+
+        // Record the on-chain accounts once the commit lands.
+        if (path === '/api/admin/mission/draw-account') {
+          await env.DB.prepare(
+            'UPDATE mission_draws SET draw_account = ?, commit_signature = ? WHERE mission_id = ?'
+          ).bind(body.drawAccount || null, body.signature || null, body.missionId || mission.id).run();
+          return json(request, env, { ok: true });
+        }
+
+        // Randomness has landed on-chain: reproduce the winners from it and
+        // hand each one a claimable reward.
+        if (path === '/api/admin/mission/winners') {
+          const missionId = body.missionId || mission.id;
+          const row = await env.DB.prepare(
+            'SELECT * FROM mission_draws WHERE mission_id = ?'
+          ).bind(missionId).first();
+          if (!row) return json(request, env, { error: 'snapshot the mission first' }, 404);
+          if (row.winners) return json(request, env, { error: 'winners already drawn', winners: JSON.parse(row.winners) }, 409);
+
+          const randomness = String(body.randomness || '').replace(/^0x/, '').toLowerCase();
+          if (!/^[0-9a-f]{64}$/.test(randomness)) {
+            return json(request, env, { error: 'randomness must be 32 bytes of hex from the on-chain draw account' }, 400);
+          }
+          if (/^0+$/.test(randomness)) {
+            return json(request, env, { error: 'randomness is still unset on-chain' }, 400);
+          }
+
+          const winners = selectWinners(randomness, row.snapshot, row.winner_count);
+          const prizes = Array.isArray(body.prizes) ? body.prizes : [];
+
+          await env.DB.prepare(
+            'UPDATE mission_draws SET randomness = ?, winners = ?, fulfill_signature = ?, drawn_at = ? WHERE mission_id = ?'
+          ).bind(randomness, JSON.stringify(winners), body.signature || null, Date.now(), missionId).run();
+
+          for (const w of winners) {
+            const prize = prizes[w.rank - 1] || {};
+            await env.DB.prepare(
+              'INSERT INTO mission_rewards (mission_id, wallet, kind, amount, detail) VALUES (?, ?, ?, ?, ?)'
+            ).bind(
+              missionId,
+              w.wallet,
+              prize.kind || 'prize',
+              Math.max(0, Math.floor(Number(prize.amount) || 0)),
+              prize.detail || (missionId + ' \u2014 draw winner #' + w.rank)
+            ).run();
+          }
+
+          return json(request, env, { mission: missionId, randomness: randomness, winners: winners });
+        }
+
+        return json(request, env, { error: 'unknown admin action' }, 404);
+      }
+
       // ── health ──
       if (path === '/api/health' && request.method === 'GET') {
         const h = await healthCheck(env);
+        h.build = BUILD;
         return json(request, env, h, h.ok ? 200 : 503);
       }
 
@@ -550,6 +929,37 @@ export default {
       }
 
       // ── public: leaderboard ──
+      // ── the draw, published so it can be checked ──
+      if (path === '/api/mission/draw' && request.method === 'GET') {
+        const missionId = url.searchParams.get('mission');
+        if (!missionId) return json(request, env, { error: 'which mission?' }, 400);
+        const row = await env.DB.prepare(
+          'SELECT * FROM mission_draws WHERE mission_id = ?'
+        ).bind(missionId).first();
+        if (!row) return json(request, env, { error: 'no draw for that mission' }, 404);
+        return json(request, env, {
+          mission: row.mission_id,
+          snapshotHash: row.snapshot_hash,
+          totalTickets: row.total_tickets,
+          winnerCount: row.winner_count,
+          entries: row.snapshot.split('\n').filter(Boolean).map(function (l) {
+            const at = l.lastIndexOf(':');
+            return { wallet: l.slice(0, at), tickets: Number(l.slice(at + 1)) };
+          }),
+          randomness: row.randomness || null,
+          winners: row.winners ? JSON.parse(row.winners) : null,
+          onChain: {
+            programId: DRAW_PROGRAM_ID,
+            drawAccount: row.draw_account || null,
+            commitSignature: row.commit_signature || null,
+            fulfillSignature: row.fulfill_signature || null
+          },
+          committedAt: row.created_at,
+          drawnAt: row.drawn_at || null,
+          howToVerify: 'sha256 of the entry lines joined by newline must equal snapshotHash, which is stored on-chain in drawAccount before randomness existed. Re-run the published selection over randomness to reproduce winners.'
+        });
+      }
+
       if (path === '/api/leaderboard' && request.method === 'GET') {
         const rows = await env.DB.prepare(
           'SELECT p.wallet AS wallet, ' +
@@ -659,6 +1069,56 @@ export default {
         return json(request, env, {
           all: { total: (r && r.total) || 0, wins: (r && r.wins) || 0 },
           mine: { total: (mine && mine.total) || 0, wins: (mine && mine.wins) || 0 }
+        });
+      }
+
+      // ── missions ──
+      if (path === '/api/mission' && request.method === 'GET') {
+        const mission = await currentMission(env);
+        const standing = await missionStanding(env, wallet, mission);
+        const rewards = await env.DB.prepare(
+          'SELECT id, mission_id, kind, amount, detail, claimed FROM mission_rewards ' +
+          'WHERE wallet = ? ORDER BY claimed ASC, id DESC LIMIT 50'
+        ).bind(wallet).all();
+        // how much of the field this wallet represents, for a sense of the odds
+        const totals = await env.DB.prepare(
+          'SELECT COUNT(DISTINCT wallet) AS holders, COUNT(*) AS rangers FROM staked_nfts'
+        ).first();
+        return json(request, env, {
+          standing: standing,
+          rewards: rewards.results || [],
+          field: { holders: (totals && totals.holders) || 0, rangers: (totals && totals.rangers) || 0 }
+        });
+      }
+
+      // Rewards sit against the wallet until claimed — nothing is pushed out,
+      // so a quiet wallet never loses anything and claiming brings people back.
+      if (path === '/api/mission/claim' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const id = Number(body.id);
+        if (!id) return json(request, env, { error: 'which reward?' }, 400);
+
+        const reward = await env.DB.prepare(
+          'SELECT * FROM mission_rewards WHERE id = ? AND wallet = ?'
+        ).bind(id, wallet).first();
+        if (!reward) return json(request, env, { error: 'reward not found' }, 404);
+        if (reward.claimed) return json(request, env, { error: 'already claimed' }, 409);
+
+        // mark first, then credit — a double-click cannot pay twice
+        const marked = await env.DB.prepare(
+          'UPDATE mission_rewards SET claimed = 1, claimed_at = ? WHERE id = ? AND claimed = 0'
+        ).bind(Date.now(), id).run();
+        if (!marked.meta || marked.meta.changes === 0) {
+          return json(request, env, { error: 'already claimed' }, 409);
+        }
+
+        if (reward.kind === 'points' && reward.amount > 0) {
+          await addPoints(env, wallet, 'mission', reward.amount);
+        }
+
+        return json(request, env, {
+          claimed: { kind: reward.kind, amount: reward.amount, detail: reward.detail },
+          player: await playerState(env, wallet)
         });
       }
 
