@@ -274,6 +274,8 @@ const RATE_RULES = [
   { match: ['/api/flip'], name: 'flip', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/mission', '/api/mission/claim'], name: 'mission', by: 'wallet', limit: 40, windowMs: 60000 },
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/analytics'], name: 'analytics', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
@@ -388,7 +390,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'missions-draw-1';
+const BUILD = 'analytics-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -616,10 +618,209 @@ async function drawSnapshot(env, missionId) {
   return { entries: entries, text: text, hash: hash, total: total };
 }
 
+
+// ── HOLDER ANALYTICS ────────────────────────────────────────────────────────
+// Snapshotted on a cron rather than computed per request: a hundred visitors
+// then cost the same one DAS call as a single visitor, which matters on a
+// free tier capped at 2 DAS requests a second.
+
+const ME_SYMBOL = 'moonrangers';
+// Bucket edges for a 436-piece collection. Whale is deliberately reachable —
+// the point is to show the shape of the holder base, not to flatter anyone.
+const WHALE_MIN = 10;
+const MID_MIN = 3;
+
+async function fetchAllOwners(env) {
+  if (!env.HELIUS_API_KEY) return null;
+  const owners = [];
+  for (let page = 1; page <= 10; page++) {
+    const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 'a', method: 'searchAssets',
+        params: {
+          grouping: ['collection', env.MOON_RANGERS_COLLECTION],
+          page: page, limit: 1000
+        }
+      })
+    });
+    if (!res.ok) throw new Error('das ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || 'das error');
+    const items = (data.result && data.result.items) || [];
+    for (const it of items) {
+      const o = it.ownership && it.ownership.owner;
+      if (o) owners.push(o);
+    }
+    if (items.length < 1000) break;
+  }
+  return owners;
+}
+
+async function fetchFloor() {
+  const res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL + '/stats', {
+    headers: { 'Accept': 'application/json' }
+  });
+  if (!res.ok) throw new Error('me ' + res.status);
+  const s = await res.json();
+  if (!s || typeof s.floorPrice !== 'number') return null;
+  return { floor: s.floorPrice, listed: s.listedCount || 0, volume7d: s.volume7d || 0 };
+}
+
+/// One pass: who holds what, and what the market says. Either half can fail
+/// without taking the other down — a missing floor is better than a blank tab.
+async function refreshAnalytics(env) {
+  const now = Date.now();
+  const out = { holders: null, floor: null };
+
+  try {
+    const owners = await fetchAllOwners(env);
+    if (owners && owners.length) {
+      const counts = new Map();
+      for (const o of owners) counts.set(o, (counts.get(o) || 0) + 1);
+
+      let whales = 0, mid = 0, small = 0;
+      for (const n of counts.values()) {
+        if (n >= WHALE_MIN) whales++;
+        else if (n >= MID_MIN) mid++;
+        else small++;
+      }
+      const sorted = Array.from(counts.values()).sort(function (a, b) { return b - a; });
+      const top10 = sorted.slice(0, 10).reduce(function (s, n) { return s + n; }, 0);
+      const top10Pct = Math.round((top10 / owners.length) * 1000) / 10;
+
+      await env.DB.prepare(
+        'INSERT INTO holder_snapshots (taken_at, holders, supply, whales, mid, small, top10_pct) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(now, counts.size, owners.length, whales, mid, small, top10Pct).run();
+
+      // positions are a replace-in-place mirror, kept for wallet lookup and rank
+      const entries = Array.from(counts.entries());
+      const batch = [];
+      for (const [wallet, count] of entries) {
+        batch.push(env.DB.prepare(
+          'INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, ?, ?, ?) ' +
+          'ON CONFLICT(wallet) DO UPDATE SET count = excluded.count, updated_at = excluded.updated_at'
+        ).bind(wallet, count, now, now));
+      }
+      for (let i = 0; i < batch.length; i += 50) await env.DB.batch(batch.slice(i, i + 50));
+      // wallets that sold out entirely since the last run
+      await env.DB.prepare('DELETE FROM holder_positions WHERE updated_at < ?').bind(now).run();
+
+      out.holders = { holders: counts.size, supply: owners.length };
+    }
+  } catch (e) {
+    await logError(env, 'analytics.holders', (e && e.message) || e);
+  }
+
+  try {
+    const f = await fetchFloor();
+    if (f) {
+      await env.DB.prepare(
+        'INSERT INTO floor_snapshots (taken_at, source, floor_lamports, listed, volume_7d) VALUES (?, ?, ?, ?, ?)'
+      ).bind(now, 'magiceden', f.floor, f.listed, f.volume7d).run();
+      out.floor = f;
+    }
+  } catch (e) {
+    await logError(env, 'analytics.floor', (e && e.message) || e);
+  }
+
+  // a year of history is plenty and keeps the table small
+  await env.DB.prepare('DELETE FROM holder_snapshots WHERE taken_at < ?').bind(now - 365 * 86400000).run();
+  await env.DB.prepare('DELETE FROM floor_snapshots WHERE taken_at < ?').bind(now - 365 * 86400000).run();
+  return out;
+}
+
+/// Nearest reading at or before a moment, for the change figures.
+async function floorAt(env, ts) {
+  const row = await env.DB.prepare(
+    'SELECT floor_lamports FROM floor_snapshots WHERE taken_at <= ? ORDER BY taken_at DESC LIMIT 1'
+  ).bind(ts).first();
+  return row ? row.floor_lamports : null;
+}
+
+async function analyticsPayload(env) {
+  const now = Date.now();
+
+  const hs = await env.DB.prepare(
+    'SELECT * FROM holder_snapshots ORDER BY taken_at DESC LIMIT 1'
+  ).first();
+  const fs = await env.DB.prepare(
+    'SELECT * FROM floor_snapshots ORDER BY taken_at DESC LIMIT 1'
+  ).first();
+
+  const day = await floorAt(env, now - 86400000);
+  const week = await floorAt(env, now - 7 * 86400000);
+  const pct = function (from, to) {
+    if (!from || !to) return null;
+    return Math.round(((to - from) / from) * 1000) / 10;
+  };
+
+  // one point a day keeps the chart honest without shipping every snapshot
+  const series = await env.DB.prepare(
+    'SELECT MIN(taken_at) AS t, floor_lamports AS floor FROM floor_snapshots ' +
+    'WHERE taken_at > ? GROUP BY date(taken_at / 1000, \'unixepoch\') ORDER BY t'
+  ).bind(now - 90 * 86400000).all();
+
+  const firstFloor = await env.DB.prepare('SELECT MIN(taken_at) AS t FROM floor_snapshots').first();
+
+  // who is actually taking part, rather than just holding
+  const staking = await env.DB.prepare(
+    'SELECT COUNT(DISTINCT wallet) AS wallets, COUNT(*) AS rangers FROM staked_nfts'
+  ).first();
+  const top = await env.DB.prepare(
+    'SELECT wallet, COUNT(*) AS rangers, MIN(since) AS since FROM staked_nfts ' +
+    'GROUP BY wallet ORDER BY rangers DESC, since ASC LIMIT 10'
+  ).all();
+
+  const holders = hs ? hs.holders : 0;
+  const stakingWallets = (staking && staking.wallets) || 0;
+
+  return {
+    holders: hs ? {
+      total: hs.holders,
+      supply: hs.supply,
+      whales: hs.whales,
+      mid: hs.mid,
+      small: hs.small,
+      top10Pct: hs.top10_pct,
+      avg: hs.holders ? Math.round((hs.supply / hs.holders) * 100) / 100 : 0,
+      updatedAt: hs.taken_at
+    } : null,
+    floor: fs ? {
+      lamports: fs.floor_lamports,
+      sol: Math.round((fs.floor_lamports / 1e9) * 1000) / 1000,
+      listed: fs.listed,
+      volume7d: fs.volume_7d,
+      change24h: pct(day, fs.floor_lamports),
+      change7d: pct(week, fs.floor_lamports),
+      source: fs.source,
+      updatedAt: fs.taken_at,
+      collectingSince: firstFloor ? firstFloor.t : null,
+      history: (series.results || []).map(function (r) {
+        return { t: r.t, sol: Math.round((r.floor / 1e9) * 1000) / 1000 };
+      })
+    } : null,
+    participation: {
+      stakingWallets: stakingWallets,
+      rangersStaked: (staking && staking.rangers) || 0,
+      shareOfHolders: holders ? Math.round((stakingWallets / holders) * 1000) / 10 : null,
+      top: (top.results || []).map(function (r) {
+        return { wallet: r.wallet, rangers: r.rangers, since: r.since };
+      })
+    }
+  };
+}
+
 export default {
   /// Runs on a schedule so an outage is reported rather than stumbled upon.
   /// Alerts only on a change of state, so a long outage does not spam.
   async scheduled(event, env, ctx) {
+    // analytics first: a failure here is logged, never fatal, and must not
+    // stop the health check from running
+    ctx.waitUntil(refreshAnalytics(env).catch(function () {}));
+
     const h = await healthCheck(env);
     let previous = null;
     try {
@@ -656,7 +857,8 @@ export default {
 
       // public routes are limited by IP before any work is done
       if (path === '/api/img' || path === '/api/leaderboard' ||
-          path === '/api/mission/draw' ||
+          path === '/api/mission/draw' || path === '/api/analytics' ||
+          path === '/api/analytics/wallet' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -925,6 +1127,50 @@ export default {
             'Content-Disposition': 'attachment; filename="solquicks-points-' +
               new Date().toISOString().slice(0, 10) + '.json"'
           }
+        });
+      }
+
+      // ── public: holder analytics ──
+      if (path === '/api/analytics' && request.method === 'GET') {
+        const cache = caches.default;
+        const key = new Request(new URL('/api/analytics', url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        const payload = await analyticsPayload(env);
+        const res = json(request, env, payload);
+        // the snapshot only moves on the cron, so a minute of edge cache is free
+        const cached = new Response(res.body, res);
+        cached.headers.set('Cache-Control', 'public, max-age=60');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
+      }
+
+      // One wallet's standing. Rank is dense over holdings, so ties share it.
+      if (path === '/api/analytics/wallet' && request.method === 'GET') {
+        const who = url.searchParams.get('address');
+        if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
+
+        const pos = await env.DB.prepare(
+          'SELECT count, first_seen FROM holder_positions WHERE wallet = ?'
+        ).bind(who).first();
+        if (!pos) return json(request, env, { wallet: who, holds: 0, rank: null, staked: 0 });
+
+        const ahead = await env.DB.prepare(
+          'SELECT COUNT(DISTINCT count) AS n FROM holder_positions WHERE count > ?'
+        ).bind(pos.count).first();
+        const staked = await env.DB.prepare(
+          'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ?'
+        ).bind(who).first();
+        const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM holder_positions').first();
+
+        return json(request, env, {
+          wallet: who,
+          holds: pos.count,
+          rank: ((ahead && ahead.n) || 0) + 1,
+          ofHolders: (total && total.n) || 0,
+          staked: (staked && staked.n) || 0,
+          firstSeen: pos.first_seen
         });
       }
 
