@@ -192,6 +192,7 @@
     .nav {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
       background: var(--card);
       border: var(--line);
@@ -199,40 +200,61 @@
       box-shadow: var(--pop);
       padding: 6px;
       margin-bottom: 26px;
+      position: relative;
     }
 
-    .tabs {
+    .nav-trigger {
+      appearance: none; cursor: pointer;
+      display: flex; align-items: center; gap: 9px;
+      background: transparent; border: 2px solid transparent;
+      border-radius: 999px; padding: 7px 14px;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.95rem;
+      color: var(--ink); min-width: 0;
+    }
+    .nav-trigger:hover { background: var(--orange-soft); }
+    .nav-trigger[aria-expanded="true"] { background: var(--orange); border-color: var(--ink); color: #fff; }
+    .nav-current { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nav-caret { flex-shrink: 0; transition: transform 0.18s ease; }
+    .nav-trigger[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
+    @media (prefers-reduced-motion: reduce) { .nav-caret { transition: none; } }
+
+    .nav-burger { display: grid; gap: 3px; flex-shrink: 0; }
+    .nav-burger i { display: block; width: 15px; height: 2px; border-radius: 2px; background: currentColor; }
+
+    .nav-menu {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      z-index: 60;
+      width: min(340px, calc(100vw - 40px));
+      background: var(--card);
+      border: var(--line);
+      border-radius: 20px;
+      box-shadow: 0 10px 30px rgba(46, 36, 64, 0.22);
+      padding: 7px;
       display: flex;
-      gap: 4px;
-      flex: 1;
-      min-width: 0;
-      overflow-x: auto;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-      scroll-padding: 0 10px;
+      flex-direction: column;
+      gap: 2px;
+      max-height: min(70vh, 520px);
+      overflow-y: auto;
     }
-    .tabs::-webkit-scrollbar { display: none; }
-
-    .tab {
-      appearance: none;
-      border: 2px solid transparent;
-      background: transparent;
-      color: var(--ink-soft);
-      font-size: 0.86rem;
-      font-weight: 700;
-      padding: 8px 14px;
-      border-radius: 999px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.18s ease;
+    .nav-item {
+      appearance: none; cursor: pointer; text-align: left;
+      display: flex; align-items: flex-start; gap: 11px;
+      background: transparent; border: 2px solid transparent;
+      border-radius: 14px; padding: 10px 12px; width: 100%;
+      font-family: inherit; color: var(--ink);
     }
-    .tab:hover { background: var(--orange-soft); color: var(--ink); }
-    .tab.active {
-      background: var(--orange);
-      border-color: var(--ink);
-      color: #fff;
-      box-shadow: 2px 3px 0 rgba(46, 36, 64, 0.25);
+    .nav-item:hover { background: var(--cream); }
+    .nav-item:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
+    .nav-item.active { background: var(--orange-soft); border-color: var(--orange); }
+    .nav-item-icon {
+      font-size: 1rem; line-height: 1.3; width: 20px; flex-shrink: 0;
+      text-align: center; color: var(--orange-deep);
     }
+    .nav-item-name { display: block; font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.95rem; line-height: 1.25; }
+    .nav-item-note { display: block; font-size: 0.76rem; color: var(--muted); line-height: 1.4; margin-top: 1px; }
+    .nav-item.active .nav-item-note { color: var(--ink-soft); }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
@@ -1583,7 +1605,6 @@
 
     @media (max-width: 480px) {
       .container { padding: 14px 12px 50px; }
-      .tab { font-size: 0.8rem; padding: 7px 11px; }
       .handle { font-size: 1.35rem; }
       .avatar { width: 140px; height: 140px; }
     }
@@ -1615,18 +1636,49 @@
 
     <!-- NAV -->
     <nav class="nav">
-      <div class="tabs">
-        <button class="tab active" data-tab="links" onclick="switchTab('links',this)">Contact</button>
-        <button class="tab" data-tab="book" onclick="switchTab('book',this)">Book</button>
-        <button class="tab" data-tab="swap" onclick="switchTab('swap',this)">Swap</button>
-        <button class="tab" data-tab="leaderboard" onclick="switchTab('leaderboard',this)">Leaderboard</button>
-        <button class="tab" data-tab="store" onclick="switchTab('store',this)">Store</button>
-        <button class="tab" data-tab="moon" onclick="switchTab('moon',this)">Moon Rangers</button>
-      </div>
+      <button class="nav-trigger" id="nav-trigger" onclick="toggleMenu()"
+              aria-haspopup="true" aria-expanded="false" aria-controls="nav-menu">
+        <span class="nav-burger" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="nav-current" id="nav-current">Contact</span>
+        <svg class="nav-caret" width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </button>
       <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
         <span id="wallet-chip-label">Connect</span>
       </button>
+
+      <div class="nav-menu" id="nav-menu" role="menu" hidden>
+        <button class="nav-item" role="menuitem" data-tab="links" onclick="switchTab('links',this)">
+          <span class="nav-item-icon" aria-hidden="true">⌂</span>
+          <span><span class="nav-item-name">Contact</span>
+          <span class="nav-item-note">Links, socials, and how to reach me</span></span>
+        </button>
+        <button class="nav-item" role="menuitem" data-tab="book" onclick="switchTab('book',this)">
+          <span class="nav-item-icon" aria-hidden="true">✉</span>
+          <span><span class="nav-item-name">Book</span>
+          <span class="nav-item-note">Hire me to host or speak · advertising space</span></span>
+        </button>
+        <button class="nav-item" role="menuitem" data-tab="swap" onclick="switchTab('swap',this)">
+          <span class="nav-item-icon" aria-hidden="true">⇅</span>
+          <span><span class="nav-item-name">Swap</span>
+          <span class="nav-item-note">Trade tokens, routed by Jupiter</span></span>
+        </button>
+        <button class="nav-item" role="menuitem" data-tab="store" onclick="switchTab('store',this)">
+          <span class="nav-item-icon" aria-hidden="true">◉</span>
+          <span><span class="nav-item-name">Store</span>
+          <span class="nav-item-note">The quicks plushie</span></span>
+        </button>
+        <button class="nav-item" role="menuitem" data-tab="moon" onclick="switchTab('moon',this)">
+          <span class="nav-item-icon" aria-hidden="true">◑</span>
+          <span><span class="nav-item-name">Moon Rangers</span>
+          <span class="nav-item-note">Stake, missions, and collection stats</span></span>
+        </button>
+        <button class="nav-item" role="menuitem" data-tab="leaderboard" onclick="switchTab('leaderboard',this)">
+          <span class="nav-item-icon" aria-hidden="true">☆</span>
+          <span><span class="nav-item-name">Leaderboard</span>
+          <span class="nav-item-note">Fox Points, daily claim, and Points Flip</span></span>
+        </button>
+      </div>
     </nav>
 
     <!-- SPONSOR SLOT -->
@@ -2065,13 +2117,46 @@
       draw();
     })();
 
+    // ── NAV MENU ──
+    // One dropdown instead of a row of pills: it holds as many destinations as
+    // the site grows to, and every entry gets a line saying what it actually is
+    // — which a one-word tab never could.
+    function toggleMenu() {
+      const t = document.getElementById('nav-trigger');
+      if (t.getAttribute('aria-expanded') === 'true') closeMenu(); else openMenu();
+    }
+
+    function openMenu() {
+      document.getElementById('nav-menu').hidden = false;
+      document.getElementById('nav-trigger').setAttribute('aria-expanded', 'true');
+    }
+
+    function closeMenu() {
+      const menu = document.getElementById('nav-menu');
+      if (menu) menu.hidden = true;
+      const t = document.getElementById('nav-trigger');
+      if (t) t.setAttribute('aria-expanded', 'false');
+    }
+
+    document.addEventListener('click', function (ev) {
+      const nav = document.querySelector('.nav');
+      if (nav && !nav.contains(ev.target)) closeMenu();
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      const t = document.getElementById('nav-trigger');
+      if (t && t.getAttribute('aria-expanded') === 'true') { closeMenu(); t.focus(); }
+    });
+
     // ── TABS ──
     function switchTab(tab, btn) {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
-      // keep the active tab fully visible when the row scrolls
-      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (e) {}
+      // choosing closes the menu, and the trigger takes on the page name
+      closeMenu();
+      const label = btn.querySelector('.nav-item-name');
+      if (label) document.getElementById('nav-current').textContent = label.textContent;
       const panel = document.getElementById('panel-' + tab);
       // Reset animation so it replays on every tab switch
       panel.style.animation = 'none';
@@ -2105,7 +2190,7 @@
     }
 
     function tabButton(name) {
-      return document.querySelector('.tab[data-tab="' + name + '"]');
+      return document.querySelector('.nav-item[data-tab="' + name + '"]');
     }
 
     // Restore the tab from the URL on load.
