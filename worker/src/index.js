@@ -276,6 +276,8 @@ const RATE_RULES = [
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/analytics'], name: 'analytics', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
@@ -390,7 +392,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'analytics-1';
+const BUILD = 'booking-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -813,6 +815,234 @@ async function analyticsPayload(env) {
   };
 }
 
+
+// ── BOOK THE FOX ────────────────────────────────────────────────────────────
+// Three booking modes, because they are genuinely different transactions:
+//   slot    — pick a time, pay now (Space, podcast, stream)
+//   async   — no calendar, pay now, delivered on a turnaround (custom content)
+//   enquiry — in-person work. Dates, travel and venue get agreed first, so
+//             nobody pays before there is something to pay for.
+
+const RUSH_HOURS = 48;
+const RUSH_PCT = 50;
+const HOLDER_DISCOUNT_PCT = 15;
+const MIN_LEAD_HOURS = 24;
+const HOLD_MINUTES = 20;
+const BOOKING_HORIZON_DAYS = 30;
+
+// Availability in UTC minutes-from-midnight, Monday = 1. Roughly 11am–5pm ET.
+const AVAILABILITY = {
+  1: [[900, 1260]], 2: [[900, 1260]], 3: [[900, 1260]],
+  4: [[900, 1260]], 5: [[900, 1260]]
+};
+const SLOT_STEP_MIN = 30;
+
+const BOOKING_TYPES = [
+  {
+    id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
+    blurb: 'I host and drive the room. You bring the guests; I bring the energy.',
+    includes: [
+      'You bring the guests',
+      'I schedule the topics and question agenda',
+      'High foxy energy throughout',
+      'I promote your CTAs on the mic'
+    ]
+  },
+  {
+    id: 'podcast', name: 'Podcast — I host for you', mode: 'slot', minutes: 60, price: 350,
+    blurb: 'I host the podcast on your behalf, from agenda to finished edit.',
+    includes: [
+      'I write the agenda of topics and questions',
+      'I host the full session',
+      'Post-production edit of the long-form video included'
+    ]
+  },
+  {
+    id: 'stream', name: 'Stream — I host for you', mode: 'slot', minutes: 60, price: 300,
+    blurb: 'Same as the podcast, live, with the stream visuals built for you.',
+    includes: [
+      'I write the agenda of topics and questions',
+      'I host the full stream',
+      'Visual templates for the stream included',
+      'No long-form edit — this one goes out live'
+    ]
+  },
+  {
+    id: 'custom', name: 'Custom content', mode: 'async', minutes: 0, price: 250,
+    blurb: 'A content drop made for you, posted from my account.',
+    includes: ['1× video', '1× post', '3× reposts from my account']
+  },
+  {
+    id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1000,
+    blurb: 'In person only — MC an event, speak on stage, or host a fireside chat.',
+    includes: [
+      'Flat fee, in person',
+      'MCing, speaking slots and fireside chats',
+      'Dates, travel and venue agreed before anything is paid'
+    ]
+  }
+];
+
+const BOOKING_POLICY = {
+  rush: 'Booked less than ' + RUSH_HOURS + ' hours ahead? That adds ' + RUSH_PCT + '%.',
+  holder: 'Hold any Moon Ranger and ' + HOLDER_DISCOUNT_PCT + '% comes off.',
+  cancellation: 'Cancel more than 48 hours ahead for a full refund. Inside 48 hours ' +
+    'the booking is non-refundable, because the slot is gone. If I have to cancel, you ' +
+    'get everything back and first pick of a new date.',
+  refunds: 'Refunds are sent back to the wallet that paid, by hand, within 3 business days.',
+  currency: 'Prices are in USD and charged in SOL at the rate quoted when you book. ' +
+    'That quote holds for ' + HOLD_MINUTES + ' minutes.'
+};
+
+function bookingType(id) {
+  return BOOKING_TYPES.find(function (t) { return t.id === id; }) || null;
+}
+
+/// SOL/USD, cached for five minutes. Bookings are quoted, not streamed, so a
+/// slightly stale rate is fine — the quote is locked at hold time anyway.
+// Sources are tried in order. CoinGecko answers a browser fine but blocks
+// Cloudflare's egress, which is exactly the kind of thing that only shows up
+// in production — hence more than one, and a stale value beats none.
+const SOL_PRICE_SOURCES = [
+  {
+    name: 'coinbase',
+    url: 'https://api.coinbase.com/v2/prices/SOL-USD/spot',
+    read: function (d) { return d && d.data && Number(d.data.amount); }
+  },
+  {
+    name: 'coingecko',
+    url: 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+    read: function (d) { return d && d.solana && Number(d.solana.usd); }
+  },
+  {
+    name: 'kraken',
+    url: 'https://api.kraken.com/0/public/Ticker?pair=SOLUSD',
+    read: function (d) {
+      const r = d && d.result && Object.values(d.result)[0];
+      return r && r.c && Number(r.c[0]);
+    }
+  }
+];
+
+async function solUsd(env) {
+  const row = await env.DB.prepare(
+    "SELECT n, ts FROM kv_cache WHERE k = 'solusd'"
+  ).first().catch(function () { return null; });
+  if (row && Date.now() - row.ts < 300000 && row.n > 0) return row.n / 10000;
+
+  let price = null;
+  for (const src of SOL_PRICE_SOURCES) {
+    try {
+      const res = await fetch(src.url, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) continue;
+      const v = src.read(await res.json());
+      // a feed returning something absurd is worse than a feed returning nothing
+      if (v && isFinite(v) && v > 1 && v < 100000) { price = v; break; }
+    } catch (e) { /* try the next one */ }
+  }
+
+  if (price === null) {
+    await logError(env, 'solUsd', 'every price source failed');
+    return row && row.n > 0 ? row.n / 10000 : null;
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO kv_cache (k, n, ts) VALUES ('solusd', ?, ?) " +
+    'ON CONFLICT(k) DO UPDATE SET n = excluded.n, ts = excluded.ts'
+  ).bind(Math.round(price * 10000), Date.now()).run().catch(function () {});
+  return price;
+}
+
+/// Candidate slots, minus anything already held or paid for. Generated from a
+/// rule rather than stored, so changing the working week is a one-line edit.
+async function openSlots(env, type) {
+  if (!type || type.mode !== 'slot') return [];
+  const now = Date.now();
+  const from = now + MIN_LEAD_HOURS * 3600000;
+  const until = now + BOOKING_HORIZON_DAYS * 86400000;
+
+  const taken = await env.DB.prepare(
+    "SELECT starts_at, minutes FROM bookings WHERE status IN ('held','paid','confirmed') AND starts_at > ?"
+  ).bind(now).all();
+  const busy = (taken.results || []).map(function (b) {
+    return [b.starts_at, b.starts_at + (b.minutes || 60) * 60000];
+  });
+
+  const slots = [];
+  const cursor = new Date(from);
+  cursor.setUTCMinutes(0, 0, 0);
+  for (let d = 0; d < BOOKING_HORIZON_DAYS + 1 && slots.length < 200; d++) {
+    const day = new Date(cursor.getTime() + d * 86400000);
+    const windows = AVAILABILITY[day.getUTCDay()];
+    if (!windows) continue;
+    for (const [openMin, closeMin] of windows) {
+      for (let m = openMin; m + type.minutes <= closeMin; m += SLOT_STEP_MIN) {
+        const starts = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, m);
+        if (starts < from || starts > until) continue;
+        const ends = starts + type.minutes * 60000;
+        const clash = busy.some(function (b) { return starts < b[1] && ends > b[0]; });
+        if (clash) continue;
+        slots.push({ starts: starts, ends: ends, rush: starts - now < RUSH_HOURS * 3600000 });
+        if (slots.length >= 200) break;
+      }
+    }
+  }
+  return slots;
+}
+
+/// base → rush → discount, in that order. Any other order lets a rush booking
+/// come out cheaper than a normal one, which is a bug customers will find.
+function quoteFor(type, startsAt, isHolder) {
+  const base = type.price;
+  const rush = type.mode === 'slot' && startsAt &&
+    (startsAt - Date.now()) < RUSH_HOURS * 3600000;
+  const afterRush = rush ? base * (1 + RUSH_PCT / 100) : base;
+  const discount = isHolder ? HOLDER_DISCOUNT_PCT : 0;
+  const total = Math.round(afterRush * (1 - discount / 100) * 100) / 100;
+  return { base: base, rush: rush, rushPct: rush ? RUSH_PCT : 0, discountPct: discount, total: total };
+}
+
+async function isRangerHolder(env, wallet) {
+  if (!wallet) return false;
+  const row = await env.DB.prepare(
+    'SELECT count FROM holder_positions WHERE wallet = ?'
+  ).bind(wallet).first();
+  if (row && row.count > 0) return true;
+  // a Ranger locked in the vault is still held, even if the snapshot lags
+  const staked = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ?'
+  ).bind(wallet).first();
+  return !!(staked && staked.n > 0);
+}
+
+function publicBooking(b) {
+  return {
+    ref: b.ref,
+    type: b.type_id,
+    mode: b.mode,
+    startsAt: b.starts_at,
+    minutes: b.minutes,
+    baseUsd: b.base_usd,
+    rushPct: b.rush_pct,
+    discountPct: b.discount_pct,
+    totalUsd: b.total_usd,
+    lamports: b.lamports,
+    status: b.status,
+    signature: b.signature,
+    name: b.name,
+    createdAt: b.created_at,
+    paidAt: b.paid_at
+  };
+}
+
+function bookingRef() {
+  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let out = 'FOX-';
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  for (const b of bytes) out += s[b % s.length];
+  return out;
+}
+
 export default {
   /// Runs on a schedule so an outage is reported rather than stumbled upon.
   /// Alerts only on a change of state, so a long outage does not spam.
@@ -852,13 +1082,19 @@ export default {
 
     try {
       ctx.waitUntil(sweepExpired(env));
+      // an abandoned checkout must not hold a slot hostage
+      ctx.waitUntil(env.DB.prepare(
+        "UPDATE bookings SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
+      ).bind(Date.now()).run().catch(function () {}));
 
 
 
       // public routes are limited by IP before any work is done
       if (path === '/api/img' || path === '/api/leaderboard' ||
           path === '/api/mission/draw' || path === '/api/analytics' ||
-          path === '/api/analytics/wallet' ||
+          path === '/api/analytics/wallet' || path === '/api/booking/types' ||
+          path === '/api/booking/slots' || path === '/api/booking/hold' ||
+          path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1107,6 +1343,18 @@ export default {
         return json(request, env, h, h.ok ? 200 : 503);
       }
 
+      if (path === '/api/admin/bookings' && request.method === 'GET') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const rows = await env.DB.prepare(
+          "SELECT * FROM bookings WHERE status IN ('paid','enquiry') ORDER BY " +
+          'COALESCE(starts_at, created_at) ASC LIMIT 200'
+        ).all();
+        return json(request, env, { bookings: rows.results || [] });
+      }
+
       // ── admin: full export ──
       // Cloudflare keeps 30 days of point-in-time recovery, so this is for
       // holding a copy outside the account entirely.
@@ -1172,6 +1420,139 @@ export default {
           staked: (staked && staked.n) || 0,
           firstSeen: pos.first_seen
         });
+      }
+
+      // ── public: the rate card ──
+      if (path === '/api/booking/types' && request.method === 'GET') {
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        const holder = wallet ? await isRangerHolder(env, wallet) : false;
+        const price = await solUsd(env);
+        return json(request, env, {
+          types: BOOKING_TYPES,
+          policy: BOOKING_POLICY,
+          rushHours: RUSH_HOURS,
+          rushPct: RUSH_PCT,
+          holderDiscountPct: HOLDER_DISCOUNT_PCT,
+          holder: holder,
+          solUsd: price,
+          payTo: env.TREASURY_WALLET || null
+        });
+      }
+
+      if (path === '/api/booking/slots' && request.method === 'GET') {
+        const type = bookingType(url.searchParams.get('type'));
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+        return json(request, env, { type: type.id, minutes: type.minutes, slots: await openSlots(env, type) });
+      }
+
+      // Holds the slot and locks the quote. Nothing is charged here — this
+      // exists so the price cannot move between choosing and paying.
+      if (path === '/api/booking/hold' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const type = bookingType(body.type);
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+
+        const name = String(body.name || '').trim().slice(0, 120);
+        const contact = String(body.contact || '').trim().slice(0, 200);
+        const brief = String(body.brief || '').trim().slice(0, 2000);
+        if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
+
+        let startsAt = null;
+        if (type.mode === 'slot') {
+          startsAt = Number(body.startsAt);
+          if (!startsAt) return json(request, env, { error: 'pick a time' }, 400);
+          if (startsAt - Date.now() < MIN_LEAD_HOURS * 3600000) {
+            return json(request, env, { error: 'that time is too soon — pick one at least a day out' }, 400);
+          }
+          const open = await openSlots(env, type);
+          if (!open.some(function (s) { return s.starts === startsAt; })) {
+            return json(request, env, { error: 'that slot just went — pick another' }, 409);
+          }
+        }
+
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        const holder = wallet ? await isRangerHolder(env, wallet) : false;
+        const q = quoteFor(type, startsAt, holder);
+        const price = await solUsd(env);
+        // Enquiries are not paid up front, so they do not need a rate at all.
+        if (price === null && type.mode !== 'enquiry') {
+          return json(request, env, { error: 'cannot price in SOL just now — try again shortly' }, 503);
+        }
+        const lamports = type.mode === 'enquiry' ? null
+          : Math.round((q.total / price) * 1e9);
+
+        const ref = bookingRef();
+        const now = Date.now();
+        await env.DB.prepare(
+          'INSERT INTO bookings (ref, wallet, type_id, mode, starts_at, minutes, base_usd, rush_pct, ' +
+          'discount_pct, total_usd, sol_price, lamports, status, hold_until, name, contact, brief, created_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          ref, wallet, type.id, type.mode, startsAt, type.minutes,
+          q.base, q.rushPct, q.discountPct, q.total, price, lamports,
+          type.mode === 'enquiry' ? 'enquiry' : 'held',
+          type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
+          name, contact, brief, now
+        ).run();
+
+        return json(request, env, {
+          ref: ref,
+          type: type.id,
+          mode: type.mode,
+          startsAt: startsAt,
+          minutes: type.minutes,
+          quote: q,
+          solUsd: price,
+          lamports: lamports,
+          payTo: env.TREASURY_WALLET || null,
+          holdUntil: type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
+          policy: BOOKING_POLICY
+        });
+      }
+
+      if (path === '/api/booking/confirm' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const signature = String(body.signature || '').trim();
+        if (!ref || !signature) return json(request, env, { error: 'reference and signature are both needed' }, 400);
+
+        const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status === 'paid') return json(request, env, { ok: true, alreadyPaid: true, booking: publicBooking(b) });
+        if (b.status !== 'held') return json(request, env, { error: 'that booking is not awaiting payment' }, 409);
+        if (b.hold_until && Date.now() > b.hold_until) {
+          return json(request, env, { error: 'the hold expired — the price may have moved, please book again' }, 410);
+        }
+
+        if (!env.TREASURY_WALLET) {
+          await logError(env, 'booking.confirm', 'TREASURY_WALLET unset — refusing to confirm');
+          return json(request, env, { error: 'payments are not switched on yet' }, 503);
+        }
+        const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
+        if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
+
+        // 1% tolerance: SOL can tick between quote and signature
+        const min = Math.floor(b.lamports * 0.99);
+        const v = await verifyPayment(env, payer, signature, min, 'booking:' + ref);
+        if (!v.ok) return json(request, env, { error: v.error }, 402);
+
+        await env.DB.prepare(
+          "UPDATE bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
+        ).bind(signature, Date.now(), payer, ref).run();
+
+        await alert(env, '📅 New booking ' + ref + ' — ' + b.type_id + ' — $' + b.total_usd +
+          (b.starts_at ? ' on ' + new Date(b.starts_at).toISOString() : '') + '\n' + b.name + ' · ' + b.contact);
+
+        const fresh = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
+        return json(request, env, { ok: true, booking: publicBooking(fresh) });
+      }
+
+      if (path === '/api/booking/lookup' && request.method === 'GET') {
+        const ref = String(url.searchParams.get('ref') || '').trim();
+        if (!ref) return json(request, env, { error: 'which booking?' }, 400);
+        const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        return json(request, env, { booking: publicBooking(b) });
       }
 
       // ── public: leaderboard ──

@@ -6,6 +6,8 @@ workers_dev = true
 [vars]
 ALLOWED_ORIGINS = "https://solquicks.com,https://www.solquicks.com"
 MOON_RANGERS_COLLECTION = "5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"
+# Public address, not a secret. Booking payments are verified against it.
+TREASURY_WALLET = "39gxzvkugoEVc4Qd5imJdJ8EiqqwnUGq4RT7f4i4MPGr"
 
 # health check every 30 minutes; alerts only when the state changes
 [triggers]

@@ -1084,6 +1084,93 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    /* ── BOOK THE FOX ── */
+    .bk-intro { text-align: center; margin-bottom: 18px; }
+    .bk-lead { font-family: 'Baloo 2', sans-serif; font-size: 1.5rem; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
+    .bk-sub { font-size: 0.9rem; color: var(--ink-soft); line-height: 1.5; max-width: 42ch; margin: 0 auto; }
+
+    .bk-list { display: flex; flex-direction: column; gap: 12px; }
+    .bk-card {
+      background: var(--card);
+      border: var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--pop);
+      padding: 16px 18px;
+      text-align: left;
+    }
+    .bk-top { display: flex; align-items: baseline; gap: 10px; }
+    .bk-name { font-family: 'Baloo 2', sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--ink); flex: 1; }
+    .bk-price {
+      font-family: 'Baloo 2', sans-serif; font-size: 1.25rem; font-weight: 800;
+      color: var(--orange-deep); white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .bk-meta { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+    .bk-blurb { font-size: 0.88rem; color: var(--ink-soft); margin: 8px 0 10px; line-height: 1.5; }
+    .bk-inc { list-style: none; padding: 0; margin: 0 0 12px; }
+    .bk-inc li { font-size: 0.84rem; color: var(--ink-soft); padding-left: 20px; position: relative; margin-bottom: 4px; line-height: 1.45; }
+    .bk-inc li::before { content: '✓'; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+    .bk-go {
+      appearance: none; border: none; cursor: pointer; width: 100%;
+      background: var(--orange); color: #fff;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.95rem;
+      border-radius: 999px; padding: 11px 20px;
+    }
+    .bk-go:hover { background: var(--orange-deep); }
+    .bk-go.ghost { background: var(--cream); color: var(--ink); border: 2px solid var(--ink); }
+    .bk-go.ghost:hover { background: #fff; }
+
+    /* checkout */
+    .bk-flow { background: var(--card); border: var(--line); border-radius: var(--radius); box-shadow: var(--pop); padding: 18px; text-align: left; }
+    .bk-step { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .bk-back { background: none; border: none; cursor: pointer; color: var(--muted); font-family: inherit; font-size: 0.82rem; font-weight: 700; padding: 0; margin-bottom: 10px; }
+    .bk-back:hover { color: var(--ink); }
+
+    .bk-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 7px; max-height: 260px; overflow-y: auto; padding: 2px; }
+    .bk-slot {
+      appearance: none; cursor: pointer;
+      background: var(--cream); border: 2px solid #E7DFD2; border-radius: 10px;
+      padding: 8px 6px; font-family: inherit; font-size: 0.76rem; font-weight: 700; color: var(--ink);
+      line-height: 1.3; text-align: center;
+    }
+    .bk-slot:hover { border-color: var(--orange); }
+    .bk-slot.on { background: var(--orange-soft); border-color: var(--orange); }
+    .bk-slot em { display: block; font-style: normal; font-size: 0.66rem; color: var(--crimson); font-weight: 800; }
+    .bk-day { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; }
+
+    .bk-field { margin-bottom: 12px; }
+    .bk-field label { display: block; font-size: 0.76rem; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
+    .bk-field input, .bk-field textarea {
+      width: 100%; box-sizing: border-box;
+      background: var(--cream); border: 2px solid #E7DFD2; border-radius: 10px;
+      padding: 9px 12px; font-family: inherit; font-size: 0.88rem; color: var(--ink);
+    }
+    .bk-field textarea { min-height: 76px; resize: vertical; }
+    .bk-field input:focus, .bk-field textarea:focus { outline: none; border-color: var(--orange); }
+    .bk-hint { font-size: 0.72rem; color: var(--muted); margin-top: 3px; }
+
+    .bk-quote { background: var(--cream); border-radius: 12px; padding: 14px 16px; margin: 14px 0; }
+    .bk-line { display: flex; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: var(--ink-soft); margin-bottom: 5px; }
+    .bk-line.total {
+      font-family: 'Baloo 2', sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--ink);
+      border-top: 2px solid #E7DFD2; padding-top: 8px; margin-top: 8px; margin-bottom: 0;
+    }
+    .bk-line .num { font-variant-numeric: tabular-nums; }
+    .bk-save { color: var(--green); font-weight: 700; }
+    .bk-add { color: var(--crimson); font-weight: 700; }
+
+    .bk-policy { font-size: 0.76rem; color: var(--muted); line-height: 1.55; margin-top: 12px; }
+    .bk-policy strong { color: var(--ink-soft); }
+    .bk-msg { font-size: 0.86rem; margin-top: 10px; line-height: 1.5; }
+    .bk-msg.bad { color: var(--crimson); font-weight: 700; }
+    .bk-msg.good { color: var(--green); font-weight: 700; }
+
+    .bk-done { text-align: center; padding: 8px 0; }
+    .bk-tick { font-size: 2.4rem; }
+    .bk-ref {
+      font-family: monospace; font-size: 1.3rem; font-weight: 700; color: var(--orange-deep);
+      background: var(--orange-soft); border-radius: 10px; padding: 8px 16px; display: inline-block; margin: 8px 0;
+    }
+
     /* ── COLLECTION ANALYTICS ── */
     .an-wrap { margin-top: 26px; text-align: left; }
     .an-head {
@@ -1386,6 +1473,7 @@
     <nav class="nav">
       <div class="tabs">
         <button class="tab active" data-tab="links" onclick="switchTab('links',this)">Contact</button>
+        <button class="tab" data-tab="book" onclick="switchTab('book',this)">Book</button>
         <button class="tab" data-tab="leaderboard" onclick="switchTab('leaderboard',this)">Leaderboard</button>
         <button class="tab" data-tab="store" onclick="switchTab('store',this)">Store</button>
         <button class="tab" data-tab="moon" onclick="switchTab('moon',this)">Moon Rangers</button>
@@ -1606,6 +1694,16 @@
       </div>
     </div>
 
+    <!-- BOOK PANEL -->
+    <div id="panel-book" class="panel">
+      <div class="bk-intro">
+        <div class="bk-lead">Book The Fox</div>
+        <p class="bk-sub">Hire me to host, speak, or make something for you. Pay in SOL, get a reference, and I'll be in touch to confirm the details.</p>
+      </div>
+      <div class="bk-list" id="bk-list"></div>
+      <div id="bk-flow" hidden></div>
+    </div>
+
     <!-- MOON PANEL -->
     <div id="panel-moon" class="panel">
       <div class="moon-hero">
@@ -1804,6 +1902,7 @@
       if (tab === 'media') { runStatCounters(); }
       // Collection stats are public, so they load on tab open rather than
       // waiting for a wallet. Refresh only while the tab is actually showing.
+      if (tab === 'book' && !bkData && typeof loadBooking === 'function') loadBooking();
       if (tab === 'moon') {
         if (typeof loadAnalytics === 'function') {
           loadAnalytics();
@@ -3039,6 +3138,323 @@
       renderStaking();
     }
 
+    /// Booking payments are real money on mainnet, so they get their own send
+    /// path — `sendChainTx` is pinned to devnet for staking and must stay that way.
+    async function sendSol(to, lamports) {
+      const { Connection, PublicKey, Transaction, SystemProgram } = w3();
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+
+      const connection = new Connection(HELIUS_RPC, 'confirmed');
+      const from = new PublicKey(Wallet.pubkey);
+      const tx = new Transaction().add(SystemProgram.transfer({
+        fromPubkey: from,
+        toPubkey: new PublicKey(to),
+        lamports: Math.round(lamports)
+      }));
+      tx.feePayer = from;
+      const latest = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = latest.blockhash;
+
+      let signature;
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        signature = res.signature || res;
+      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        signature = await connection.sendRawTransaction(signed.serialize());
+      } else if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: provider.w.accounts[0],
+          chain: 'solana:mainnet',
+          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        signature = new PublicKey(out[0].signature).toBase58();
+      } else {
+        throw new Error('This wallet cannot send transactions.');
+      }
+
+      await connection.confirmTransaction(
+        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        'confirmed'
+      );
+      return signature;
+    }
+
+    // ── BOOK THE FOX ──
+    // Deliberately usable without a wallet: the rate card, the calendar and
+    // the enquiry form all work signed out. A wallet is only needed to pay,
+    // and only then does the holder discount apply.
+    var bkData = null;
+    var bkPick = { type: null, startsAt: null };
+
+    async function loadBooking() {
+      const list = document.getElementById('bk-list');
+      if (!list) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/booking/types', authHeaders());
+        if (!res.ok) return;
+        bkData = await res.json();
+        renderRateCard();
+      } catch (e) {
+        list.innerHTML = '<p class="bk-sub">Could not load the rate card just now.</p>';
+      }
+    }
+
+    function authHeaders() {
+      return FoxPoints && FoxPoints.token
+        ? { headers: { Authorization: 'Bearer ' + FoxPoints.token } }
+        : {};
+    }
+
+    function renderRateCard() {
+      const list = document.getElementById('bk-list');
+      const d = bkData;
+      list.innerHTML = d.types.map(function (t) {
+        const label = t.mode === 'enquiry' ? 'Ask about a date'
+          : t.mode === 'async' ? 'Order this' : 'Pick a time';
+        const meta = t.mode === 'enquiry' ? 'In person · flat fee'
+          : t.mode === 'async' ? 'No calendar needed · made for you'
+          : t.minutes + ' minutes · live';
+        return '<div class="bk-card">' +
+          '<div class="bk-top"><div class="bk-name">' + escapeHtml(t.name) + '</div>' +
+          '<div class="bk-price">$' + t.price.toLocaleString() + '</div></div>' +
+          '<div class="bk-meta">' + meta + '</div>' +
+          '<div class="bk-blurb">' + escapeHtml(t.blurb) + '</div>' +
+          '<ul class="bk-inc">' + t.includes.map(function (i) {
+            return '<li>' + escapeHtml(i) + '</li>';
+          }).join('') + '</ul>' +
+          '<button class="bk-go' + (t.mode === 'enquiry' ? ' ghost' : '') +
+          '" onclick="startBooking(\'' + t.id + '\')">' + label + '</button></div>';
+      }).join('') +
+        '<p class="bk-policy" style="text-align:center">' +
+        escapeHtml(d.policy.rush) + ' ' + escapeHtml(d.policy.holder) +
+        (d.holder ? ' <strong>Your discount is already applied.</strong>' : '') + '</p>';
+    }
+
+    function backToRateCard() {
+      document.getElementById('bk-flow').hidden = true;
+      document.getElementById('bk-list').hidden = false;
+      bkPick = { type: null, startsAt: null };
+    }
+
+    async function startBooking(typeId) {
+      const t = bkData.types.find(function (x) { return x.id === typeId; });
+      if (!t) return;
+      bkPick = { type: t, startsAt: null };
+      document.getElementById('bk-list').hidden = true;
+      const flow = document.getElementById('bk-flow');
+      flow.hidden = false;
+
+      if (t.mode === 'slot') {
+        flow.innerHTML = '<div class="bk-flow"><button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+          '<div class="bk-step">' + escapeHtml(t.name) + ' · pick a time</div>' +
+          '<div id="bk-slots">Loading times…</div></div>';
+        try {
+          const res = await fetch(POINTS_API + '/api/booking/slots?type=' + t.id);
+          const d = await res.json();
+          renderSlots(d.slots || []);
+        } catch (e) {
+          document.getElementById('bk-slots').textContent = 'Could not load available times.';
+        }
+      } else {
+        renderBookingForm();
+      }
+    }
+
+    function renderSlots(slots) {
+      const box = document.getElementById('bk-slots');
+      if (!slots.length) {
+        box.innerHTML = '<p class="bk-sub">Nothing open in the next month. Get in touch and we\'ll find a time.</p>';
+        return;
+      }
+      // group by day so the list reads like a diary, not a wall of buttons
+      const days = [];
+      const seen = {};
+      for (const s of slots) {
+        const key = new Date(s.starts).toDateString();
+        if (!seen[key]) { seen[key] = []; days.push({ key: key, when: s.starts, items: seen[key] }); }
+        seen[key].push(s);
+      }
+      box.innerHTML = days.slice(0, 10).map(function (d) {
+        return '<div class="bk-day">' + new Date(d.when).toLocaleDateString(undefined,
+          { weekday: 'long', day: 'numeric', month: 'long' }) + '</div>' +
+          '<div class="bk-slots">' + d.items.map(function (s) {
+            return '<button class="bk-slot" data-t="' + s.starts + '" onclick="pickSlot(' + s.starts + ',this)">' +
+              new Date(s.starts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) +
+              (s.rush ? '<em>rush +50%</em>' : '') + '</button>';
+          }).join('') + '</div>';
+      }).join('') +
+      '<p class="bk-hint" style="margin-top:10px">Times shown in your own timezone.</p>';
+    }
+
+    function pickSlot(ts, el) {
+      bkPick.startsAt = ts;
+      document.querySelectorAll('.bk-slot').forEach(function (b) { b.classList.remove('on'); });
+      el.classList.add('on');
+      renderBookingForm();
+    }
+
+    function renderBookingForm() {
+      const t = bkPick.type;
+      const flow = document.getElementById('bk-flow');
+      const isEnquiry = t.mode === 'enquiry';
+      const when = bkPick.startsAt
+        ? new Date(bkPick.startsAt).toLocaleString(undefined,
+            { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })
+        : null;
+
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="startBooking(\'' + t.id + '\')">← Back</button>' +
+        '<div class="bk-step">' + escapeHtml(t.name) + (when ? ' · ' + escapeHtml(when) : '') + '</div>' +
+        '<div class="bk-field"><label for="bk-name">Your name or project</label>' +
+        '<input id="bk-name" autocomplete="organization"></div>' +
+        '<div class="bk-field"><label for="bk-contact">How do I reach you?</label>' +
+        '<input id="bk-contact" placeholder="@handle, email, or Telegram" autocomplete="email">' +
+        '<div class="bk-hint">I confirm every booking personally before anything goes in the diary.</div></div>' +
+        '<div class="bk-field"><label for="bk-brief">What do you need?</label>' +
+        '<textarea id="bk-brief" placeholder="' +
+        (isEnquiry ? 'Event, city, dates you have in mind' : 'Topic, guests, links, anything I should know') +
+        '"></textarea></div>' +
+        '<div id="bk-quote"></div>' +
+        '<button class="bk-go" id="bk-submit" onclick="submitBooking()">' +
+        (isEnquiry ? 'Send enquiry' : 'Get a quote') + '</button>' +
+        '<div class="bk-msg" id="bk-msg"></div>' +
+        '<p class="bk-policy"><strong>Cancellations.</strong> ' + escapeHtml(bkData.policy.cancellation) +
+        '<br><strong>Refunds.</strong> ' + escapeHtml(bkData.policy.refunds) +
+        (isEnquiry ? '' : '<br><strong>Price.</strong> ' + escapeHtml(bkData.policy.currency)) +
+        '</p></div>';
+    }
+
+    async function submitBooking() {
+      const btn = document.getElementById('bk-submit');
+      const msg = document.getElementById('bk-msg');
+      const t = bkPick.type;
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+
+      const name = (document.getElementById('bk-name').value || '').trim();
+      const contact = (document.getElementById('bk-contact').value || '').trim();
+      const brief = (document.getElementById('bk-brief').value || '').trim();
+      if (!name || !contact) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = 'I need a name and a way to reach you.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const res = await fetch(POINTS_API + '/api/booking/hold', Object.assign({
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {})
+        }, { body: JSON.stringify({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief }) }));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+
+        if (t.mode === 'enquiry') { showBookingDone(d, true); return; }
+        renderQuote(d);
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Something went wrong. Try again.';
+        btn.disabled = false;
+        btn.textContent = t.mode === 'enquiry' ? 'Send enquiry' : 'Get a quote';
+      }
+    }
+
+    function renderQuote(d) {
+      const q = d.quote;
+      const sol = (d.lamports / 1e9).toFixed(4);
+      const box = document.getElementById('bk-quote');
+      let lines = '<div class="bk-line"><span>' + escapeHtml(bkPick.type.name) + '</span>' +
+        '<span class="num">$' + q.base.toLocaleString() + '</span></div>';
+      if (q.rushPct) {
+        lines += '<div class="bk-line"><span class="bk-add">Rush booking (+' + q.rushPct + '%)</span>' +
+          '<span class="num bk-add">+$' + Math.round(q.base * q.rushPct / 100).toLocaleString() + '</span></div>';
+      }
+      if (q.discountPct) {
+        lines += '<div class="bk-line"><span class="bk-save">Moon Ranger holder (−' + q.discountPct + '%)</span>' +
+          '<span class="num bk-save">−$' + Math.round(q.base * (1 + q.rushPct / 100) * q.discountPct / 100).toLocaleString() + '</span></div>';
+      }
+      lines += '<div class="bk-line total"><span>Total</span><span class="num">$' +
+        q.total.toLocaleString() + ' · ' + sol + ' ◎</span></div>';
+      box.innerHTML = '<div class="bk-quote">' + lines + '</div>' +
+        '<p class="bk-hint">Reference <strong>' + escapeHtml(d.ref) + '</strong> · this price holds for 20 minutes.</p>';
+
+      const btn = document.getElementById('bk-submit');
+      btn.disabled = false;
+      btn.textContent = 'Pay ' + sol + ' ◎';
+      btn.onclick = function () { payBooking(d); };
+    }
+
+    async function payBooking(d) {
+      const btn = document.getElementById('bk-submit');
+      const msg = document.getElementById('bk-msg');
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+
+      if (!Wallet.pubkey) {
+        msg.textContent = 'Connect your wallet to pay…';
+        try { await connectWallet(); } catch (e) { /* user closed the picker */ }
+        if (!Wallet.pubkey) {
+          msg.className = 'bk-msg bad';
+          msg.textContent = 'A wallet is needed to pay. Everything else is saved under ' + d.ref + '.';
+          return;
+        }
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Check your wallet…';
+      try {
+        const sig = await sendSol(d.payTo, d.lamports);
+        btn.textContent = 'Confirming…';
+        const res = await fetch(POINTS_API + '/api/booking/confirm', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify({ ref: d.ref, signature: sig })
+        });
+        const r = await res.json();
+        if (r.error) throw new Error(r.error);
+        showBookingDone(d, false, sig);
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        // slippage-style failures are the common case: say what to do next
+        msg.innerHTML = escapeHtml(friendlyTxError(e)) +
+          '<br>Your reference is <strong>' + escapeHtml(d.ref) + '</strong> — quote it if you need a hand.';
+        btn.disabled = false;
+        btn.textContent = 'Try paying again';
+      }
+    }
+
+    function friendlyTxError(e) {
+      const m = String((e && e.message) || e || '');
+      if (/reject|denied|cancell?ed|User rejected/i.test(m)) return 'You cancelled that in your wallet — nothing was charged.';
+      if (/insufficient|0x1\b/i.test(m)) return 'Not enough SOL in that wallet to cover the booking plus network fees.';
+      if (/blockhash|expired|timed out|timeout/i.test(m)) return 'That took too long and the transaction expired. Nothing was charged — try again.';
+      if (/already used|already/i.test(m)) return m;
+      if (/not found yet/i.test(m)) return 'Payment sent, but the network has not caught up. Give it a moment and press try again — you will not be charged twice.';
+      return m || 'The payment did not go through.';
+    }
+
+    function showBookingDone(d, isEnquiry, sig) {
+      const flow = document.getElementById('bk-flow');
+      flow.innerHTML = '<div class="bk-flow bk-done">' +
+        '<div class="bk-tick">' + (isEnquiry ? '📬' : '🦊') + '</div>' +
+        '<div class="bk-lead">' + (isEnquiry ? 'Enquiry sent' : 'Booked') + '</div>' +
+        '<p class="bk-sub">' + (isEnquiry
+          ? 'I\'ll come back to you about dates, travel and the fee before anything is paid.'
+          : 'Paid and in the diary. I\'ll be in touch to confirm the details.') + '</p>' +
+        '<div class="bk-ref">' + escapeHtml(d.ref) + '</div>' +
+        '<p class="bk-hint">Keep that reference.' +
+        (sig ? ' <a href="https://solscan.io/tx/' + encodeURIComponent(sig) + '" target="_blank" rel="noopener noreferrer">View receipt</a>' : '') +
+        '</p>' +
+        '<button class="bk-go ghost" style="margin-top:14px" onclick="backToRateCard()">Book something else</button></div>';
+    }
+
     // ── COLLECTION ANALYTICS ──
     // Public: no wallet needed. Snapshots come from the Worker cron, so this
     // is a cheap read however many people are looking.
@@ -3466,6 +3882,7 @@
       loadAnalytics();
       if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
     }
+    if (document.getElementById('panel-book').classList.contains('active')) loadBooking();
 </script>
 
   <button class="back-to-top" id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
