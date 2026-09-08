@@ -1186,6 +1186,7 @@
       font-family: 'Baloo 2', sans-serif; font-size: 1.25rem; font-weight: 800;
       color: var(--orange-deep); white-space: nowrap; font-variant-numeric: tabular-nums;
     }
+    .bk-was { text-decoration: line-through; color: var(--muted); font-size: 0.85rem; font-weight: 700; margin-right: 4px; }
     .bk-meta { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
     .bk-blurb { font-size: 0.88rem; color: var(--ink-soft); margin: 8px 0 10px; line-height: 1.5; }
     .bk-inc { list-style: none; padding: 0; margin: 0 0 12px; }
@@ -3402,7 +3403,7 @@
       const ctx = window._pay;
       const d = ctx.d;
       const flow = document.getElementById('bk-flow');
-      const usd = d.totalUsd !== undefined ? d.totalUsd : (d.quote && d.quote.total);
+      const usd = Number(d.totalUsd !== undefined ? d.totalUsd : (d.quote && d.quote.total));
       const isUsdc = payCurrency === 'usdc';
       const amount = isUsdc
         ? (d.usdc / Math.pow(10, 6)).toFixed(2) + ' USDC'
@@ -3410,8 +3411,25 @@
       const url = solanaPayUrl(d, 'solquicks', ctx.title);
       ctx.url = url;
 
+      // Show how the total was reached. Without it a discounted price just
+      // looks like the wrong price — which is exactly how it read.
+      const q = d.quote;
+      let breakdown = '';
+      if (q && (q.rushPct || q.discountPct)) {
+        breakdown = '<div class="bk-quote">' +
+          '<div class="bk-line"><span>' + escapeHtml(ctx.title) + '</span>' +
+          '<span class="num">$' + q.base.toLocaleString() + '</span></div>' +
+          (q.rushPct ? '<div class="bk-line"><span class="bk-add">Rush booking (+' + q.rushPct + '%)</span>' +
+            '<span class="num bk-add">+$' + (Math.round(q.base * q.rushPct) / 100).toFixed(2) + '</span></div>' : '') +
+          (q.discountPct ? '<div class="bk-line"><span class="bk-save">Moon Ranger holder (−' + q.discountPct + '%)</span>' +
+            '<span class="num bk-save">−$' + (q.base * (1 + q.rushPct / 100) * q.discountPct / 100).toFixed(2) + '</span></div>' : '') +
+          '<div class="bk-line total"><span>Total</span><span class="num">$' + usd.toFixed(2) + '</span></div></div>';
+      }
+
       flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
         '<div class="bk-step">Pay · reference ' + escapeHtml(d.ref) + '</div>' +
+        breakdown +
         '<div class="pay-tabs">' +
           '<button class="pay-tab' + (isUsdc ? ' on' : '') + '" onclick="setPayCurrency(\'usdc\')">USDC</button>' +
           '<button class="pay-tab' + (isUsdc ? '' : ' on') + '" onclick="setPayCurrency(\'sol\')">SOL</button>' +
@@ -3419,7 +3437,7 @@
         '<div class="pay-grid">' +
           '<div class="pay-qr loading" id="pay-qr">Making QR…</div>' +
           '<div><div class="pay-amount">' + amount + '</div>' +
-          '<div class="pay-usd">$' + usd + ' · ' + escapeHtml(ctx.title) + '</div>' +
+          '<div class="pay-usd">$' + usd.toFixed(2) + ' · ' + escapeHtml(ctx.title) + '</div>' +
           '<div class="pay-note">' + (isUsdc
             ? 'A dollar is a dollar — what the invoice says is what you send.'
             : 'Priced at the SOL rate quoted when you booked. Held for 20 minutes.') +
@@ -3708,9 +3726,14 @@
         const meta = t.mode === 'enquiry' ? 'In person · flat fee'
           : t.mode === 'async' ? 'No calendar needed · made for you'
           : t.minutes + ' minutes · live';
+        const yours = d.holder ? t.price * (1 - d.holderDiscountPct / 100) : t.price;
+        const priceHtml = d.holder
+          ? '<span class="bk-was">$' + t.price.toLocaleString() + '</span> $' +
+            yours.toFixed(2).replace(/\.00$/, '')
+          : '$' + t.price.toLocaleString();
         return '<div class="bk-card">' +
           '<div class="bk-top"><div class="bk-name">' + escapeHtml(t.name) + '</div>' +
-          '<div class="bk-price">$' + t.price.toLocaleString() + '</div></div>' +
+          '<div class="bk-price">' + priceHtml + '</div></div>' +
           '<div class="bk-meta">' + meta + '</div>' +
           '<div class="bk-blurb">' + escapeHtml(t.blurb) + '</div>' +
           '<ul class="bk-inc">' + t.includes.map(function (i) {
@@ -3721,7 +3744,7 @@
       }).join('') +
         '<p class="bk-policy" style="text-align:center">' +
         escapeHtml(d.policy.rush) + ' ' + escapeHtml(d.policy.holder) +
-        (d.holder ? ' <strong>Your discount is already applied.</strong>' : '') + '</p>';
+        (d.holder ? ' <strong>You hold a Ranger, so 15% is already off every price below.</strong>' : '') + '</p>';
     }
 
     function backToRateCard() {
@@ -3798,7 +3821,10 @@
         : null;
 
       flow.innerHTML = '<div class="bk-flow">' +
-        '<button class="bk-back" onclick="startBooking(\'' + t.id + '\')">← Back</button>' +
+        '<button class="bk-back" onclick="' + (t.mode === 'slot'
+          ? 'startBooking(\'' + t.id + '\')'
+          : 'backToRateCard()') + '">← ' +
+        (t.mode === 'slot' ? 'Pick another time' : 'All services') + '</button>' +
         '<div class="bk-step">' + escapeHtml(t.name) + (when ? ' · ' + escapeHtml(when) : '') + '</div>' +
         '<div class="bk-field"><label for="bk-name">Your name or project</label>' +
         '<input id="bk-name" autocomplete="organization"></div>' +
