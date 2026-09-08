@@ -1084,6 +1084,27 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    .banner.for-sale { border-style: dashed; opacity: 0.96; cursor: pointer; }
+    .banner.for-sale .banner-canvas { background: var(--cream); }
+    .bk-ad {
+      background: linear-gradient(150deg, var(--orange-soft), var(--card));
+      border: 2px dashed var(--orange);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      text-align: left;
+    }
+    .bk-weeks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+    .bk-week {
+      appearance: none; cursor: pointer; background: var(--cream);
+      border: 2px solid #E7DFD2; border-radius: 12px; padding: 12px 8px;
+      font-family: inherit; color: var(--ink); text-align: center;
+    }
+    .bk-week:hover { border-color: var(--orange); }
+    .bk-week.on { background: var(--orange-soft); border-color: var(--orange); }
+    .bk-week b { display: block; font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 800; }
+    .bk-week span { font-size: 0.74rem; color: var(--ink-soft); font-weight: 700; }
+    .bk-week em { display: block; font-style: normal; font-size: 0.66rem; color: var(--green); font-weight: 800; margin-top: 2px; }
+
     /* ── BOOK THE FOX ── */
     .bk-intro { text-align: center; margin-bottom: 18px; }
     .bk-lead { font-family: 'Baloo 2', sans-serif; font-size: 1.5rem; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
@@ -1498,9 +1519,6 @@
         <span class="banner-go">Visit →</span>
       </span>
     </a>
-    <p class="banner-pitch" id="banner-pitch">
-      This spot is for hire — <a href="https://t.me/solquicks" target="_blank" rel="noopener noreferrer">book it on Telegram</a>
-    </p>
 
 
     <!-- PROFILE -->
@@ -2148,99 +2166,87 @@
     }
 
     // ── SPONSOR BANNER ──
-    // Sold manually for now: set `active` in banner.json to fill the slot.
-    // With nothing booked (or a booking past its `until` date) the slot falls
-    // back to house promos, so it is never empty and never runs a stale ad.
+    // Live ads come from the booking system; banner.json `active` stays as a
+    // manual override for anything sold off-platform. An unsold slot advertises
+    // itself rather than falling back to house promos.
     (async function () {
       const el = document.getElementById('banner');
       if (!el) return;
 
-      let cfg;
+      let slot = null;
       try {
-        const res = await fetch('banner.json', { cache: 'no-store' });
-        cfg = await res.json();
-      } catch (e) { return; }
+        const res = await fetch(POINTS_API + '/api/banner/live');
+        const d = await res.json();
+        if (d && d.slot) {
+          slot = {
+            sponsor: d.slot.sponsor, headline: d.slot.headline,
+            url: d.slot.url, image: d.slot.image_url
+          };
+        }
+      } catch (e) { /* fall through to the manual override */ }
 
-      const today = new Date().toISOString().slice(0, 10);
-      const booked = cfg.active && (!cfg.active.until || cfg.active.until >= today)
-        ? cfg.active
-        : null;
+      if (!slot) {
+        try {
+          const res = await fetch('banner.json', { cache: 'no-store' });
+          const cfg = await res.json();
+          const today = new Date().toISOString().slice(0, 10);
+          if (cfg.active && (!cfg.active.until || cfg.active.until >= today)) slot = cfg.active;
+        } catch (e) { /* nothing booked */ }
+      }
 
-      const house = Array.isArray(cfg.house) ? cfg.house : [];
-      // rotate house promos by day so the slot is not identical every visit
-      const slot = booked || (house.length
-        ? house[Math.floor(Date.now() / 86400000) % house.length]
-        : null);
-      if (!slot) return;
+      if (!slot) { renderBannerAvailable(el); return; }
 
       document.getElementById('banner-headline').textContent = slot.headline || '';
       document.getElementById('banner-sponsor').textContent = slot.sponsor || '';
-
       const art = document.getElementById('banner-art');
       if (slot.image) {
         const img = document.createElement('img');
         img.src = slot.image;
         img.alt = '';
-        img.onerror = function () {
-          art.className = 'banner-emoji';
-          art.textContent = slot.emoji || '📣';
-        };
+        img.loading = 'lazy';
+        art.innerHTML = '';
         art.appendChild(img);
       } else {
-        art.className = 'banner-emoji';
-        art.textContent = slot.emoji || '📣';
+        art.textContent = slot.emoji || '🦊';
       }
-
-      const tag = document.getElementById('banner-tag');
-      if (booked) {
-        // paid placements must be labelled, and rel=sponsored is the correct
-        // signal for a paid link
-        tag.textContent = 'Sponsored';
-        tag.classList.remove('house');
-        el.rel = 'noopener sponsored';
-      } else {
-        tag.textContent = 'solquicks';
-        tag.classList.add('house');
-        el.rel = 'noopener';
-        document.getElementById('banner-pitch').classList.add('visible');
-      }
-
-      // an in-page target should switch tabs rather than open a new window
-      if (slot.url && slot.url.charAt(0) === '#') {
-        const tabName = slot.url.slice(1);
-        el.href = 'javascript:void(0)';
-        el.removeAttribute('target');
-        el.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          const btn = tabButton(tabName);
-          if (btn) { switchTab(tabName, btn); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-        });
-      } else {
-        el.href = slot.url || '#';
-      }
-
+      el.href = slot.url || '#';
       el.classList.add('visible');
 
-      // Delivery stats: one view per page load, plus clicks. Counts only —
-      // no cookies, no IPs, no third-party tracker. House promos are counted
-      // separately so they never inflate a sponsor's numbers.
-      const slotId = (booked ? 'ad:' : 'house:') +
-        (slot.sponsor || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-      const report = function (kind) {
-        try {
-          const body = JSON.stringify({ slot: slotId, kind: kind });
-          // keepalive so the click is still recorded as the page navigates away
-          fetch(POINTS_API + '/api/banner/event', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: body,
-            keepalive: true
-          }).catch(function () {});
-        } catch (e) {}
-      };
-      report('view');
-      el.addEventListener('click', function () { report('click'); });
+      const slotId = 'ad:' + (slot.sponsor || 'unknown');
+      countBanner(slotId, 'view');
+      el.addEventListener('click', function () { countBanner(slotId, 'click'); });
     })();
+
+    /// An empty slot is inventory, so say so and make it one click to buy.
+    function renderBannerAvailable(el) {
+      el.classList.add('visible', 'for-sale');
+      el.removeAttribute('target');
+      el.href = 'javascript:void(0)';
+      document.getElementById('banner-tag').textContent = 'Available';
+      document.getElementById('banner-tag').classList.add('house');
+      document.getElementById('banner-art').textContent = '🪧';
+      document.getElementById('banner-headline').textContent = 'Your advertising space';
+      document.getElementById('banner-sponsor').textContent = 'Seen by everyone who visits — from $250 a week';
+      const go = el.querySelector('.banner-go');
+      if (go) go.textContent = 'Book it →';
+      el.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        const btn = tabButton('book');
+        if (btn) switchTab('book', btn);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(function () { startAdBooking(); }, 250);
+      });
+    }
+
+    function countBanner(slotId, kind) {
+      try {
+        fetch(POINTS_API + '/api/banner/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slot: slotId, kind: kind })
+        });
+      } catch (e) { /* stats are not worth an error */ }
+    }
 
     // ── FOX POINTS ──
     // Signed-in players are tracked server-side (Cloudflare Worker + D1) so a
@@ -3183,6 +3189,201 @@
       return signature;
     }
 
+    // ── ADVERTISING SLOT ──
+    var adData = null;
+    var adWeeks = null;
+
+    async function startAdBooking() {
+      const btn = tabButton('book');
+      if (btn && !document.getElementById('panel-book').classList.contains('active')) switchTab('book', btn);
+      document.getElementById('bk-list').hidden = true;
+      const flow = document.getElementById('bk-flow');
+      flow.hidden = false;
+      flow.innerHTML = '<div class="bk-flow">Loading rates…</div>';
+
+      try {
+        const res = await fetch(POINTS_API + '/api/banner/rates');
+        adData = await res.json();
+      } catch (e) {
+        flow.innerHTML = '<div class="bk-flow">Could not load advertising rates just now.</div>';
+        return;
+      }
+      adWeeks = adData.rates[0].weeks;
+      renderAdForm();
+    }
+
+    function renderAdForm() {
+      const flow = document.getElementById('bk-flow');
+      const d = adData;
+      const base = d.rates[0].price;
+      const starts = new Date(d.nextFree).toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+        '<div class="bk-step">Advertising space · top of every page</div>' +
+        (d.taken ? '<p class="bk-hint">The slot is running someone else\'s campaign right now. ' +
+          'Yours would start when theirs ends.</p>' : '') +
+        '<p class="bk-blurb">A 3:1 banner above the fold, on every page of the site. ' +
+          'Yours alone for the whole run — no rotation.</p>' +
+        '<div class="bk-weeks">' + d.rates.map(function (r) {
+          const perWeek = r.price / r.weeks;
+          const saving = Math.round((1 - perWeek / base) * 100);
+          return '<button class="bk-week' + (r.weeks === adWeeks ? ' on' : '') +
+            '" onclick="pickWeeks(' + r.weeks + ')">' +
+            '<b>$' + r.price + '</b><span>' + r.weeks + ' week' + (r.weeks > 1 ? 's' : '') + '</span>' +
+            (saving > 0 ? '<em>save ' + saving + '%</em>' : '<em>&nbsp;</em>') + '</button>';
+        }).join('') + '</div>' +
+        '<p class="bk-hint">Runs from <strong>' + escapeHtml(starts) + '</strong>.</p>' +
+        '<div class="bk-field"><label for="ad-name">Your name or project</label><input id="ad-name"></div>' +
+        '<div class="bk-field"><label for="ad-contact">How do I reach you?</label>' +
+        '<input id="ad-contact" placeholder="@handle, email, or Telegram"></div>' +
+        '<div id="ad-quote"></div>' +
+        '<button class="bk-go" id="ad-submit" onclick="submitAd()">Get a quote</button>' +
+        '<div class="bk-msg" id="ad-msg"></div>' +
+        '<p class="bk-policy"><strong>Approval.</strong> ' + escapeHtml(d.rules) +
+        '<br><strong>Artwork.</strong> You send a name, one headline and a link after paying. ' +
+        'Nothing goes live until I have approved it.</p></div>';
+    }
+
+    function pickWeeks(w) { adWeeks = w; renderAdForm(); }
+
+    async function submitAd() {
+      const btn = document.getElementById('ad-submit');
+      const msg = document.getElementById('ad-msg');
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+      const name = (document.getElementById('ad-name').value || '').trim();
+      const contact = (document.getElementById('ad-contact').value || '').trim();
+      if (!name || !contact) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = 'I need a name and a way to reach you.';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const res = await fetch(POINTS_API + '/api/banner/hold', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify({ weeks: adWeeks, name: name, contact: contact })
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const sol = (d.lamports / 1e9).toFixed(4);
+        document.getElementById('ad-quote').innerHTML = '<div class="bk-quote">' +
+          '<div class="bk-line"><span>' + d.weeks + ' week' + (d.weeks > 1 ? 's' : '') + ' of banner</span>' +
+          '<span class="num">$' + d.totalUsd + '</span></div>' +
+          '<div class="bk-line"><span>Runs</span><span>' +
+          new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' – ' +
+          new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '</span></div>' +
+          '<div class="bk-line total"><span>Total</span><span class="num">$' + d.totalUsd +
+          ' · ' + sol + ' ◎</span></div></div>' +
+          '<p class="bk-hint">Reference <strong>' + escapeHtml(d.ref) + '</strong> · price holds 20 minutes.</p>';
+        btn.disabled = false;
+        btn.textContent = 'Pay ' + sol + ' ◎';
+        btn.onclick = function () { payAd(d); };
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Something went wrong.';
+        btn.disabled = false;
+        btn.textContent = 'Get a quote';
+      }
+    }
+
+    async function payAd(d) {
+      const btn = document.getElementById('ad-submit');
+      const msg = document.getElementById('ad-msg');
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+      if (!Wallet.pubkey) {
+        msg.textContent = 'Connect your wallet to pay…';
+        try { await connectWallet(); } catch (e) { /* closed the picker */ }
+        if (!Wallet.pubkey) {
+          msg.className = 'bk-msg bad';
+          msg.textContent = 'A wallet is needed to pay. Your booking is saved as ' + d.ref + '.';
+          return;
+        }
+      }
+      btn.disabled = true;
+      btn.textContent = 'Check your wallet…';
+      try {
+        const sig = await sendSol(d.payTo, d.lamports);
+        btn.textContent = 'Confirming…';
+        const res = await fetch(POINTS_API + '/api/banner/confirm', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify({ ref: d.ref, signature: sig })
+        });
+        const r = await res.json();
+        if (r.error) throw new Error(r.error);
+        renderAdCreative(d, sig);
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.innerHTML = escapeHtml(friendlyTxError(e)) +
+          '<br>Your reference is <strong>' + escapeHtml(d.ref) + '</strong>.';
+        btn.disabled = false;
+        btn.textContent = 'Try paying again';
+      }
+    }
+
+    /// Paid, but not live. The creative is collected here and waits for review.
+    function renderAdCreative(d, sig) {
+      const flow = document.getElementById('bk-flow');
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<div class="bk-step">Paid · reference ' + escapeHtml(d.ref) + '</div>' +
+        '<p class="bk-blurb">Now the artwork. I review every banner before it runs — ' +
+        'if I turn yours down you get a full refund.</p>' +
+        '<div class="bk-field"><label for="ad-sponsor">Name shown on the banner</label><input id="ad-sponsor" maxlength="60"></div>' +
+        '<div class="bk-field"><label for="ad-headline">Headline</label>' +
+        '<input id="ad-headline" maxlength="90" placeholder="One line, about 60 characters">' +
+        '<div class="bk-hint">Short and specific beats clever.</div></div>' +
+        '<div class="bk-field"><label for="ad-url">Link</label>' +
+        '<input id="ad-url" placeholder="https://"></div>' +
+        '<div class="bk-field"><label for="ad-image">Image URL (optional)</label>' +
+        '<input id="ad-image" placeholder="https://… square works best"></div>' +
+        '<button class="bk-go" id="ad-send" onclick="sendAdCreative(\'' + d.ref + '\')">Send for approval</button>' +
+        '<div class="bk-msg" id="ad-msg2"></div>' +
+        (sig ? '<p class="bk-hint"><a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
+          '" target="_blank" rel="noopener noreferrer">View your receipt</a></p>' : '') +
+        '</div>';
+    }
+
+    async function sendAdCreative(ref) {
+      const btn = document.getElementById('ad-send');
+      const msg = document.getElementById('ad-msg2');
+      msg.className = 'bk-msg';
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        const res = await fetch(POINTS_API + '/api/banner/creative', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ref: ref,
+            sponsor: (document.getElementById('ad-sponsor').value || '').trim(),
+            headline: (document.getElementById('ad-headline').value || '').trim(),
+            url: (document.getElementById('ad-url').value || '').trim(),
+            image: (document.getElementById('ad-image').value || '').trim()
+          })
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        document.getElementById('bk-flow').innerHTML = '<div class="bk-flow bk-done">' +
+          '<div class="bk-tick">🪧</div><div class="bk-lead">Sent for approval</div>' +
+          '<p class="bk-sub">I\'ll review it and get it live on your start date. ' +
+          'If anything needs changing I\'ll message you first.</p>' +
+          '<div class="bk-ref">' + escapeHtml(ref) + '</div>' +
+          '<button class="bk-go ghost" style="margin-top:14px" onclick="backToRateCard()">Done</button></div>';
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Could not send that.';
+        btn.disabled = false;
+        btn.textContent = 'Send for approval';
+      }
+    }
+
     // ── BOOK THE FOX ──
     // Deliberately usable without a wallet: the rate card, the calendar and
     // the enquiry form all work signed out. A wallet is only needed to pay,
@@ -3212,7 +3413,15 @@
     function renderRateCard() {
       const list = document.getElementById('bk-list');
       const d = bkData;
-      list.innerHTML = d.types.map(function (t) {
+      const adCard = '<div class="bk-ad">' +
+        '<div class="bk-top"><div class="bk-name">Advertising space</div>' +
+        '<div class="bk-price">$250<span style="font-size:0.7rem"> /week</span></div></div>' +
+        '<div class="bk-meta">Top of every page · yours alone</div>' +
+        '<div class="bk-blurb">A banner above the fold on every page, for a week or a month. ' +
+        'No rotation — while it runs, it is the only ad on the site.</div>' +
+        '<button class="bk-go" onclick="startAdBooking()">Book the space</button></div>';
+
+      list.innerHTML = adCard + d.types.map(function (t) {
         const label = t.mode === 'enquiry' ? 'Ask about a date'
           : t.mode === 'async' ? 'Order this' : 'Pick a time';
         const meta = t.mode === 'enquiry' ? 'In person · flat fee'

@@ -278,6 +278,8 @@ const RATE_RULES = [
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
 ];
@@ -392,7 +394,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'booking-1';
+const BUILD = 'adslot-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -830,12 +832,28 @@ const MIN_LEAD_HOURS = 24;
 const HOLD_MINUTES = 20;
 const BOOKING_HORIZON_DAYS = 30;
 
-// Availability in UTC minutes-from-midnight, Monday = 1. Roughly 11am–5pm ET.
-const AVAILABILITY = {
-  1: [[900, 1260]], 2: [[900, 1260]], 3: [[900, 1260]],
-  4: [[900, 1260]], 5: [[900, 1260]]
-};
+// Working hours in the fox's own timezone. Stored as local hours and resolved
+// against the real zone each day, so this keeps working across daylight saving
+// instead of drifting by an hour twice a year.
+const BOOKING_TZ = 'America/New_York';
+const DAY_OPEN_HOUR = 7;
+const DAY_CLOSE_HOUR = 23;
 const SLOT_STEP_MIN = 30;
+
+/// Minutes east of UTC for `ts` in BOOKING_TZ. One call per day is enough —
+/// doing it per slot would mean a thousand Intl lookups per request.
+function tzOffsetMinutes(ts) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BOOKING_TZ, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }).formatToParts(new Date(ts));
+  const g = {};
+  for (const p of parts) g[p.type] = p.value;
+  const hour = g.hour === '24' ? 0 : Number(g.hour);
+  const asUtc = Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), hour, Number(g.minute), Number(g.second));
+  return Math.round((asUtc - ts) / 60000);
+}
 
 const BOOKING_TYPES = [
   {
@@ -969,24 +987,23 @@ async function openSlots(env, type) {
   });
 
   const slots = [];
-  const cursor = new Date(from);
-  cursor.setUTCMinutes(0, 0, 0);
-  for (let d = 0; d < BOOKING_HORIZON_DAYS + 1 && slots.length < 200; d++) {
-    const day = new Date(cursor.getTime() + d * 86400000);
-    const windows = AVAILABILITY[day.getUTCDay()];
-    if (!windows) continue;
-    for (const [openMin, closeMin] of windows) {
-      for (let m = openMin; m + type.minutes <= closeMin; m += SLOT_STEP_MIN) {
-        const starts = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, m);
-        if (starts < from || starts > until) continue;
-        const ends = starts + type.minutes * 60000;
-        const clash = busy.some(function (b) { return starts < b[1] && ends > b[0]; });
-        if (clash) continue;
-        slots.push({ starts: starts, ends: ends, rush: starts - now < RUSH_HOURS * 3600000 });
-        if (slots.length >= 200) break;
-      }
+  for (let d = 0; d <= BOOKING_HORIZON_DAYS && slots.length < 400; d++) {
+    // anchor on local noon so the offset is unambiguous even on a DST boundary
+    const noonish = now + d * 86400000;
+    const offset = tzOffsetMinutes(noonish);
+    const localDayStart = Math.floor((noonish + offset * 60000) / 86400000) * 86400000;
+    const open = localDayStart - offset * 60000 + DAY_OPEN_HOUR * 3600000;
+    const close = localDayStart - offset * 60000 + DAY_CLOSE_HOUR * 3600000;
+
+    for (let t = open; t + type.minutes * 60000 <= close; t += SLOT_STEP_MIN * 60000) {
+      if (t < from || t > until) continue;
+      const ends = t + type.minutes * 60000;
+      if (busy.some(function (b) { return t < b[1] && ends > b[0]; })) continue;
+      slots.push({ starts: t, ends: ends, rush: t - now < RUSH_HOURS * 3600000 });
+      if (slots.length >= 400) break;
     }
   }
+  slots.sort(function (a, b) { return a.starts - b.starts; });
   return slots;
 }
 
@@ -1043,6 +1060,40 @@ function bookingRef() {
   return out;
 }
 
+
+// ── ADVERTISING SLOT ────────────────────────────────────────────────────────
+// Paying does not put an ad live. A stranger's creative would publish under
+// the fox's name and next to his wallet connect, so every booking waits on
+// approval — and is refundable until it runs.
+
+const BANNER_RATES = [
+  { weeks: 1, price: 250 },
+  { weeks: 2, price: 450 },
+  { weeks: 4, price: 800 }
+];
+
+function bannerRate(weeks) {
+  return BANNER_RATES.find(function (r) { return r.weeks === Number(weeks); }) || null;
+}
+
+/// The slot is exclusive, so a new campaign starts when the last one ends.
+async function bannerNextFree(env) {
+  const row = await env.DB.prepare(
+    "SELECT MAX(ends_at) AS last FROM banner_bookings WHERE status IN ('held','paid') AND ends_at > ?"
+  ).bind(Date.now()).first();
+  const soonest = Date.now() + 86400000;
+  return row && row.last && row.last > soonest ? row.last : soonest;
+}
+
+async function bannerLive(env) {
+  const now = Date.now();
+  return await env.DB.prepare(
+    "SELECT ref, sponsor, headline, url, image_url, starts_at, ends_at FROM banner_bookings " +
+    "WHERE status = 'paid' AND approved = 1 AND starts_at <= ? AND ends_at > ? " +
+    'ORDER BY starts_at ASC LIMIT 1'
+  ).bind(now, now).first();
+}
+
 export default {
   /// Runs on a schedule so an outage is reported rather than stumbled upon.
   /// Alerts only on a change of state, so a long outage does not spam.
@@ -1095,6 +1146,9 @@ export default {
           path === '/api/analytics/wallet' || path === '/api/booking/types' ||
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
+          path === '/api/banner/rates' || path === '/api/banner/live' ||
+          path === '/api/banner/hold' || path === '/api/banner/confirm' ||
+          path === '/api/banner/creative' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1343,6 +1397,32 @@ export default {
         return json(request, env, h, h.ok ? 200 : 503);
       }
 
+      if (path === '/api/admin/banner' && request.method === 'GET') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const rows = await env.DB.prepare(
+          "SELECT * FROM banner_bookings WHERE status = 'paid' ORDER BY starts_at ASC"
+        ).all();
+        return json(request, env, { bookings: rows.results || [] });
+      }
+
+      if (path === '/api/admin/banner/approve' && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const ok = body.approved ? 1 : 0;
+        const r = await env.DB.prepare(
+          'UPDATE banner_bookings SET approved = ? WHERE ref = ?'
+        ).bind(ok, ref).run();
+        if (!r.meta || r.meta.changes === 0) return json(request, env, { error: 'no such booking' }, 404);
+        return json(request, env, { ok: true, ref: ref, approved: !!ok });
+      }
+
       if (path === '/api/admin/bookings' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
         if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
@@ -1420,6 +1500,122 @@ export default {
           staked: (staked && staked.n) || 0,
           firstSeen: pos.first_seen
         });
+      }
+
+      // ── public: the advertising slot ──
+      if (path === '/api/banner/rates' && request.method === 'GET') {
+        const live = await bannerLive(env);
+        return json(request, env, {
+          rates: BANNER_RATES,
+          nextFree: await bannerNextFree(env),
+          taken: !!live,
+          solUsd: await solUsd(env),
+          payTo: env.TREASURY_WALLET || null,
+          rules: 'Your creative is reviewed before it runs — no adult content, ' +
+            'no unaudited token launches, nothing that impersonates anyone. If I ' +
+            'turn it down you get a full refund, no argument.'
+        });
+      }
+
+      if (path === '/api/banner/live' && request.method === 'GET') {
+        const live = await bannerLive(env);
+        return json(request, env, { slot: live || null });
+      }
+
+      if (path === '/api/banner/hold' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const rate = bannerRate(body.weeks);
+        if (!rate) return json(request, env, { error: 'pick one of the offered durations' }, 400);
+
+        const name = String(body.name || '').trim().slice(0, 120);
+        const contact = String(body.contact || '').trim().slice(0, 200);
+        if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
+
+        const price = await solUsd(env);
+        if (price === null) return json(request, env, { error: 'cannot price in SOL just now — try again shortly' }, 503);
+
+        const starts = await bannerNextFree(env);
+        const ends = starts + rate.weeks * 7 * 86400000;
+        const lamports = Math.round((rate.price / price) * 1e9);
+        const ref = bookingRef().replace('FOX-', 'AD-');
+        const now = Date.now();
+
+        await env.DB.prepare(
+          'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
+          'lamports, status, hold_until, name, contact, created_at) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?)"
+        ).bind(
+          ref, await getSession(request, env).catch(function () { return null; }),
+          rate.weeks, starts, ends, rate.price, price, lamports,
+          now + HOLD_MINUTES * 60000, name, contact, now
+        ).run();
+
+        return json(request, env, {
+          ref: ref, weeks: rate.weeks, startsAt: starts, endsAt: ends,
+          totalUsd: rate.price, solUsd: price, lamports: lamports,
+          payTo: env.TREASURY_WALLET || null,
+          holdUntil: now + HOLD_MINUTES * 60000
+        });
+      }
+
+      if (path === '/api/banner/confirm' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const signature = String(body.signature || '').trim();
+        if (!ref || !signature) return json(request, env, { error: 'reference and signature are both needed' }, 400);
+
+        const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status === 'paid') return json(request, env, { ok: true, alreadyPaid: true, ref: ref });
+        if (b.status !== 'held') return json(request, env, { error: 'that booking is not awaiting payment' }, 409);
+        if (b.hold_until && Date.now() > b.hold_until) {
+          return json(request, env, { error: 'the hold expired — please book again' }, 410);
+        }
+        if (!env.TREASURY_WALLET) {
+          await logError(env, 'banner.confirm', 'TREASURY_WALLET unset — refusing to confirm');
+          return json(request, env, { error: 'payments are not switched on yet' }, 503);
+        }
+
+        const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
+        if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
+
+        const v = await verifyPayment(env, payer, signature, Math.floor(b.lamports * 0.99), 'banner:' + ref);
+        if (!v.ok) return json(request, env, { error: v.error }, 402);
+
+        await env.DB.prepare(
+          "UPDATE banner_bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
+        ).bind(signature, Date.now(), payer, ref).run();
+        await alert(env, '🪧 Ad slot booked ' + ref + ' — ' + b.weeks + ' week(s), $' + b.total_usd +
+          '\n' + b.name + ' · ' + b.contact + '\nAwaiting creative, then your approval.');
+
+        return json(request, env, { ok: true, ref: ref, needsCreative: true });
+      }
+
+      // Creative arrives after payment, and sits unapproved until reviewed.
+      if (path === '/api/banner/creative' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status !== 'paid') return json(request, env, { error: 'that booking is not paid yet' }, 409);
+
+        const sponsor = String(body.sponsor || '').trim().slice(0, 60);
+        const headline = String(body.headline || '').trim().slice(0, 90);
+        const link = String(body.url || '').trim().slice(0, 300);
+        const image = String(body.image || '').trim().slice(0, 400);
+        if (!sponsor || !headline || !link) {
+          return json(request, env, { error: 'name, headline and a link are all needed' }, 400);
+        }
+        if (!/^https:\/\//.test(link)) return json(request, env, { error: 'the link must be https' }, 400);
+        if (image && !/^https:\/\//.test(image)) return json(request, env, { error: 'the image must be https' }, 400);
+
+        await env.DB.prepare(
+          'UPDATE banner_bookings SET sponsor = ?, headline = ?, url = ?, image_url = ?, approved = 0 WHERE ref = ?'
+        ).bind(sponsor, headline, link, image || null, ref).run();
+        await alert(env, '🖼 Creative submitted for ' + ref + '\n' + sponsor + ' — ' + headline +
+          '\n' + link + '\nApprove it before it runs.');
+
+        return json(request, env, { ok: true, ref: ref, pendingApproval: true });
       }
 
       // ── public: the rate card ──
