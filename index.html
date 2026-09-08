@@ -2862,6 +2862,9 @@
           chip.classList.remove('connected');
           chip.title = 'Connect a Solana wallet';
         }
+        // The Swap tab may have been opened before a wallet existed, so its
+        // balance line has to be refreshed whenever the connection changes.
+        if (typeof refreshSwapBalance === 'function') refreshSwapBalance();
       }
     };
 
@@ -3147,7 +3150,7 @@
       let signature;
       if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
-        signature = res.signature || res;
+        signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
         const signed = await provider.w.signTransaction(tx);
         signature = await connection.sendRawTransaction(signed.serialize());
@@ -3160,7 +3163,7 @@
           transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
         });
         const { PublicKey } = w3();
-        signature = new PublicKey(out[0].signature).toBase58();
+        signature = signatureOf(out[0].signature);
       } else {
         throw new Error('This wallet cannot send transactions.');
       }
@@ -3432,7 +3435,7 @@
       let signature;
       if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
-        signature = res.signature || res;
+        signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
         const signed = await provider.w.signTransaction(tx);
         signature = await connection.sendRawTransaction(signed.serialize());
@@ -3444,7 +3447,7 @@
           chain: 'solana:mainnet',
           transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
         });
-        signature = new PublicKey(out[0].signature).toBase58();
+        signature = signatureOf(out[0].signature);
       } else {
         throw new Error('This wallet cannot send transactions.');
       }
@@ -3509,7 +3512,7 @@
       let signature;
       if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
-        signature = res.signature || res;
+        signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
         const signed = await provider.w.signTransaction(tx);
         signature = await connection.sendRawTransaction(signed.serialize());
@@ -3521,7 +3524,7 @@
           chain: 'solana:mainnet',
           transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
         });
-        signature = new PublicKey(out[0].signature).toBase58();
+        signature = signatureOf(out[0].signature);
       } else {
         throw new Error('This wallet cannot send transactions.');
       }
@@ -3531,6 +3534,37 @@
         'confirmed'
       );
       return signature;
+    }
+
+    const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+    /// A transaction signature is 64 bytes; a public key is 32. Passing one to
+    /// `new PublicKey()` throws "Invalid public key input" — which is exactly
+    /// what a successful swap used to report. Encode the bytes directly.
+    function b58encode(bytes) {
+      const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const digits = [0];
+      for (let i = 0; i < input.length; i++) {
+        let carry = input[i];
+        for (let j = 0; j < digits.length; j++) {
+          carry += digits[j] << 8;
+          digits[j] = carry % 58;
+          carry = (carry / 58) | 0;
+        }
+        while (carry) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+      }
+      let out = '';
+      for (let i = 0; i < input.length && input[i] === 0; i++) out += '1';
+      for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]];
+      return out;
+    }
+
+    /// Wallets return a signature as raw bytes, or occasionally already encoded.
+    function signatureOf(value) {
+      if (typeof value === 'string') return value;
+      if (value && typeof value.signature === 'string') return value.signature;
+      const bytes = (value && value.signature) || value;
+      return b58encode(bytes);
     }
 
     // ── SWAP ──
@@ -3614,8 +3648,9 @@
         } else {
           const ata = ataFor(Wallet.pubkey, mint);
           const info = await conn.getTokenAccountBalance(ata).catch(function () { return null; });
-          ui = info ? Number(info.value.uiAmount) : 0;
+          ui = info ? Number(info.value.uiAmount) : null;
         }
+        if (ui === null) { el.textContent = ''; el.onclick = null; return; }
         el.textContent = 'Balance ' + ui.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + t.symbol;
         el.style.cursor = 'pointer';
         el.onclick = function () {
@@ -3732,7 +3767,7 @@
         if (d.error) throw new Error(d.error);
 
         go.textContent = 'Check your wallet…';
-        const sig = await sendVersionedTx(d.swapTransaction);
+        const sig = await sendVersionedTx(d.swapTransaction, d.lastValidBlockHeight);
         msg.className = 'sw-msg good';
         msg.innerHTML = 'Swapped. <a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
           '" target="_blank" rel="noopener noreferrer">View it</a>';
@@ -3753,7 +3788,7 @@
 
     /// Jupiter hands back a ready-made versioned transaction; all we do is get
     /// it signed and wait for the chain to agree.
-    async function sendVersionedTx(base64) {
+    async function sendVersionedTx(base64, lastValidBlockHeight) {
       const { Connection, VersionedTransaction, PublicKey } = w3();
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
@@ -3765,7 +3800,7 @@
       let signature;
       if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
-        signature = res.signature || res;
+        signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
         const signed = await provider.w.signTransaction(tx);
         signature = await connection.sendRawTransaction(signed.serialize(), { maxRetries: 3 });
@@ -3777,14 +3812,19 @@
           chain: 'solana:mainnet',
           transaction: tx.serialize()
         });
-        signature = new PublicKey(out[0].signature).toBase58();
+        signature = signatureOf(out[0].signature);
       } else {
         throw new Error('This wallet cannot send transactions.');
       }
 
-      const latest = await connection.getLatestBlockhash('confirmed');
+      // confirm against the blockhash the transaction was built with, not a
+      // fresh one fetched after sending
       await connection.confirmTransaction(
-        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        {
+          signature: signature,
+          blockhash: tx.message.recentBlockhash,
+          lastValidBlockHeight: lastValidBlockHeight || (await connection.getBlockHeight('confirmed')) + 150
+        },
         'confirmed'
       );
       return signature;
