@@ -3468,7 +3468,7 @@
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
 
-      const connection = new Connection(HELIUS_RPC, 'confirmed');
+      const connection = rpc();
       const from = new PublicKey(Wallet.pubkey);
       const ix = SystemProgram.transfer({
         fromPubkey: from,
@@ -3534,7 +3534,7 @@
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
 
-      const connection = new Connection(HELIUS_RPC, 'confirmed');
+      const connection = rpc();
       const from = new PublicKey(Wallet.pubkey);
       const source = ataFor(Wallet.pubkey, USDC_MINT);
       const dest = ataFor(to, USDC_MINT);
@@ -3587,6 +3587,24 @@
         'confirmed'
       );
       return signature;
+    }
+
+    /// web3.js stamps every request with a `solana-client` header. The RPC proxy
+    /// does not list it in Access-Control-Allow-Headers, so the CORS preflight
+    /// fails and every call through Connection dies — balances, blockhashes and
+    /// confirmations alike. Strip it on the way out.
+    function rpc(commitment) {
+      const { Connection } = w3();
+      return new Connection(HELIUS_RPC, {
+        commitment: commitment || 'confirmed',
+        fetchMiddleware: function (url, options, next) {
+          if (options && options.headers) {
+            delete options.headers['solana-client'];
+            delete options.headers['Solana-Client'];
+          }
+          next(url, options);
+        }
+      });
     }
 
     const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -3814,7 +3832,7 @@
       if (!Wallet.pubkey) { el.textContent = ''; return; }
       try {
         const { Connection, PublicKey } = w3();
-        const conn = new Connection(HELIUS_RPC, 'confirmed');
+        const conn = rpc();
         let ui;
         if (mint === 'So11111111111111111111111111111111111111112') {
           ui = (await conn.getBalance(new PublicKey(Wallet.pubkey))) / 1e9;
@@ -4028,7 +4046,7 @@
 
       const bytes = Uint8Array.from(atob(base64), function (c) { return c.charCodeAt(0); });
       const tx = VersionedTransaction.deserialize(bytes);
-      const connection = new Connection(HELIUS_RPC, 'confirmed');
+      const connection = rpc();
 
       let signature;
       if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
