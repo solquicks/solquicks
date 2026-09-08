@@ -309,6 +309,9 @@ const RATE_RULES = [
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
@@ -424,7 +427,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'usdc-1';
+const BUILD = 'swap-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -873,6 +876,40 @@ async function findPaymentByReference(env, reference) {
 }
 
 
+
+// ── SWAP ────────────────────────────────────────────────────────────────────
+// Routed through Jupiter's keyless endpoint, proxied here so the browser never
+// talks to a third party and the CSP stays as tight as it is. Built on the
+// Swap API rather than the Plugin because the Plugin runs on Ultra, whose
+// integrator fee starts at 50bps — two and a half times what we charge.
+
+const JUP = 'https://lite-api.jup.ag';
+const SWAP_FEE_BPS = 20;
+
+// Fees can only be collected in a token that is one side of the swap, so the
+// account is chosen per quote. A pair touching neither simply pays no fee.
+const SWAP_FEE_ACCOUNTS = {
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn',
+  'So11111111111111111111111111111111111111112': 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp'
+};
+
+const SWAP_TOKENS = [
+  { mint: 'So11111111111111111111111111111111111111112', symbol: 'SOL', name: 'Solana', decimals: 9 },
+  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC', name: 'USD Coin', decimals: 6 },
+  { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT', name: 'Tether', decimals: 6 },
+  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', name: 'Jupiter', decimals: 6 },
+  { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', name: 'Bonk', decimals: 5 },
+  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', name: 'dogwifhat', decimals: 6 }
+];
+
+/// ExactIn can take the fee from either side, so prefer the output token —
+/// the user is receiving it anyway, and it keeps the input amount exact.
+function swapFeeAccount(inputMint, outputMint) {
+  if (SWAP_FEE_ACCOUNTS[outputMint]) return SWAP_FEE_ACCOUNTS[outputMint];
+  if (SWAP_FEE_ACCOUNTS[inputMint]) return SWAP_FEE_ACCOUNTS[inputMint];
+  return null;
+}
+
 // ── USDC ────────────────────────────────────────────────────────────────────
 // Priced in dollars, so USDC is the honest default: what the invoice says is
 // what lands, with no exchange-rate risk between quote and payment. SOL stays
@@ -1281,7 +1318,9 @@ export default {
           path === '/api/banner/rates' || path === '/api/banner/live' ||
           path === '/api/banner/hold' || path === '/api/banner/confirm' ||
           path === '/api/banner/creative' || path === '/api/booking/watch' ||
-          path === '/api/banner/watch' ||
+          path === '/api/banner/watch' || path === '/api/swap/tokens' ||
+          path === '/api/swap/quote' || path === '/api/swap/build' ||
+          path === '/api/swap/earned' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1633,6 +1672,110 @@ export default {
           staked: (staked && staked.n) || 0,
           firstSeen: pos.first_seen
         });
+      }
+
+      // ── public: swap ──
+      if (path === '/api/swap/tokens' && request.method === 'GET') {
+        return json(request, env, { tokens: SWAP_TOKENS, feeBps: SWAP_FEE_BPS });
+      }
+
+      if (path === '/api/swap/quote' && request.method === 'GET') {
+        const inputMint = url.searchParams.get('in');
+        const outputMint = url.searchParams.get('out');
+        const amount = url.searchParams.get('amount');
+        const slippageBps = Math.max(1, Math.min(5000, Number(url.searchParams.get('slippage')) || 50));
+        if (!isWallet(inputMint) || !isWallet(outputMint)) {
+          return json(request, env, { error: 'pick two tokens' }, 400);
+        }
+        if (inputMint === outputMint) return json(request, env, { error: 'those are the same token' }, 400);
+        if (!/^[0-9]+$/.test(String(amount)) || Number(amount) <= 0) {
+          return json(request, env, { error: 'enter an amount' }, 400);
+        }
+
+        const feeAccount = swapFeeAccount(inputMint, outputMint);
+        const q = new URLSearchParams({
+          inputMint: inputMint, outputMint: outputMint,
+          amount: String(amount), slippageBps: String(slippageBps)
+        });
+        if (feeAccount) q.set('platformFeeBps', String(SWAP_FEE_BPS));
+
+        const res = await fetch(JUP + '/swap/v1/quote?' + q.toString());
+        if (!res.ok) {
+          const body = await res.text();
+          await logError(env, 'swap.quote', res.status + ' ' + body.slice(0, 200));
+          return json(request, env, { error: 'no route for that pair right now' }, 502);
+        }
+        const quote = await res.json();
+        if (quote.error) return json(request, env, { error: quote.error }, 400);
+        return json(request, env, { quote: quote, feeBps: feeAccount ? SWAP_FEE_BPS : 0 });
+      }
+
+      if (path === '/api/swap/build' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const quote = body.quote;
+        const user = body.user;
+        if (!quote || !quote.inputMint || !isWallet(user)) {
+          return json(request, env, { error: 'missing quote or wallet' }, 400);
+        }
+        // Rebuild the fee account here rather than trusting the client with it.
+        const feeAccount = swapFeeAccount(quote.inputMint, quote.outputMint);
+
+        const payload = {
+          quoteResponse: quote,
+          userPublicKey: user,
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+          dynamicSlippage: false
+        };
+        if (feeAccount) payload.feeAccount = feeAccount;
+
+        const res = await fetch(JUP + '/swap/v1/swap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const out = await res.json().catch(function () { return null; });
+        if (!res.ok || !out || !out.swapTransaction) {
+          await logError(env, 'swap.build', res.status + ' ' + JSON.stringify(out).slice(0, 200));
+          return json(request, env, { error: (out && out.error) || 'could not build that swap' }, 502);
+        }
+        return json(request, env, {
+          swapTransaction: out.swapTransaction,
+          lastValidBlockHeight: out.lastValidBlockHeight,
+          prioritizationFeeLamports: out.prioritizationFeeLamports
+        });
+      }
+
+      // What the slot has actually earned, read straight off the fee accounts.
+      if (path === '/api/swap/earned' && request.method === 'GET') {
+        const cache = caches.default;
+        const key = new Request(new URL('/api/swap/earned', url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        let usd = 0;
+        const parts = [];
+        for (const [mint, account] of Object.entries(SWAP_FEE_ACCOUNTS)) {
+          try {
+            const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 'b', method: 'getTokenAccountBalance', params: [account] })
+            });
+            const d = await res.json();
+            const ui = d && d.result && d.result.value && Number(d.result.value.uiAmount);
+            if (!ui) continue;
+            const isUsd = mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+            const price = isUsd ? 1 : (await solUsd(env)) || 0;
+            usd += ui * price;
+            parts.push({ mint: mint, amount: ui });
+          } catch (e) { /* one missing balance should not blank the figure */ }
+        }
+        const res = json(request, env, { usd: Math.round(usd * 100) / 100, parts: parts, feeBps: SWAP_FEE_BPS });
+        const cached = new Response(res.body, res);
+        cached.headers.set('Cache-Control', 'public, max-age=300');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
       }
 
       // ── public: the advertising slot ──
