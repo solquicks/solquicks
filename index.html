@@ -1713,6 +1713,11 @@
     // reference it, and a `const` cannot be read before its declaration runs.
     const DEVNET_MODE = new URLSearchParams(location.search).has('devnet');
 
+    // switchTab can fire during tab restore, before the analytics section's
+    // own declarations have run. `var` is deliberate: a `let` here throws when
+    // read early, which silently kills the rest of the script.
+    var analyticsTimer = null;
+
     // ── PARTICLES ──
     (function() {
       const canvas = document.getElementById('particle-canvas');
@@ -1800,8 +1805,10 @@
       // Collection stats are public, so they load on tab open rather than
       // waiting for a wallet. Refresh only while the tab is actually showing.
       if (tab === 'moon') {
-        loadAnalytics();
-        if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
+        if (typeof loadAnalytics === 'function') {
+          loadAnalytics();
+          if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
+        }
       } else if (analyticsTimer) {
         clearInterval(analyticsTimer);
         analyticsTimer = null;
@@ -3035,8 +3042,6 @@
     // ── COLLECTION ANALYTICS ──
     // Public: no wallet needed. Snapshots come from the Worker cron, so this
     // is a cheap read however many people are looking.
-    let analyticsTimer = null;
-
     async function loadAnalytics() {
       const wrap = document.getElementById('an-wrap');
       if (!wrap) return;
@@ -3453,7 +3458,15 @@
 
     renderLeaderboard();
 
-  </script>
+  
+    // A direct link to #moon restores that tab near the top of this script,
+    // long before POINTS_API is initialised — so the first analytics load has
+    // to happen down here, once everything exists.
+    if (document.getElementById('panel-moon').classList.contains('active')) {
+      loadAnalytics();
+      if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
+    }
+</script>
 
   <button class="back-to-top" id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 15l-6-6-6 6"/></svg>
