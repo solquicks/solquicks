@@ -30,6 +30,30 @@ function b58decode(s) {
   return new Uint8Array(bytes.reverse());
 }
 
+function b58encode(bytes) {
+  let digits = [0];
+  for (const b of bytes) {
+    let carry = b;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+  }
+  let out = '';
+  for (const b of bytes) { if (b === 0) out += '1'; else break; }
+  for (let i = digits.length - 1; i >= 0; i--) out += B58[digits[i]];
+  return out;
+}
+
+/// A Solana Pay reference: 32 random bytes used as a throwaway account key on
+/// the transfer. It is never signed, so it does not need to be on the curve —
+/// it exists purely so a payment can be found again later.
+function newReference() {
+  return b58encode(crypto.getRandomValues(new Uint8Array(32)));
+}
+
 function isWallet(w) {
   if (typeof w !== 'string' || w.length < 32 || w.length > 44) return false;
   try { return b58decode(w).length === 32; } catch (e) { return false; }
@@ -203,16 +227,21 @@ async function verifyPayment(env, wallet, signature, minLamports, purpose) {
 
   const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
   const treasuryIdx = keys.indexOf(env.TREASURY_WALLET);
-  const payerIdx = keys.indexOf(wallet);
   if (treasuryIdx < 0) return { ok: false, error: 'payment did not go to the right wallet' };
-  if (payerIdx !== 0) return { ok: false, error: 'payment was not sent by your wallet' };
+  // `wallet` null means the caller already proved which booking this is (via an
+  // unguessable Solana Pay reference), so any payer is fine — that is what lets
+  // someone pay by QR from a phone that never connected to the site.
+  if (wallet !== null) {
+    if (keys.indexOf(wallet) !== 0) return { ok: false, error: 'payment was not sent by your wallet' };
+  }
+  const payer = keys[0];
 
   const delta = (tx.meta.postBalances[treasuryIdx] || 0) - (tx.meta.preBalances[treasuryIdx] || 0);
   if (delta < minLamports) return { ok: false, error: 'payment was too small' };
 
   await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
-    .bind(signature, wallet, delta, purpose, Date.now()).run();
-  return { ok: true, lamports: delta };
+    .bind(signature, wallet || payer, delta, purpose, Date.now()).run();
+  return { ok: true, lamports: delta, payer: payer };
 }
 
 async function loadStake(env, wallet) {
@@ -279,6 +308,7 @@ const RATE_RULES = [
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
@@ -394,7 +424,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'adslot-1';
+const BUILD = 'solanapay-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -818,6 +848,30 @@ async function analyticsPayload(env) {
 }
 
 
+
+/// Looks for a payment tagged with this booking's reference. This is what makes
+/// the flow survive a closed tab: the money is on chain either way, and the
+/// reference is how we find it again.
+async function findPaymentByReference(env, reference) {
+  if (!env.HELIUS_API_KEY || !reference) return null;
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 'ref', method: 'getSignaturesForAddress',
+      params: [reference, { limit: 10 }]
+    })
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const list = (data && data.result) || [];
+  for (const s of list) {
+    if (s.err) continue;
+    return s.signature;
+  }
+  return null;
+}
+
 // ── BOOK THE FOX ────────────────────────────────────────────────────────────
 // Three booking modes, because they are genuinely different transactions:
 //   slot    — pick a time, pay now (Space, podcast, stream)
@@ -1148,7 +1202,8 @@ export default {
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
           path === '/api/banner/hold' || path === '/api/banner/confirm' ||
-          path === '/api/banner/creative' ||
+          path === '/api/banner/creative' || path === '/api/booking/watch' ||
+          path === '/api/banner/watch' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1538,20 +1593,21 @@ export default {
         const ends = starts + rate.weeks * 7 * 86400000;
         const lamports = Math.round((rate.price / price) * 1e9);
         const ref = bookingRef().replace('FOX-', 'AD-');
+        const reference = newReference();
         const now = Date.now();
 
         await env.DB.prepare(
           'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
-          'lamports, status, hold_until, name, contact, created_at) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?)"
+          'lamports, status, hold_until, name, contact, created_at, reference) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ?)"
         ).bind(
           ref, await getSession(request, env).catch(function () { return null; }),
           rate.weeks, starts, ends, rate.price, price, lamports,
-          now + HOLD_MINUTES * 60000, name, contact, now
+          now + HOLD_MINUTES * 60000, name, contact, now, reference
         ).run();
 
         return json(request, env, {
-          ref: ref, weeks: rate.weeks, startsAt: starts, endsAt: ends,
+          ref: ref, reference: reference, weeks: rate.weeks, startsAt: starts, endsAt: ends,
           totalUsd: rate.price, solUsd: price, lamports: lamports,
           payTo: env.TREASURY_WALLET || null,
           holdUntil: now + HOLD_MINUTES * 60000
@@ -1618,6 +1674,49 @@ export default {
         return json(request, env, { ok: true, ref: ref, pendingApproval: true });
       }
 
+      // Poll after showing a QR: the payer may never have touched this site.
+      if (path === '/api/booking/watch' && request.method === 'GET') {
+        const ref = String(url.searchParams.get('ref') || '').trim();
+        const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status === 'paid') return json(request, env, { status: 'paid', signature: b.signature });
+        if (b.status !== 'held') return json(request, env, { status: b.status });
+
+        const sig = await findPaymentByReference(env, b.reference);
+        if (!sig) return json(request, env, { status: 'waiting' });
+
+        const v = await verifyPayment(env, null, sig, Math.floor(b.lamports * 0.99), 'booking:' + b.ref);
+        if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
+
+        await env.DB.prepare(
+          "UPDATE bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
+        ).bind(sig, Date.now(), v.payer, b.ref).run();
+        await alert(env, '📅 New booking ' + b.ref + ' — ' + b.type_id + ' — $' + b.total_usd +
+          (b.starts_at ? ' on ' + new Date(b.starts_at).toISOString() : '') + '\n' + b.name + ' · ' + b.contact);
+        return json(request, env, { status: 'paid', signature: sig });
+      }
+
+      if (path === '/api/banner/watch' && request.method === 'GET') {
+        const ref = String(url.searchParams.get('ref') || '').trim();
+        const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status === 'paid') return json(request, env, { status: 'paid', signature: b.signature });
+        if (b.status !== 'held') return json(request, env, { status: b.status });
+
+        const sig = await findPaymentByReference(env, b.reference);
+        if (!sig) return json(request, env, { status: 'waiting' });
+
+        const v = await verifyPayment(env, null, sig, Math.floor(b.lamports * 0.99), 'banner:' + b.ref);
+        if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
+
+        await env.DB.prepare(
+          "UPDATE banner_bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
+        ).bind(sig, Date.now(), v.payer, b.ref).run();
+        await alert(env, '🪧 Ad slot booked ' + b.ref + ' — ' + b.weeks + ' week(s), $' + b.total_usd +
+          '\n' + b.name + ' · ' + b.contact + '\nAwaiting creative, then your approval.');
+        return json(request, env, { status: 'paid', signature: sig });
+      }
+
       // ── public: the rate card ──
       if (path === '/api/booking/types' && request.method === 'GET') {
         const wallet = await getSession(request, env).catch(function () { return null; });
@@ -1678,21 +1777,23 @@ export default {
           : Math.round((q.total / price) * 1e9);
 
         const ref = bookingRef();
+        const reference = newReference();
         const now = Date.now();
         await env.DB.prepare(
           'INSERT INTO bookings (ref, wallet, type_id, mode, starts_at, minutes, base_usd, rush_pct, ' +
-          'discount_pct, total_usd, sol_price, lamports, status, hold_until, name, contact, brief, created_at) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'discount_pct, total_usd, sol_price, lamports, status, hold_until, name, contact, brief, created_at, reference) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
           ref, wallet, type.id, type.mode, startsAt, type.minutes,
           q.base, q.rushPct, q.discountPct, q.total, price, lamports,
           type.mode === 'enquiry' ? 'enquiry' : 'held',
           type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
-          name, contact, brief, now
+          name, contact, brief, now, reference
         ).run();
 
         return json(request, env, {
           ref: ref,
+          reference: reference,
           type: type.id,
           mode: type.mode,
           startsAt: startsAt,

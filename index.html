@@ -1084,7 +1084,52 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    /* ── SOLANA PAY ── */
+    .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
+    @media (max-width: 460px) { .pay-grid { grid-template-columns: 1fr; justify-items: center; text-align: center; } }
+    .pay-qr {
+      width: 148px; height: 148px; background: #fff;
+      border: 2px solid #E7DFD2; border-radius: 12px; padding: 8px;
+      display: grid; place-items: center;
+    }
+    .pay-qr img, .pay-qr canvas, .pay-qr table { width: 100%; height: 100%; image-rendering: pixelated; }
+    .pay-qr.loading { font-size: 0.72rem; color: var(--muted); font-weight: 700; }
+    .pay-amount { font-family: 'Baloo 2', sans-serif; font-size: 1.7rem; font-weight: 800; color: var(--ink); line-height: 1.1; }
+    .pay-usd { font-size: 0.82rem; color: var(--ink-soft); font-weight: 700; margin-bottom: 10px; }
+    .pay-note { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+    .pay-status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.84rem; font-weight: 700; color: var(--ink-soft);
+      background: var(--cream); border-radius: 999px; padding: 8px 14px; margin-top: 12px;
+    }
+    .pay-dot {
+      width: 9px; height: 9px; border-radius: 50%; background: var(--orange); flex-shrink: 0;
+      animation: paypulse 1.4s ease-in-out infinite;
+    }
+    @keyframes paypulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) { .pay-dot { animation: none; } }
+    .pay-status.done { color: var(--green); }
+    .pay-status.done .pay-dot { background: var(--green); animation: none; }
+    .pay-link {
+      display: block; width: 100%; box-sizing: border-box; margin-top: 10px;
+      background: var(--cream); border: 2px solid #E7DFD2; border-radius: 10px;
+      padding: 8px 12px; font-family: monospace; font-size: 0.7rem; color: var(--ink-soft);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pay-or { text-align: center; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 10px; }
+
+    /* ── SOLANA PAY END ── */
     .banner.for-sale { border-style: dashed; opacity: 0.96; cursor: pointer; }
+    .banner-pitch-text {
+      font-family: 'Baloo 2', sans-serif;
+      font-size: clamp(1.1rem, 4.2vw, 1.9rem);
+      font-weight: 800;
+      color: var(--muted);
+      letter-spacing: -0.01em;
+      text-align: center;
+      padding: 0 18px;
+      line-height: 1.2;
+    }
     .banner.for-sale .banner-canvas { background: var(--cream); }
     .bk-ad {
       background: linear-gradient(150deg, var(--orange-soft), var(--card));
@@ -2224,9 +2269,11 @@
       el.href = 'javascript:void(0)';
       document.getElementById('banner-tag').textContent = 'Available';
       document.getElementById('banner-tag').classList.add('house');
-      document.getElementById('banner-art').textContent = '🪧';
-      document.getElementById('banner-headline').textContent = 'Your advertising space';
-      document.getElementById('banner-sponsor').textContent = 'Seen by everyone who visits — from $250 a week';
+      const art = document.getElementById('banner-art');
+      art.textContent = 'Your advertising space here';
+      art.classList.add('banner-pitch-text');
+      document.getElementById('banner-headline').textContent = 'Book this space';
+      document.getElementById('banner-sponsor').textContent = '';
       const go = el.querySelector('.banner-go');
       if (go) go.textContent = 'Book it →';
       el.addEventListener('click', function (ev) {
@@ -3146,18 +3193,24 @@
 
     /// Booking payments are real money on mainnet, so they get their own send
     /// path — `sendChainTx` is pinned to devnet for staking and must stay that way.
-    async function sendSol(to, lamports) {
+    async function sendSol(to, lamports, reference) {
       const { Connection, PublicKey, Transaction, SystemProgram } = w3();
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
 
       const connection = new Connection(HELIUS_RPC, 'confirmed');
       const from = new PublicKey(Wallet.pubkey);
-      const tx = new Transaction().add(SystemProgram.transfer({
+      const ix = SystemProgram.transfer({
         fromPubkey: from,
         toPubkey: new PublicKey(to),
         lamports: Math.round(lamports)
-      }));
+      });
+      // Solana Pay reference: a throwaway key on the instruction so the payment
+      // can be found on chain later, even if this browser never reports back.
+      if (reference) {
+        ix.keys.push({ pubkey: new PublicKey(reference), isSigner: false, isWritable: false });
+      }
+      const tx = new Transaction().add(ix);
       tx.feePayer = from;
       const latest = await connection.getLatestBlockhash('confirmed');
       tx.recentBlockhash = latest.blockhash;
@@ -3187,6 +3240,150 @@
         'confirmed'
       );
       return signature;
+    }
+
+    // ── SOLANA PAY ──
+    // One payment screen for both bookings and ad slots. Two ways to pay the
+    // same invoice: the connected wallet, or a QR from a phone that has never
+    // touched this site. Either way the reference is what identifies it.
+    var payPoll = null;
+
+    function solanaPayUrl(d, label, message) {
+      const sol = (d.lamports / 1e9).toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
+      return 'solana:' + d.payTo +
+        '?amount=' + sol +
+        '&reference=' + d.reference +
+        '&label=' + encodeURIComponent(label) +
+        '&message=' + encodeURIComponent(message);
+    }
+
+    function loadQrLib() {
+      if (window.qrcode) return Promise.resolve();
+      if (window._qrLoading) return window._qrLoading;
+      window._qrLoading = new Promise(function (resolve, reject) {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      return window._qrLoading;
+    }
+
+    async function drawQr(el, text) {
+      try {
+        await loadQrLib();
+        const qr = window.qrcode(0, 'M');
+        qr.addData(text);
+        qr.make();
+        el.classList.remove('loading');
+        el.innerHTML = qr.createImgTag(4, 0);
+      } catch (e) {
+        // The QR is a convenience; the wallet button still works without it.
+        el.classList.add('loading');
+        el.textContent = 'QR unavailable — use the button below';
+      }
+    }
+
+    /// kind: 'booking' | 'ad'. onPaid runs once the chain confirms.
+    function renderPayment(d, kind, title, onPaid) {
+      const flow = document.getElementById('bk-flow');
+      const sol = (d.lamports / 1e9).toFixed(4);
+      const usd = d.totalUsd !== undefined ? d.totalUsd : (d.quote && d.quote.total);
+      const url = solanaPayUrl(d, 'solquicks', title);
+
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<div class="bk-step">Pay · reference ' + escapeHtml(d.ref) + '</div>' +
+        '<div class="pay-grid">' +
+          '<div class="pay-qr loading" id="pay-qr">Making QR…</div>' +
+          '<div><div class="pay-amount">' + sol + ' ◎</div>' +
+          '<div class="pay-usd">$' + usd + ' · ' + escapeHtml(title) + '</div>' +
+          '<div class="pay-note">Scan with any Solana wallet on your phone, or pay with the wallet in this browser.</div>' +
+          '<div class="pay-link">' + escapeHtml(d.payTo) + '</div></div>' +
+        '</div>' +
+        '<div class="pay-status" id="pay-status"><span class="pay-dot"></span><span id="pay-status-text">Waiting for payment…</span></div>' +
+        '<div class="pay-or">or</div>' +
+        '<button class="bk-go" id="pay-wallet" onclick="payWithWallet()">Pay with connected wallet</button>' +
+        '<div class="bk-msg" id="pay-msg"></div>' +
+        '<p class="bk-policy">The price is held for 20 minutes. If you pay and this page closes, ' +
+        'the payment is still found — keep your reference <strong>' + escapeHtml(d.ref) + '</strong>.</p>' +
+        '</div>';
+
+      drawQr(document.getElementById('pay-qr'), url);
+
+      window._pay = { d: d, kind: kind, onPaid: onPaid, url: url };
+      startPayPolling(d.ref, kind, onPaid);
+    }
+
+    function startPayPolling(ref, kind, onPaid) {
+      stopPayPolling();
+      const endpoint = kind === 'ad' ? '/api/banner/watch' : '/api/booking/watch';
+      let tries = 0;
+      payPoll = setInterval(async function () {
+        tries++;
+        if (tries > 150) { stopPayPolling(); return; }   // ~5 minutes
+        try {
+          const res = await fetch(POINTS_API + endpoint + '?ref=' + encodeURIComponent(ref));
+          const r = await res.json();
+          if (r.status === 'paid') {
+            stopPayPolling();
+            const s = document.getElementById('pay-status');
+            if (s) {
+              s.classList.add('done');
+              document.getElementById('pay-status-text').textContent = 'Payment received';
+            }
+            setTimeout(function () { onPaid(r.signature); }, 700);
+          }
+        } catch (e) { /* keep waiting */ }
+      }, 2000);
+    }
+
+    function stopPayPolling() {
+      if (payPoll) { clearInterval(payPoll); payPoll = null; }
+    }
+
+    async function payWithWallet() {
+      const ctx = window._pay;
+      if (!ctx) return;
+      const btn = document.getElementById('pay-wallet');
+      const msg = document.getElementById('pay-msg');
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+
+      if (!Wallet.pubkey) {
+        msg.textContent = 'Connect your wallet…';
+        try { await connectWallet(); } catch (e) { /* closed the picker */ }
+        if (!Wallet.pubkey) {
+          msg.className = 'bk-msg bad';
+          msg.textContent = 'No wallet connected. You can still scan the QR with your phone.';
+          return;
+        }
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Check your wallet…';
+      try {
+        const sig = await sendSol(ctx.d.payTo, ctx.d.lamports, ctx.d.reference);
+        btn.textContent = 'Confirming…';
+        const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm' : '/api/booking/confirm';
+        const res = await fetch(POINTS_API + endpoint, {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify({ ref: ctx.d.ref, signature: sig })
+        });
+        const r = await res.json();
+        if (r.error) throw new Error(r.error);
+        stopPayPolling();
+        ctx.onPaid(sig);
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.innerHTML = escapeHtml(friendlyTxError(e)) +
+          '<br>Reference <strong>' + escapeHtml(ctx.d.ref) + '</strong>. If the money left your wallet, ' +
+          'this page will pick it up on its own — leave it open a moment.';
+        btn.disabled = false;
+        btn.textContent = 'Try again';
+      }
     }
 
     // ── ADVERTISING SLOT ──
@@ -3238,7 +3435,7 @@
         '<div class="bk-field"><label for="ad-contact">How do I reach you?</label>' +
         '<input id="ad-contact" placeholder="@handle, email, or Telegram"></div>' +
         '<div id="ad-quote"></div>' +
-        '<button class="bk-go" id="ad-submit" onclick="submitAd()">Get a quote</button>' +
+        '<button class="bk-go" id="ad-submit" onclick="submitAd()">Continue to payment</button>' +
         '<div class="bk-msg" id="ad-msg"></div>' +
         '<p class="bk-policy"><strong>Approval.</strong> ' + escapeHtml(d.rules) +
         '<br><strong>Artwork.</strong> You send a name, one headline and a link after paying. ' +
@@ -3270,61 +3467,15 @@
         });
         const d = await res.json();
         if (d.error) throw new Error(d.error);
-        const sol = (d.lamports / 1e9).toFixed(4);
-        document.getElementById('ad-quote').innerHTML = '<div class="bk-quote">' +
-          '<div class="bk-line"><span>' + d.weeks + ' week' + (d.weeks > 1 ? 's' : '') + ' of banner</span>' +
-          '<span class="num">$' + d.totalUsd + '</span></div>' +
-          '<div class="bk-line"><span>Runs</span><span>' +
-          new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' – ' +
-          new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '</span></div>' +
-          '<div class="bk-line total"><span>Total</span><span class="num">$' + d.totalUsd +
-          ' · ' + sol + ' ◎</span></div></div>' +
-          '<p class="bk-hint">Reference <strong>' + escapeHtml(d.ref) + '</strong> · price holds 20 minutes.</p>';
-        btn.disabled = false;
-        btn.textContent = 'Pay ' + sol + ' ◎';
-        btn.onclick = function () { payAd(d); };
+        const runs = new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
+          ' – ' + new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+        renderPayment(d, 'ad', d.weeks + ' week' + (d.weeks > 1 ? 's' : '') + ' · ' + runs,
+          function (sig) { renderAdCreative(d, sig); });
       } catch (e) {
         msg.className = 'bk-msg bad';
         msg.textContent = e.message || 'Something went wrong.';
         btn.disabled = false;
-        btn.textContent = 'Get a quote';
-      }
-    }
-
-    async function payAd(d) {
-      const btn = document.getElementById('ad-submit');
-      const msg = document.getElementById('ad-msg');
-      msg.className = 'bk-msg';
-      msg.textContent = '';
-      if (!Wallet.pubkey) {
-        msg.textContent = 'Connect your wallet to pay…';
-        try { await connectWallet(); } catch (e) { /* closed the picker */ }
-        if (!Wallet.pubkey) {
-          msg.className = 'bk-msg bad';
-          msg.textContent = 'A wallet is needed to pay. Your booking is saved as ' + d.ref + '.';
-          return;
-        }
-      }
-      btn.disabled = true;
-      btn.textContent = 'Check your wallet…';
-      try {
-        const sig = await sendSol(d.payTo, d.lamports);
-        btn.textContent = 'Confirming…';
-        const res = await fetch(POINTS_API + '/api/banner/confirm', {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' },
-            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-          body: JSON.stringify({ ref: d.ref, signature: sig })
-        });
-        const r = await res.json();
-        if (r.error) throw new Error(r.error);
-        renderAdCreative(d, sig);
-      } catch (e) {
-        msg.className = 'bk-msg bad';
-        msg.innerHTML = escapeHtml(friendlyTxError(e)) +
-          '<br>Your reference is <strong>' + escapeHtml(d.ref) + '</strong>.';
-        btn.disabled = false;
-        btn.textContent = 'Try paying again';
+        btn.textContent = 'Continue to payment';
       }
     }
 
@@ -3444,6 +3595,7 @@
     }
 
     function backToRateCard() {
+      stopPayPolling();
       document.getElementById('bk-flow').hidden = true;
       document.getElementById('bk-list').hidden = false;
       bkPick = { type: null, startsAt: null };
@@ -3529,7 +3681,7 @@
         '"></textarea></div>' +
         '<div id="bk-quote"></div>' +
         '<button class="bk-go" id="bk-submit" onclick="submitBooking()">' +
-        (isEnquiry ? 'Send enquiry' : 'Get a quote') + '</button>' +
+        (isEnquiry ? 'Send enquiry' : 'Continue to payment') + '</button>' +
         '<div class="bk-msg" id="bk-msg"></div>' +
         '<p class="bk-policy"><strong>Cancellations.</strong> ' + escapeHtml(bkData.policy.cancellation) +
         '<br><strong>Refunds.</strong> ' + escapeHtml(bkData.policy.refunds) +
@@ -3565,77 +3717,12 @@
         if (d.error) throw new Error(d.error);
 
         if (t.mode === 'enquiry') { showBookingDone(d, true); return; }
-        renderQuote(d);
+        renderPayment(d, 'booking', t.name, function (sig) { showBookingDone(d, false, sig); });
       } catch (e) {
         msg.className = 'bk-msg bad';
         msg.textContent = e.message || 'Something went wrong. Try again.';
         btn.disabled = false;
-        btn.textContent = t.mode === 'enquiry' ? 'Send enquiry' : 'Get a quote';
-      }
-    }
-
-    function renderQuote(d) {
-      const q = d.quote;
-      const sol = (d.lamports / 1e9).toFixed(4);
-      const box = document.getElementById('bk-quote');
-      let lines = '<div class="bk-line"><span>' + escapeHtml(bkPick.type.name) + '</span>' +
-        '<span class="num">$' + q.base.toLocaleString() + '</span></div>';
-      if (q.rushPct) {
-        lines += '<div class="bk-line"><span class="bk-add">Rush booking (+' + q.rushPct + '%)</span>' +
-          '<span class="num bk-add">+$' + Math.round(q.base * q.rushPct / 100).toLocaleString() + '</span></div>';
-      }
-      if (q.discountPct) {
-        lines += '<div class="bk-line"><span class="bk-save">Moon Ranger holder (−' + q.discountPct + '%)</span>' +
-          '<span class="num bk-save">−$' + Math.round(q.base * (1 + q.rushPct / 100) * q.discountPct / 100).toLocaleString() + '</span></div>';
-      }
-      lines += '<div class="bk-line total"><span>Total</span><span class="num">$' +
-        q.total.toLocaleString() + ' · ' + sol + ' ◎</span></div>';
-      box.innerHTML = '<div class="bk-quote">' + lines + '</div>' +
-        '<p class="bk-hint">Reference <strong>' + escapeHtml(d.ref) + '</strong> · this price holds for 20 minutes.</p>';
-
-      const btn = document.getElementById('bk-submit');
-      btn.disabled = false;
-      btn.textContent = 'Pay ' + sol + ' ◎';
-      btn.onclick = function () { payBooking(d); };
-    }
-
-    async function payBooking(d) {
-      const btn = document.getElementById('bk-submit');
-      const msg = document.getElementById('bk-msg');
-      msg.className = 'bk-msg';
-      msg.textContent = '';
-
-      if (!Wallet.pubkey) {
-        msg.textContent = 'Connect your wallet to pay…';
-        try { await connectWallet(); } catch (e) { /* user closed the picker */ }
-        if (!Wallet.pubkey) {
-          msg.className = 'bk-msg bad';
-          msg.textContent = 'A wallet is needed to pay. Everything else is saved under ' + d.ref + '.';
-          return;
-        }
-      }
-
-      btn.disabled = true;
-      btn.textContent = 'Check your wallet…';
-      try {
-        const sig = await sendSol(d.payTo, d.lamports);
-        btn.textContent = 'Confirming…';
-        const res = await fetch(POINTS_API + '/api/booking/confirm', {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' },
-            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-          body: JSON.stringify({ ref: d.ref, signature: sig })
-        });
-        const r = await res.json();
-        if (r.error) throw new Error(r.error);
-        showBookingDone(d, false, sig);
-      } catch (e) {
-        msg.className = 'bk-msg bad';
-        // slippage-style failures are the common case: say what to do next
-        msg.innerHTML = escapeHtml(friendlyTxError(e)) +
-          '<br>Your reference is <strong>' + escapeHtml(d.ref) + '</strong> — quote it if you need a hand.';
-        btn.disabled = false;
-        btn.textContent = 'Try paying again';
+        btn.textContent = t.mode === 'enquiry' ? 'Send enquiry' : 'Continue to payment';
       }
     }
 
