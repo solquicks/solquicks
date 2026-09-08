@@ -6,6 +6,7 @@ skip-lint = false
 
 [programs.devnet]
 moon_stake = "DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5"
+moon_draw = "8BqrCR3hdX6o1P3tnEjX5xuV9FbTJLU2F8aNBNF5XvCp"
 
 [registry]
 url = "https://api.apr.dev"
