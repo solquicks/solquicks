@@ -1084,6 +1084,15 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    .pay-tabs { display: flex; gap: 6px; background: var(--cream); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
+    .pay-tab {
+      flex: 1; appearance: none; border: none; cursor: pointer; background: transparent;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.85rem;
+      color: var(--muted); border-radius: 999px; padding: 7px 12px;
+    }
+    .pay-tab.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(46,36,64,0.14); }
+    .pay-tab:hover:not(.on) { color: var(--ink-soft); }
+
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
     @media (max-width: 460px) { .pay-grid { grid-template-columns: 1fr; justify-items: center; text-align: center; } }
@@ -3253,19 +3262,102 @@
       return signature;
     }
 
+    // ── USDC ──
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const USDC_DECIMALS = 6;
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+
+    function ataFor(owner, mint) {
+      const { PublicKey } = w3();
+      return PublicKey.findProgramAddressSync(
+        [new PublicKey(owner).toBytes(), new PublicKey(TOKEN_PROGRAM).toBytes(), new PublicKey(mint).toBytes()],
+        new PublicKey(ATA_PROGRAM)
+      )[0];
+    }
+
+    /// Sends USDC. TransferChecked rather than Transfer: it carries the mint and
+    /// decimals, so a wrong-token or wrong-scale transfer fails on chain instead
+    /// of quietly moving the wrong amount.
+    async function sendUsdc(to, units, reference) {
+      const { Connection, PublicKey, Transaction, TransactionInstruction } = w3();
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+
+      const connection = new Connection(HELIUS_RPC, 'confirmed');
+      const from = new PublicKey(Wallet.pubkey);
+      const source = ataFor(Wallet.pubkey, USDC_MINT);
+      const dest = ataFor(to, USDC_MINT);
+
+      const src = await connection.getAccountInfo(source);
+      if (!src) throw new Error('That wallet holds no USDC.');
+
+      const data = new Uint8Array(10);
+      data[0] = 12; // TransferChecked
+      new DataView(data.buffer).setBigUint64(1, BigInt(units), true);
+      data[9] = USDC_DECIMALS;
+
+      const keys = [
+        { pubkey: source, isSigner: false, isWritable: true },
+        { pubkey: new PublicKey(USDC_MINT), isSigner: false, isWritable: false },
+        { pubkey: dest, isSigner: false, isWritable: true },
+        { pubkey: from, isSigner: true, isWritable: false }
+      ];
+      if (reference) keys.push({ pubkey: new PublicKey(reference), isSigner: false, isWritable: false });
+
+      const tx = new Transaction().add(new TransactionInstruction({
+        programId: new PublicKey(TOKEN_PROGRAM), keys: keys, data: data
+      }));
+      tx.feePayer = from;
+      const latest = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = latest.blockhash;
+
+      let signature;
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        signature = res.signature || res;
+      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        signature = await connection.sendRawTransaction(signed.serialize());
+      } else if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: provider.w.accounts[0],
+          chain: 'solana:mainnet',
+          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        signature = new PublicKey(out[0].signature).toBase58();
+      } else {
+        throw new Error('This wallet cannot send transactions.');
+      }
+
+      await connection.confirmTransaction(
+        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        'confirmed'
+      );
+      return signature;
+    }
+
     // ── SOLANA PAY ──
     // One payment screen for both bookings and ad slots. Two ways to pay the
     // same invoice: the connected wallet, or a QR from a phone that has never
     // touched this site. Either way the reference is what identifies it.
     var payPoll = null;
 
+    var payCurrency = 'usdc';
+
     function solanaPayUrl(d, label, message) {
-      const sol = (d.lamports / 1e9).toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
-      return 'solana:' + d.payTo +
-        '?amount=' + sol +
-        '&reference=' + d.reference +
+      const base = 'solana:' + d.payTo;
+      const common = '&reference=' + d.reference +
         '&label=' + encodeURIComponent(label) +
         '&message=' + encodeURIComponent(message);
+      if (payCurrency === 'usdc') {
+        return base + '?amount=' + (d.usdc / Math.pow(10, 6)) +
+          '&spl-token=' + USDC_MINT + common;
+      }
+      const sol = (d.lamports / 1e9).toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
+      return base + '?amount=' + sol + common;
     }
 
     function loadQrLib() {
@@ -3298,32 +3390,57 @@
 
     /// kind: 'booking' | 'ad'. onPaid runs once the chain confirms.
     function renderPayment(d, kind, title, onPaid) {
+      window._pay = { d: d, kind: kind, onPaid: onPaid, title: title };
+      payCurrency = 'usdc';
+      paintPayment();
+      startPayPolling(d.ref, kind, onPaid);
+    }
+
+    /// Repainted on a currency switch. The invoice, reference and polling all
+    /// stay put — only how you settle it changes.
+    function paintPayment() {
+      const ctx = window._pay;
+      const d = ctx.d;
       const flow = document.getElementById('bk-flow');
-      const sol = (d.lamports / 1e9).toFixed(4);
       const usd = d.totalUsd !== undefined ? d.totalUsd : (d.quote && d.quote.total);
-      const url = solanaPayUrl(d, 'solquicks', title);
+      const isUsdc = payCurrency === 'usdc';
+      const amount = isUsdc
+        ? (d.usdc / Math.pow(10, 6)).toFixed(2) + ' USDC'
+        : (d.lamports / 1e9).toFixed(4) + ' ◎';
+      const url = solanaPayUrl(d, 'solquicks', ctx.title);
+      ctx.url = url;
 
       flow.innerHTML = '<div class="bk-flow">' +
         '<div class="bk-step">Pay · reference ' + escapeHtml(d.ref) + '</div>' +
+        '<div class="pay-tabs">' +
+          '<button class="pay-tab' + (isUsdc ? ' on' : '') + '" onclick="setPayCurrency(\'usdc\')">USDC</button>' +
+          '<button class="pay-tab' + (isUsdc ? '' : ' on') + '" onclick="setPayCurrency(\'sol\')">SOL</button>' +
+        '</div>' +
         '<div class="pay-grid">' +
           '<div class="pay-qr loading" id="pay-qr">Making QR…</div>' +
-          '<div><div class="pay-amount">' + sol + ' ◎</div>' +
-          '<div class="pay-usd">$' + usd + ' · ' + escapeHtml(title) + '</div>' +
-          '<div class="pay-note">Scan with any Solana wallet on your phone, or pay with the wallet in this browser.</div>' +
+          '<div><div class="pay-amount">' + amount + '</div>' +
+          '<div class="pay-usd">$' + usd + ' · ' + escapeHtml(ctx.title) + '</div>' +
+          '<div class="pay-note">' + (isUsdc
+            ? 'A dollar is a dollar — what the invoice says is what you send.'
+            : 'Priced at the SOL rate quoted when you booked. Held for 20 minutes.') +
+          ' Scan with any Solana wallet, or pay in this browser.</div>' +
           '<div class="pay-link">' + escapeHtml(d.payTo) + '</div></div>' +
         '</div>' +
         '<div class="pay-status" id="pay-status"><span class="pay-dot"></span><span id="pay-status-text">Waiting for payment…</span></div>' +
         '<div class="pay-or">or</div>' +
-        '<button class="bk-go" id="pay-wallet" onclick="payWithWallet()">Pay with connected wallet</button>' +
+        '<button class="bk-go" id="pay-wallet" onclick="payWithWallet()">Pay ' + amount + ' with connected wallet</button>' +
         '<div class="bk-msg" id="pay-msg"></div>' +
-        '<p class="bk-policy">The price is held for 20 minutes. If you pay and this page closes, ' +
-        'the payment is still found — keep your reference <strong>' + escapeHtml(d.ref) + '</strong>.</p>' +
+        '<p class="bk-policy">If you pay and this page closes, the payment is still found — ' +
+        'keep your reference <strong>' + escapeHtml(d.ref) + '</strong>.</p>' +
         '</div>';
 
       drawQr(document.getElementById('pay-qr'), url);
+    }
 
-      window._pay = { d: d, kind: kind, onPaid: onPaid, url: url };
-      startPayPolling(d.ref, kind, onPaid);
+    function setPayCurrency(c) {
+      if (payCurrency === c) return;
+      payCurrency = c;
+      paintPayment();
     }
 
     function startPayPolling(ref, kind, onPaid) {
@@ -3374,7 +3491,9 @@
       btn.disabled = true;
       btn.textContent = 'Check your wallet…';
       try {
-        const sig = await sendSol(ctx.d.payTo, ctx.d.lamports, ctx.d.reference);
+        const sig = payCurrency === 'usdc'
+          ? await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference)
+          : await sendSol(ctx.d.payTo, ctx.d.lamports, ctx.d.reference);
         btn.textContent = 'Confirming…';
         const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm' : '/api/booking/confirm';
         const res = await fetch(POINTS_API + endpoint, {

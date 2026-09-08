@@ -424,7 +424,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'solanapay-1';
+const BUILD = 'usdc-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -870,6 +870,84 @@ async function findPaymentByReference(env, reference) {
     return s.signature;
   }
   return null;
+}
+
+
+// ── USDC ────────────────────────────────────────────────────────────────────
+// Priced in dollars, so USDC is the honest default: what the invoice says is
+// what lands, with no exchange-rate risk between quote and payment. SOL stays
+// available and is re-quoted at the live rate.
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDC_DECIMALS = 6;
+
+function usdcUnits(usd) {
+  return Math.round(usd * Math.pow(10, USDC_DECIMALS));
+}
+
+/// Reads a transaction once and reports what actually reached the treasury,
+/// in both currencies. Callers decide which one they were expecting.
+async function inspectPayment(env, signature) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 'tx', method: 'getTransaction',
+      params: [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]
+    })
+  });
+  const data = await res.json();
+  const tx = data && data.result;
+  if (!tx) return { found: false, error: 'payment not found yet — try again in a moment' };
+  if (tx.meta && tx.meta.err) return { found: true, error: 'that payment failed on-chain' };
+
+  const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
+  const payer = keys[0];
+
+  let sol = 0;
+  const idx = keys.indexOf(env.TREASURY_WALLET);
+  if (idx >= 0) sol = (tx.meta.postBalances[idx] || 0) - (tx.meta.preBalances[idx] || 0);
+
+  // token balances are keyed by account index, and the "before" row is absent
+  // entirely when the account was created by this very transaction
+  const amountOf = function (rows) {
+    for (const r of rows || []) {
+      if (r.mint === USDC_MINT && r.owner === env.TREASURY_WALLET) {
+        return Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
+      }
+    }
+    return 0;
+  };
+  const usdc = amountOf(tx.meta.postTokenBalances) - amountOf(tx.meta.preTokenBalances);
+
+  return { found: true, payer: payer, sol: sol, usdc: usdc };
+}
+
+/// One gate for both currencies. `wallet` null means the caller already proved
+/// which invoice this is with a Solana Pay reference.
+async function verifyInvoice(env, wallet, signature, minLamports, minUsdc, purpose) {
+  if (!env.TREASURY_WALLET) return { ok: false, error: 'payments are not switched on yet' };
+  if (!signature) return { ok: false, error: 'payment required' };
+
+  const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
+  if (seen) return { ok: false, error: 'this payment was already used' };
+
+  const p = await inspectPayment(env, signature);
+  if (!p.found || p.error) return { ok: false, error: p.error || 'payment not found yet' };
+  if (wallet !== null && p.payer !== wallet) {
+    return { ok: false, error: 'payment was not sent by your wallet' };
+  }
+
+  let currency = null;
+  let amount = 0;
+  if (minUsdc && p.usdc >= minUsdc) { currency = 'usdc'; amount = p.usdc; }
+  else if (minLamports && p.sol >= minLamports) { currency = 'sol'; amount = p.sol; }
+  else {
+    return { ok: false, error: p.usdc > 0 || p.sol > 0 ? 'payment was too small' : 'payment did not go to the right wallet' };
+  }
+
+  await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
+    .bind(signature, wallet || p.payer, currency === 'sol' ? amount : 0, purpose + ':' + currency, Date.now()).run();
+  return { ok: true, currency: currency, amount: amount, payer: p.payer };
 }
 
 // ── BOOK THE FOX ────────────────────────────────────────────────────────────
@@ -1609,6 +1687,7 @@ export default {
         return json(request, env, {
           ref: ref, reference: reference, weeks: rate.weeks, startsAt: starts, endsAt: ends,
           totalUsd: rate.price, solUsd: price, lamports: lamports,
+          usdc: usdcUnits(rate.price), usdcMint: USDC_MINT,
           payTo: env.TREASURY_WALLET || null,
           holdUntil: now + HOLD_MINUTES * 60000
         });
@@ -1635,7 +1714,8 @@ export default {
         const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
-        const v = await verifyPayment(env, payer, signature, Math.floor(b.lamports * 0.99), 'banner:' + ref);
+        const v = await verifyInvoice(env, payer, signature,
+          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'banner:' + ref);
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         await env.DB.prepare(
@@ -1685,7 +1765,8 @@ export default {
         const sig = await findPaymentByReference(env, b.reference);
         if (!sig) return json(request, env, { status: 'waiting' });
 
-        const v = await verifyPayment(env, null, sig, Math.floor(b.lamports * 0.99), 'booking:' + b.ref);
+        const v = await verifyInvoice(env, null, sig,
+          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'booking:' + b.ref);
         if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
 
         await env.DB.prepare(
@@ -1706,7 +1787,8 @@ export default {
         const sig = await findPaymentByReference(env, b.reference);
         if (!sig) return json(request, env, { status: 'waiting' });
 
-        const v = await verifyPayment(env, null, sig, Math.floor(b.lamports * 0.99), 'banner:' + b.ref);
+        const v = await verifyInvoice(env, null, sig,
+          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'banner:' + b.ref);
         if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
 
         await env.DB.prepare(
@@ -1775,6 +1857,7 @@ export default {
         }
         const lamports = type.mode === 'enquiry' ? null
           : Math.round((q.total / price) * 1e9);
+        const usdc = type.mode === 'enquiry' ? null : usdcUnits(q.total);
 
         const ref = bookingRef();
         const reference = newReference();
@@ -1801,6 +1884,8 @@ export default {
           quote: q,
           solUsd: price,
           lamports: lamports,
+          usdc: usdc,
+          usdcMint: USDC_MINT,
           payTo: env.TREASURY_WALLET || null,
           holdUntil: type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
           policy: BOOKING_POLICY
@@ -1828,9 +1913,10 @@ export default {
         const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
-        // 1% tolerance: SOL can tick between quote and signature
-        const min = Math.floor(b.lamports * 0.99);
-        const v = await verifyPayment(env, payer, signature, min, 'booking:' + ref);
+        // 1% tolerance on SOL, which can tick between quote and signature.
+        // USDC is a dollar, so it is expected exactly.
+        const v = await verifyInvoice(env, payer, signature,
+          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'booking:' + ref);
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         await env.DB.prepare(
