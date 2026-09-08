@@ -3963,7 +3963,23 @@
         if (d.error) throw new Error(d.error);
 
         go.textContent = 'Check your wallet…';
-        const sig = await sendVersionedTx(d.swapTransaction, d.lastValidBlockHeight);
+        let sig;
+        try {
+          sig = await sendVersionedTx(d.swapTransaction, d.lastValidBlockHeight);
+        } catch (sendErr) {
+          // If it reached the network, the swap may well have landed — saying
+          // "failed" when the money already moved is the worst outcome here.
+          if (sendErr && sendErr.sentSignature) {
+            msg.className = 'sw-msg';
+            msg.innerHTML = 'Sent, but confirmation timed out. ' +
+              '<a href="https://solscan.io/tx/' + encodeURIComponent(sendErr.sentSignature) +
+              '" target="_blank" rel="noopener noreferrer">Check it here</a> before trying again.';
+            go.textContent = 'Swap';
+            go.disabled = false;
+            return;
+          }
+          throw sendErr;
+        }
         msg.className = 'sw-msg good';
         msg.innerHTML = 'Swapped. <a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
           '" target="_blank" rel="noopener noreferrer">View it</a>';
@@ -3978,9 +3994,29 @@
         msg.className = 'sw-msg bad';
         msg.textContent = friendlySwapError(e);
         go.textContent = 'Try again';
+        reportSwapFailure(e);
       } finally {
         go.disabled = false;
       }
+    }
+
+    /// Silent failures cannot be fixed. Cancellations are not failures, so they
+    /// are not reported.
+    function reportSwapFailure(e) {
+      const m = String((e && e.message) || e || '');
+      if (/reject|denied|cancell?ed/i.test(m)) return;
+      try {
+        fetch(POINTS_API + '/api/swap/failed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: m.slice(0, 300),
+            inMint: swapPair.in && swapPair.in.mint,
+            outMint: swapPair.out && swapPair.out.mint,
+            wallet: Wallet.pubkey || null
+          })
+        });
+      } catch (err) { /* never let reporting break the page */ }
     }
 
     /// Jupiter hands back a ready-made versioned transaction; all we do is get
@@ -4016,14 +4052,21 @@
 
       // confirm against the blockhash the transaction was built with, not a
       // fresh one fetched after sending
-      await connection.confirmTransaction(
-        {
-          signature: signature,
-          blockhash: tx.message.recentBlockhash,
-          lastValidBlockHeight: lastValidBlockHeight || (await connection.getBlockHeight('confirmed')) + 150
-        },
-        'confirmed'
-      );
+      try {
+        await connection.confirmTransaction(
+          {
+            signature: signature,
+            blockhash: tx.message.recentBlockhash,
+            lastValidBlockHeight: lastValidBlockHeight || (await connection.getBlockHeight('confirmed')) + 150
+          },
+          'confirmed'
+        );
+      } catch (e) {
+        // carry the signature out so the caller can tell "maybe landed" from
+        // "definitely did not"
+        e.sentSignature = signature;
+        throw e;
+      }
       return signature;
     }
 
@@ -4041,6 +4084,11 @@
         return 'That took too long and expired before it landed. Nothing was swapped — try again.';
       }
       if (/no route/i.test(m)) return 'No route for that pair right now.';
+      if (/internal error|unexpected error|unknown/i.test(m)) {
+        return 'Your wallet rejected that without saying why. It is usually a stale ' +
+          'price — press Try again to get a fresh quote. If it keeps happening, ' +
+          'check you have a little SOL for the network fee.';
+      }
       return m || 'The swap did not go through.';
     }
 

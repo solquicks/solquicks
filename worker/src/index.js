@@ -313,6 +313,7 @@ const RATE_RULES = [
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
@@ -429,7 +430,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-2';
+const BUILD = 'swap-3';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1392,7 +1393,7 @@ export default {
           path === '/api/banner/watch' || path === '/api/swap/tokens' ||
           path === '/api/swap/quote' || path === '/api/swap/build' ||
           path === '/api/swap/earned' || path === '/api/swap/search' ||
-          path === '/api/swap/prices' ||
+          path === '/api/swap/prices' || path === '/api/swap/failed' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1744,6 +1745,20 @@ export default {
           staked: (staked && staked.n) || 0,
           firstSeen: pos.first_seen
         });
+      }
+
+      // Wallets report failures in their own words, and some of those words are
+      // useless ("Internal error"). Recording them is the only way to find out
+      // what actually went wrong for someone else.
+      if (path === '/api/swap/failed' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        await logError(env, 'swap.client', JSON.stringify({
+          message: String(body.message || '').slice(0, 240),
+          in: String(body.inMint || '').slice(0, 44),
+          out: String(body.outMint || '').slice(0, 44),
+          wallet: String(body.wallet || '').slice(0, 44)
+        }));
+        return json(request, env, { ok: true });
       }
 
       if (path === '/api/swap/search' && request.method === 'GET') {
