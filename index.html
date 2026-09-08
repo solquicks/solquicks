@@ -1133,15 +1133,6 @@
     }
     .sw-amount::placeholder { color: #C9C0D6; }
     .sw-amount:disabled { color: var(--ink-soft); }
-    .sw-pick {
-      appearance: none; cursor: pointer; flex-shrink: 0;
-      background: var(--card); border: 2px solid #E7DFD2; border-radius: 999px;
-      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.92rem;
-      color: var(--ink); padding: 7px 12px; padding-right: 26px;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238B819D' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 11px center;
-    }
-    .sw-pick:hover { border-color: var(--orange); }
     .sw-flip { display: flex; justify-content: center; margin: -8px 0; position: relative; z-index: 2; }
     .sw-flip button {
       appearance: none; cursor: pointer; width: 34px; height: 34px; border-radius: 50%;
@@ -1175,6 +1166,58 @@
     .sw-msg.bad { color: var(--crimson); font-weight: 700; }
     .sw-msg.good { color: var(--green); font-weight: 700; }
     .sw-foot { font-size: 0.74rem; color: var(--muted); text-align: center; margin-top: 14px; line-height: 1.5; }
+
+    .sw-usd { font-size: 0.74rem; color: var(--muted); font-weight: 700; margin-top: 2px; min-height: 1em; }
+    .sw-pick {
+      appearance: none; cursor: pointer; flex-shrink: 0;
+      background: var(--card); border: 2px solid #E7DFD2; border-radius: 999px;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.92rem;
+      color: var(--ink); padding: 7px 12px; padding-right: 26px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238B819D' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 11px center;
+    }
+    .sw-pick:hover { border-color: var(--orange); }
+
+    .sw-picker {
+      position: absolute; inset: 0; z-index: 20;
+      background: var(--card); border-radius: var(--radius);
+      padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .sw-picker-top { display: flex; gap: 8px; align-items: center; }
+    .sw-picker-top input {
+      flex: 1; min-width: 0; background: var(--cream);
+      border: 2px solid #E7DFD2; border-radius: 12px; padding: 9px 12px;
+      font-family: inherit; font-size: 0.88rem; color: var(--ink);
+    }
+    .sw-picker-top input:focus { outline: none; border-color: var(--orange); }
+    .sw-picker-x {
+      appearance: none; cursor: pointer; background: var(--cream);
+      border: 2px solid #E7DFD2; border-radius: 50%; width: 34px; height: 34px;
+      font-size: 1.2rem; line-height: 1; color: var(--ink-soft); flex-shrink: 0;
+    }
+    .sw-results { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 3px; min-height: 220px; }
+    .sw-result {
+      appearance: none; cursor: pointer; text-align: left; width: 100%;
+      display: flex; align-items: center; gap: 10px;
+      background: transparent; border: 2px solid transparent; border-radius: 12px;
+      padding: 9px 10px; font-family: inherit; color: var(--ink);
+    }
+    .sw-result:hover { background: var(--cream); }
+    .sw-result img { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; background: var(--cream); }
+    .sw-result-body { flex: 1; min-width: 0; }
+    .sw-result-sym { font-weight: 800; font-size: 0.9rem; display: flex; align-items: center; gap: 5px; }
+    .sw-result-name { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sw-tick { color: var(--green); font-size: 0.8rem; }
+    .sw-result-warn { font-size: 0.72rem; color: var(--crimson); font-weight: 700; margin-top: 1px; }
+    .sw-empty { font-size: 0.84rem; color: var(--muted); text-align: center; padding: 20px 10px; line-height: 1.5; }
+
+    .sw-warnbox {
+      background: #FDF0E1; border: 2px solid var(--orange);
+      border-radius: 12px; padding: 10px 13px; margin-top: 12px;
+      font-size: 0.78rem; color: var(--ink-soft); line-height: 1.5;
+    }
+    .sw-warnbox strong { color: var(--crimson); display: block; margin-bottom: 3px; }
+    .sw-warnbox ul { margin: 0; padding-left: 16px; }
 
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
@@ -1902,13 +1945,21 @@
       <div class="bk-intro">
         <div class="bk-lead">Swap</div>
       </div>
-      <div class="sw-card">
+      <div class="sw-card" style="position:relative">
+        <div class="sw-picker" id="sw-picker" hidden>
+          <div class="sw-picker-top">
+            <input id="sw-search" placeholder="Search name or paste a mint address" autocomplete="off" spellcheck="false">
+            <button class="sw-picker-x" onclick="closeTokenPicker()" aria-label="Close">×</button>
+          </div>
+          <div class="sw-results" id="sw-results"></div>
+        </div>
         <div class="sw-leg" id="sw-leg-in">
           <div class="sw-legtop"><span class="sw-label">You pay</span><span class="sw-bal" id="sw-bal"></span></div>
           <div class="sw-row">
             <input class="sw-amount" id="sw-in-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
-            <select class="sw-pick" id="sw-in-token" onchange="onSwapPairChange()"></select>
+            <button class="sw-pick" id="sw-in-token" onclick="openTokenPicker('in')">SOL</button>
           </div>
+          <div class="sw-usd" id="sw-in-usd"></div>
         </div>
 
         <div class="sw-flip"><button onclick="flipSwap()" aria-label="Swap direction">⇅</button></div>
@@ -1917,8 +1968,9 @@
           <div class="sw-legtop"><span class="sw-label">You receive</span><span class="sw-bal" id="sw-quoting"></span></div>
           <div class="sw-row">
             <input class="sw-amount" id="sw-out-amount" placeholder="0.00" disabled>
-            <select class="sw-pick" id="sw-out-token" onchange="onSwapPairChange()"></select>
+            <button class="sw-pick" id="sw-out-token" onclick="openTokenPicker('out')">USDC</button>
           </div>
+          <div class="sw-usd" id="sw-out-usd"></div>
         </div>
 
         <div class="sw-detail" id="sw-detail" hidden>
@@ -1935,6 +1987,7 @@
           </div>
         </div>
 
+        <div class="sw-warnbox" id="sw-warnbox" hidden></div>
         <button class="sw-go" id="sw-go" onclick="doSwap()" disabled>Enter an amount</button>
         <div class="sw-msg" id="sw-msg"></div>
         <p class="sw-foot">Routed by Jupiter across every Solana DEX. Non-custodial —
@@ -3575,6 +3628,10 @@
     var swapSlippage = 50;
     var swapDebounce = null;
     var swapSeq = 0;
+    var swapPair = { in: null, out: null };
+    var swapPrices = {};
+    var pickerSide = null;
+    var pickerDebounce = null;
 
     async function loadSwap() {
       if (swapTokens) return;
@@ -3584,13 +3641,9 @@
         swapTokens = d.tokens;
       } catch (e) { return; }
 
-      const opts = swapTokens.map(function (t) {
-        return '<option value="' + t.mint + '">' + escapeHtml(t.symbol) + '</option>';
-      }).join('');
-      document.getElementById('sw-in-token').innerHTML = opts;
-      document.getElementById('sw-out-token').innerHTML = opts;
-      document.getElementById('sw-in-token').value = swapTokens[0].mint;   // SOL
-      document.getElementById('sw-out-token').value = swapTokens[1].mint;  // USDC
+      swapPair.in = swapTokens[0];   // SOL
+      swapPair.out = swapTokens[1];  // USDC
+      paintPair();
       setSlippage(swapSlippage);
 
       const amt = document.getElementById('sw-in-amount');
@@ -3600,10 +3653,139 @@
       });
       amt.addEventListener('focus', function () { document.getElementById('sw-leg-in').classList.add('focus'); });
       amt.addEventListener('blur', function () { document.getElementById('sw-leg-in').classList.remove('focus'); });
+
+      const search = document.getElementById('sw-search');
+      search.addEventListener('input', function () {
+        clearTimeout(pickerDebounce);
+        pickerDebounce = setTimeout(runTokenSearch, 250);
+      });
+
       refreshSwapBalance();
+      refreshSwapPrices();
+    }
+
+    function paintPair() {
+      document.getElementById('sw-in-token').textContent = swapPair.in.symbol;
+      document.getElementById('sw-out-token').textContent = swapPair.out.symbol;
+      renderTokenWarnings();
+    }
+
+    /// Warnings travel with the token, so they show while it is selected — not
+    /// only in the list where they are easy to click past.
+    function renderTokenWarnings() {
+      const box = document.getElementById('sw-warnbox');
+      const all = [];
+      for (const side of ['in', 'out']) {
+        const t = swapPair[side];
+        if (t && t.warnings && t.warnings.length) {
+          all.push({ symbol: t.symbol, warnings: t.warnings });
+        }
+      }
+      if (!all.length) { box.hidden = true; box.innerHTML = ''; return; }
+      box.hidden = false;
+      box.innerHTML = all.map(function (t) {
+        return '<strong>Care with ' + escapeHtml(t.symbol) + '</strong><ul>' +
+          t.warnings.map(function (w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') + '</ul>';
+      }).join('');
+    }
+
+    async function refreshSwapPrices() {
+      if (!swapPair.in || !swapPair.out) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/prices?ids=' +
+          swapPair.in.mint + ',' + swapPair.out.mint);
+        const d = await res.json();
+        swapPrices = d.prices || {};
+      } catch (e) { swapPrices = {}; }
+      paintUsd();
+    }
+
+    /// A rate in tokens means little; the dollar figure is how anyone actually
+    /// checks whether a swap is fair.
+    function paintUsd() {
+      const set = function (elId, mint, amountStr) {
+        const el = document.getElementById(elId);
+        const price = swapPrices[mint];
+        const amount = parseFloat(String(amountStr).replace(/,/g, ''));
+        el.textContent = price && amount > 0
+          ? '≈ $' + (amount * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : '';
+      };
+      set('sw-in-usd', swapPair.in.mint, document.getElementById('sw-in-amount').value);
+      set('sw-out-usd', swapPair.out.mint, document.getElementById('sw-out-amount').value);
+    }
+
+    // ── token picker ──
+    function openTokenPicker(side) {
+      pickerSide = side;
+      document.getElementById('sw-picker').hidden = false;
+      const search = document.getElementById('sw-search');
+      search.value = '';
+      renderTokenResults(swapTokens.map(function (t) { return Object.assign({ verified: true, warnings: [] }, t); }));
+      search.focus();
+    }
+
+    function closeTokenPicker() {
+      document.getElementById('sw-picker').hidden = true;
+      pickerSide = null;
+    }
+
+    async function runTokenSearch() {
+      const q = document.getElementById('sw-search').value.trim();
+      const box = document.getElementById('sw-results');
+      if (q.length < 2) {
+        renderTokenResults(swapTokens.map(function (t) { return Object.assign({ verified: true, warnings: [] }, t); }));
+        return;
+      }
+      box.innerHTML = '<div class="sw-empty">Searching…</div>';
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/search?q=' + encodeURIComponent(q));
+        const d = await res.json();
+        renderTokenResults(d.tokens || []);
+      } catch (e) {
+        box.innerHTML = '<div class="sw-empty">Could not search just now.</div>';
+      }
+    }
+
+    function renderTokenResults(list) {
+      const box = document.getElementById('sw-results');
+      if (!list.length) {
+        box.innerHTML = '<div class="sw-empty">Nothing found. Paste a mint address to look one up directly.</div>';
+        return;
+      }
+      box.innerHTML = list.map(function (t, i) {
+        const warn = (t.warnings || [])[0];
+        return '<button class="sw-result" onclick="chooseToken(' + i + ')">' +
+          (t.icon ? '<img src="' + escapeHtml(t.icon) + '" alt="" loading="lazy">' : '<img alt="">') +
+          '<span class="sw-result-body">' +
+          '<span class="sw-result-sym">' + escapeHtml(t.symbol || '?') +
+          (t.verified ? '<span class="sw-tick" title="On Jupiter’s verified list">✓</span>' : '') + '</span>' +
+          '<span class="sw-result-name">' + escapeHtml(t.name || '') + '</span>' +
+          (warn ? '<span class="sw-result-warn">⚠ ' + escapeHtml(warn) + '</span>' : '') +
+          '</span></button>';
+      }).join('');
+      box._list = list;
+    }
+
+    function chooseToken(i) {
+      const t = document.getElementById('sw-results')._list[i];
+      if (!t) return;
+      const other = pickerSide === 'in' ? 'out' : 'in';
+      // choosing the token already on the other side just flips the pair
+      if (swapPair[other] && swapPair[other].mint === t.mint) {
+        swapPair[other] = swapPair[pickerSide];
+      }
+      swapPair[pickerSide] = t;
+      closeTokenPicker();
+      paintPair();
+      refreshSwapBalance();
+      refreshSwapPrices();
+      quoteSwap();
     }
 
     function tokenBy(mint) {
+      if (swapPair.in && swapPair.in.mint === mint) return swapPair.in;
+      if (swapPair.out && swapPair.out.mint === mint) return swapPair.out;
       return (swapTokens || []).find(function (t) { return t.mint === mint; });
     }
 
@@ -3616,29 +3798,20 @@
     }
 
     function flipSwap() {
-      const a = document.getElementById('sw-in-token');
-      const b = document.getElementById('sw-out-token');
-      const tmp = a.value; a.value = b.value; b.value = tmp;
-      onSwapPairChange();
-    }
-
-    function onSwapPairChange() {
-      const a = document.getElementById('sw-in-token');
-      const b = document.getElementById('sw-out-token');
-      // picking the same token on both sides is a dead end; push the other side
-      if (a.value === b.value) {
-        const other = swapTokens.find(function (t) { return t.mint !== a.value; });
-        b.value = other.mint;
-      }
+      const tmp = swapPair.in;
+      swapPair.in = swapPair.out;
+      swapPair.out = tmp;
+      paintPair();
       refreshSwapBalance();
+      refreshSwapPrices();
       quoteSwap();
     }
 
     async function refreshSwapBalance() {
       const el = document.getElementById('sw-bal');
-      const mint = document.getElementById('sw-in-token').value;
+      if (!el || !swapPair.in) return;
+      const mint = swapPair.in.mint;
       if (!Wallet.pubkey) { el.textContent = ''; return; }
-      const t = tokenBy(mint);
       try {
         const { Connection, PublicKey } = w3();
         const conn = new Connection(HELIUS_RPC, 'confirmed');
@@ -3651,7 +3824,7 @@
           ui = info ? Number(info.value.uiAmount) : null;
         }
         if (ui === null) { el.textContent = ''; el.onclick = null; return; }
-        el.textContent = 'Balance ' + ui.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + t.symbol;
+        el.textContent = 'Balance ' + ui.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + swapPair.in.symbol;
         el.style.cursor = 'pointer';
         el.onclick = function () {
           // leave a little SOL behind for fees, or the swap cannot be paid for
@@ -3663,33 +3836,33 @@
     }
 
     async function quoteSwap() {
-      const inMint = document.getElementById('sw-in-token').value;
-      const outMint = document.getElementById('sw-out-token').value;
+      const tIn = swapPair.in;
+      const tOut = swapPair.out;
       const raw = parseFloat(document.getElementById('sw-in-amount').value);
       const go = document.getElementById('sw-go');
       const detail = document.getElementById('sw-detail');
       const msg = document.getElementById('sw-msg');
       msg.textContent = '';
       msg.className = 'sw-msg';
+      paintUsd();
 
       if (!raw || raw <= 0) {
         swapQuote = null;
         document.getElementById('sw-out-amount').value = '';
+        document.getElementById('sw-out-usd').textContent = '';
         detail.hidden = true;
         go.disabled = true;
         go.textContent = 'Enter an amount';
         return;
       }
 
-      const tIn = tokenBy(inMint);
-      const tOut = tokenBy(outMint);
       const amount = Math.round(raw * Math.pow(10, tIn.decimals));
       const seq = ++swapSeq;
       document.getElementById('sw-quoting').textContent = 'Finding the best route…';
       go.disabled = true;
 
       try {
-        const res = await fetch(POINTS_API + '/api/swap/quote?in=' + inMint + '&out=' + outMint +
+        const res = await fetch(POINTS_API + '/api/swap/quote?in=' + tIn.mint + '&out=' + tOut.mint +
           '&amount=' + amount + '&slippage=' + swapSlippage);
         const d = await res.json();
         if (seq !== swapSeq) return;   // a newer keystroke already won
@@ -3700,6 +3873,7 @@
         const out = Number(d.quote.outAmount) / Math.pow(10, tOut.decimals);
         const min = Number(d.quote.otherAmountThreshold) / Math.pow(10, tOut.decimals);
         document.getElementById('sw-out-amount').value = out.toLocaleString(undefined, { maximumFractionDigits: 6 });
+        paintUsd();
 
         const rate = out / raw;
         document.getElementById('sw-rate').textContent =
@@ -3738,6 +3912,28 @@
       }
     }
 
+    /// Points are worked out server-side from what the chain says was spent, so
+    /// this call only nudges it — nothing here decides the number.
+    async function awardSwapPoints(signature, msg) {
+      if (!FoxPoints.token) {
+        msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Sign in to earn Fox Points on swaps.</span>';
+        return;
+      }
+      try {
+        const r = await FoxPoints.api('/api/swap/award', { method: 'POST', body: { signature: signature } });
+        if (!r || r.error) return;
+        if (r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
+        if (r.awarded > 0) {
+          msg.innerHTML += ' <strong>+' + r.awarded + ' Fox Points</strong>';
+        } else if (r.cappedOut) {
+          msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Daily points cap reached.</span>';
+        } else if (r.note) {
+          msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">' + escapeHtml(r.note) + '</span>';
+        }
+        renderLeaderboard();
+      } catch (e) { /* the swap succeeded; points are a bonus */ }
+    }
+
     async function doSwap() {
       const go = document.getElementById('sw-go');
       const msg = document.getElementById('sw-msg');
@@ -3771,6 +3967,7 @@
         msg.className = 'sw-msg good';
         msg.innerHTML = 'Swapped. <a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
           '" target="_blank" rel="noopener noreferrer">View it</a>';
+        awardSwapPoints(sig, msg);
         document.getElementById('sw-in-amount').value = '';
         document.getElementById('sw-out-amount').value = '';
         document.getElementById('sw-detail').hidden = true;

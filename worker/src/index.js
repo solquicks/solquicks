@@ -312,6 +312,8 @@ const RATE_RULES = [
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/swap/search', '/api/swap/prices'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
@@ -427,7 +429,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-1';
+const BUILD = 'swap-2';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -910,6 +912,75 @@ function swapFeeAccount(inputMint, outputMint) {
   return null;
 }
 
+
+// Points for swapping. Volume-based rather than per-swap, because per-swap
+// pays someone to bounce a dollar back and forth all day; a daily ceiling and
+// a floor on swap size make farming cost more in fees than it earns.
+const SWAP_POINTS_PER_USD = 1;
+const SWAP_POINTS_DAILY_CAP = 500;
+const SWAP_POINTS_MIN_USD = 5;
+
+async function jupPrices(mints) {
+  const ids = mints.filter(Boolean).join(',');
+  if (!ids) return {};
+  const res = await fetch(JUP + '/price/v3?ids=' + ids);
+  if (!res.ok) return {};
+  return await res.json().catch(function () { return {}; });
+}
+
+/// What the wallet actually gave up in this transaction, in dollars. Read off
+/// the chain rather than taken from the client, which could claim any number.
+async function swapValueUsd(env, signature, wallet) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 's', method: 'getTransaction',
+      params: [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]
+    })
+  });
+  const data = await res.json();
+  const tx = data && data.result;
+  if (!tx) return { ok: false, error: 'swap not found yet' };
+  if (tx.meta && tx.meta.err) return { ok: false, error: 'that swap failed' };
+
+  const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
+  if (keys[0] !== wallet) return { ok: false, error: 'that swap was not signed by your wallet' };
+
+  const spent = {};
+  const own = function (rows) {
+    const out = {};
+    for (const r of rows || []) {
+      if (r.owner !== wallet) continue;
+      out[r.mint] = Number((r.uiTokenAmount && r.uiTokenAmount.uiAmount) || 0);
+    }
+    return out;
+  };
+  const pre = own(tx.meta.preTokenBalances);
+  const post = own(tx.meta.postTokenBalances);
+  for (const mint of new Set(Object.keys(pre).concat(Object.keys(post)))) {
+    const delta = (post[mint] || 0) - (pre[mint] || 0);
+    if (delta < 0) spent[mint] = -delta;
+  }
+
+  // native SOL, with the network fee excluded so it is not counted as volume
+  const solDelta = ((tx.meta.postBalances[0] || 0) - (tx.meta.preBalances[0] || 0) + (tx.meta.fee || 0)) / 1e9;
+  if (solDelta < 0) spent['So11111111111111111111111111111111111111112'] = -solDelta;
+
+  const mints = Object.keys(spent);
+  if (!mints.length) return { ok: false, error: 'no swap found in that transaction' };
+
+  const prices = await jupPrices(mints);
+  let best = 0;
+  for (const mint of mints) {
+    const p = prices[mint] && Number(prices[mint].usdPrice);
+    if (!p) continue;
+    best = Math.max(best, spent[mint] * p);
+  }
+  if (!best) return { ok: false, error: 'could not value that swap' };
+  return { ok: true, usd: best };
+}
+
 // ── USDC ────────────────────────────────────────────────────────────────────
 // Priced in dollars, so USDC is the honest default: what the invoice says is
 // what lands, with no exchange-rate risk between quote and payment. SOL stays
@@ -1320,7 +1391,8 @@ export default {
           path === '/api/banner/creative' || path === '/api/booking/watch' ||
           path === '/api/banner/watch' || path === '/api/swap/tokens' ||
           path === '/api/swap/quote' || path === '/api/swap/build' ||
-          path === '/api/swap/earned' ||
+          path === '/api/swap/earned' || path === '/api/swap/search' ||
+          path === '/api/swap/prices' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1672,6 +1744,50 @@ export default {
           staked: (staked && staked.n) || 0,
           firstSeen: pos.first_seen
         });
+      }
+
+      if (path === '/api/swap/search' && request.method === 'GET') {
+        const q = String(url.searchParams.get('q') || '').trim().slice(0, 80);
+        if (q.length < 2) return json(request, env, { tokens: [] });
+        const res = await fetch(JUP + '/tokens/v2/search?query=' + encodeURIComponent(q));
+        if (!res.ok) return json(request, env, { tokens: [] });
+        const list = await res.json().catch(function () { return []; });
+
+        // Trimmed to what a person needs to judge a token before swapping into
+        // it. The warnings are the point of this endpoint, not a footnote.
+        return json(request, env, {
+          tokens: (Array.isArray(list) ? list : []).slice(0, 20).map(function (t) {
+            const a = t.audit || {};
+            const warnings = [];
+            if (!t.isVerified) warnings.push('Not on Jupiter\u2019s verified list');
+            if (a.mintAuthorityDisabled === false) warnings.push('The team can still mint more');
+            if (a.freezeAuthorityDisabled === false) warnings.push('The team can freeze your tokens');
+            if (Number(a.topHoldersPercentage) > 50) {
+              warnings.push('Top 10 wallets hold ' + Math.round(a.topHoldersPercentage) + '%');
+            }
+            if (Number(t.liquidity) < 25000) warnings.push('Thin liquidity — expect slippage');
+            return {
+              mint: t.id, symbol: t.symbol, name: t.name, decimals: t.decimals,
+              icon: t.icon || null, verified: !!t.isVerified,
+              score: t.organicScoreLabel || null,
+              usdPrice: t.usdPrice || null,
+              liquidity: t.liquidity || 0,
+              warnings: warnings
+            };
+          })
+        });
+      }
+
+      if (path === '/api/swap/prices' && request.method === 'GET') {
+        const ids = String(url.searchParams.get('ids') || '').split(',')
+          .filter(isWallet).slice(0, 10);
+        if (!ids.length) return json(request, env, { prices: {} });
+        const out = await jupPrices(ids);
+        const prices = {};
+        for (const [mint, v] of Object.entries(out || {})) {
+          if (v && v.usdPrice) prices[mint] = Number(v.usdPrice);
+        }
+        return json(request, env, { prices: prices });
       }
 
       // ── public: swap ──
@@ -2271,6 +2387,47 @@ export default {
 
         return json(request, env, {
           claimed: { kind: reward.kind, amount: reward.amount, detail: reward.detail },
+          player: await playerState(env, wallet)
+        });
+      }
+
+      if (path === '/api/swap/award' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const signature = String(body.signature || '').trim();
+        if (!signature) return json(request, env, { error: 'which swap?' }, 400);
+
+        const seen = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?')
+          .bind(signature).first();
+        if (seen) return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
+
+        const v = await swapValueUsd(env, signature, wallet);
+        if (!v.ok) return json(request, env, { error: v.error }, 400);
+        if (v.usd < SWAP_POINTS_MIN_USD) {
+          return json(request, env, {
+            awarded: 0,
+            note: 'Swaps under $' + SWAP_POINTS_MIN_USD + ' do not earn points.',
+            player: await playerState(env, wallet)
+          });
+        }
+
+        const dayStart = Date.now() - (Date.now() % 86400000);
+        const today = await env.DB.prepare(
+          'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
+        ).bind(wallet, dayStart).first();
+        const used = (today && today.n) || 0;
+        const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
+        const points = Math.min(room, Math.floor(v.usd * SWAP_POINTS_PER_USD));
+
+        await env.DB.prepare(
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'
+        ).bind(signature, wallet, v.usd, points, Date.now()).run();
+        if (points > 0) await addPoints(env, wallet, 'swap', points);
+
+        return json(request, env, {
+          awarded: points,
+          usd: Math.round(v.usd * 100) / 100,
+          cappedOut: points === 0 && room === 0,
+          dailyCap: SWAP_POINTS_DAILY_CAP,
           player: await playerState(env, wallet)
         });
       }
