@@ -1084,6 +1084,77 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
+    /* ── COLLECTION ANALYTICS ── */
+    .an-wrap { margin-top: 26px; text-align: left; }
+    .an-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+    }
+    .an-title { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 800; color: #F3EFFA; }
+    .an-stamp { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8E85A6; }
+    .an-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    @media (max-width: 520px) { .an-grid { grid-template-columns: repeat(2, 1fr); } }
+    .an-cell { background: rgba(0,0,0,0.2); border-radius: 10px; padding: 12px 10px; text-align: center; }
+    .an-val {
+      font-family: 'Baloo 2', sans-serif; font-size: 1.4rem; font-weight: 800;
+      color: #FFD98A; line-height: 1.1; font-variant-numeric: tabular-nums;
+    }
+    .an-key { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: #BCB2D2; margin-top: 2px; }
+    .an-delta { font-size: 0.7rem; font-weight: 800; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .an-up { color: #7BD8A6; }
+    .an-down { color: #F5907F; }
+    .an-flat { color: #8E85A6; }
+
+    .an-panel {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(243,239,250,0.16);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-top: 10px;
+    }
+    .an-sub { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #BCB2D2; margin-bottom: 10px; }
+
+    /* distribution: one bar, three bands — the shape is the point */
+    .an-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: rgba(0,0,0,0.25); }
+    .an-bar span { display: block; height: 100%; }
+    .an-seg-w { background: #F0821E; }
+    .an-seg-m { background: #FFD98A; }
+    .an-seg-s { background: #7E6FB0; }
+    .an-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+    .an-leg { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; font-weight: 700; color: #D6CFE6; }
+    .an-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    .an-spark { width: 100%; height: 64px; display: block; }
+    .an-empty { font-size: 0.8rem; color: #8E85A6; font-weight: 600; line-height: 1.5; }
+
+    .an-rank { display: flex; flex-direction: column; gap: 6px; }
+    .an-row { display: flex; align-items: center; gap: 10px; font-size: 0.82rem; }
+    .an-pos { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: #FFD98A; width: 22px; flex-shrink: 0; }
+    .an-who { font-family: monospace; color: #D6CFE6; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .an-n { font-weight: 800; color: #F3EFFA; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+    .an-look { display: flex; gap: 8px; margin-top: 8px; }
+    .an-look input {
+      flex: 1; min-width: 0;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(243,239,250,0.2);
+      border-radius: 999px;
+      color: #F3EFFA;
+      font-family: monospace;
+      font-size: 0.8rem;
+      padding: 9px 14px;
+    }
+    .an-look input::placeholder { color: #7A7290; }
+    .an-look button {
+      appearance: none; border: none; cursor: pointer;
+      background: var(--orange); color: #fff;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.82rem;
+      border-radius: 999px; padding: 9px 18px; flex-shrink: 0;
+    }
+    .an-look button:hover { background: var(--orange-deep); }
+    .an-result { font-size: 0.84rem; color: #D6CFE6; margin-top: 10px; line-height: 1.55; }
+    .an-result strong { color: #FFD98A; }
+
     /* ── QUARTERLY MISSION ── */
     .mission-card {
       background: linear-gradient(160deg, rgba(240,130,30,0.14), rgba(255,255,255,0.05));
@@ -1581,6 +1652,53 @@
           <div id="mission-rewards"></div>
         </div>
 
+        <div class="an-wrap" id="an-wrap" hidden>
+          <div class="an-head">
+            <div class="an-title">The Collection</div>
+            <div class="an-stamp" id="an-stamp"></div>
+          </div>
+
+          <div class="an-grid">
+            <div class="an-cell"><div class="an-val" id="an-holders">–</div><div class="an-key">Holders</div></div>
+            <div class="an-cell"><div class="an-val" id="an-supply">–</div><div class="an-key">Rangers</div></div>
+            <div class="an-cell">
+              <div class="an-val" id="an-floor">–</div><div class="an-key">Floor</div>
+              <div class="an-delta" id="an-floor-delta"></div>
+            </div>
+            <div class="an-cell"><div class="an-val" id="an-avg">–</div><div class="an-key">Avg held</div></div>
+          </div>
+
+          <div class="an-panel">
+            <div class="an-sub">Who holds them</div>
+            <div class="an-bar">
+              <span class="an-seg-w" id="an-seg-w" style="width:0%"></span>
+              <span class="an-seg-m" id="an-seg-m" style="width:0%"></span>
+              <span class="an-seg-s" id="an-seg-s" style="width:0%"></span>
+            </div>
+            <div class="an-legend" id="an-legend"></div>
+          </div>
+
+          <div class="an-panel">
+            <div class="an-sub">Floor, last 90 days</div>
+            <svg class="an-spark" id="an-spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Floor price history"></svg>
+            <div class="an-empty" id="an-spark-note"></div>
+          </div>
+
+          <div class="an-panel">
+            <div class="an-sub" id="an-part-sub">Taking part</div>
+            <div class="an-rank" id="an-stakers"></div>
+          </div>
+
+          <div class="an-panel">
+            <div class="an-sub">Look up a wallet</div>
+            <div class="an-look">
+              <input id="an-addr" placeholder="Paste a Solana address" spellcheck="false" autocomplete="off">
+              <button onclick="lookupWallet()">Check</button>
+            </div>
+            <div class="an-result" id="an-result"></div>
+          </div>
+        </div>
+
         <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Point accrual runs off-chain while the on-chain program is in build.</p>
       <p class="moon-note" id="moon-devnet" hidden style="color:#FFD98A">⚠︎ DEVNET MODE — staking runs against the test network. Real Rangers are untouched.</p>
       </div>
@@ -1679,6 +1797,15 @@
       }
       // Trigger stat counters when Media tab opens
       if (tab === 'media') { runStatCounters(); }
+      // Collection stats are public, so they load on tab open rather than
+      // waiting for a wallet. Refresh only while the tab is actually showing.
+      if (tab === 'moon') {
+        loadAnalytics();
+        if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
+      } else if (analyticsTimer) {
+        clearInterval(analyticsTimer);
+        analyticsTimer = null;
+      }
       // Remember the tab so a refresh lands where you were, and so a tab can
       // be linked to directly.
       try { history.replaceState(null, '', tab === 'links' ? location.pathname : '#' + tab); } catch (e) {}
@@ -1695,6 +1822,11 @@
       const btn = tabButton(name);
       if (btn) switchTab(name, btn);
     })();
+
+    // an Enter press in the lookup box should search
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' && ev.target && ev.target.id === 'an-addr') lookupWallet();
+    });
 
     window.addEventListener('hashchange', function () {
       const btn = tabButton(location.hash.replace('#', '') || 'links');
@@ -2898,6 +3030,154 @@
         saveStake({ staked: true, since: Date.now(), count: count, banked: 0 });
       }
       renderStaking();
+    }
+
+    // ── COLLECTION ANALYTICS ──
+    // Public: no wallet needed. Snapshots come from the Worker cron, so this
+    // is a cheap read however many people are looking.
+    let analyticsTimer = null;
+
+    async function loadAnalytics() {
+      const wrap = document.getElementById('an-wrap');
+      if (!wrap) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/analytics');
+        if (!res.ok) return;
+        renderAnalytics(await res.json());
+      } catch (e) { /* leave whatever was last rendered */ }
+    }
+
+    function renderAnalytics(a) {
+      const wrap = document.getElementById('an-wrap');
+      if (!a || (!a.holders && !a.floor)) return;
+      wrap.hidden = false;
+
+      if (a.holders) {
+        document.getElementById('an-holders').textContent = a.holders.total.toLocaleString();
+        document.getElementById('an-supply').textContent = a.holders.supply.toLocaleString();
+        document.getElementById('an-avg').textContent = a.holders.avg.toFixed(2);
+        document.getElementById('an-stamp').textContent = 'updated ' + ago(a.holders.updatedAt);
+
+        const h = a.holders;
+        const wallets = h.whales + h.mid + h.small;
+        const pctOf = function (n) { return wallets ? (n / wallets) * 100 : 0; };
+        document.getElementById('an-seg-w').style.width = pctOf(h.whales) + '%';
+        document.getElementById('an-seg-m').style.width = pctOf(h.mid) + '%';
+        document.getElementById('an-seg-s').style.width = pctOf(h.small) + '%';
+        document.getElementById('an-legend').innerHTML =
+          leg('#F0821E', h.whales, '10+ Rangers') +
+          leg('#FFD98A', h.mid, '3–9') +
+          leg('#7E6FB0', h.small, '1–2') +
+          '<span class="an-leg" style="color:#8E85A6">Top 10 wallets hold ' + h.top10Pct + '%</span>';
+      }
+
+      if (a.floor) {
+        document.getElementById('an-floor').textContent = a.floor.sol + ' ◎';
+        const d = document.getElementById('an-floor-delta');
+        const ch = a.floor.change24h;
+        if (ch === null || ch === undefined) {
+          d.textContent = '24h —';
+          d.className = 'an-delta an-flat';
+        } else {
+          d.textContent = (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + Math.abs(ch) + '% 24h';
+          d.className = 'an-delta ' + (ch > 0 ? 'an-up' : ch < 0 ? 'an-down' : 'an-flat');
+        }
+        drawSpark(a.floor);
+      }
+
+      const p = a.participation || {};
+      document.getElementById('an-part-sub').textContent =
+        p.shareOfHolders !== null && p.shareOfHolders !== undefined
+          ? 'Taking part — ' + p.shareOfHolders + '% of holders have Rangers locked'
+          : 'Taking part';
+      const list = document.getElementById('an-stakers');
+      list.innerHTML = (p.top || []).length === 0
+        ? '<div class="an-empty">Nobody has locked a Ranger yet. Be first.</div>'
+        : p.top.map(function (r, i) {
+            return '<div class="an-row"><span class="an-pos">' + (i + 1) + '</span>' +
+              '<span class="an-who">' + escapeHtml(shortWallet(r.wallet)) + '</span>' +
+              '<span class="an-n">' + r.rangers + '</span></div>';
+          }).join('');
+    }
+
+    function leg(color, n, label) {
+      return '<span class="an-leg"><span class="an-dot" style="background:' + color + '"></span>' +
+        '<strong>' + n + '</strong>&nbsp;' + label + '</span>';
+    }
+
+    // A line needs at least two readings. Until then say so plainly rather
+    // than drawing a flat line that looks like data.
+    function drawSpark(floor) {
+      const svg = document.getElementById('an-spark');
+      const note = document.getElementById('an-spark-note');
+      const pts = floor.history || [];
+
+      if (pts.length < 2) {
+        svg.innerHTML = '';
+        svg.style.display = 'none';
+        const since = floor.collectingSince
+          ? new Date(floor.collectingSince).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })
+          : 'today';
+        note.textContent = 'No history yet — nobody was recording this, so the chart starts from ' +
+          since + '. One reading a day from here; a real line in about a week.';
+        return;
+      }
+
+      svg.style.display = 'block';
+      const vals = pts.map(function (p) { return p.sol; });
+      const lo = Math.min.apply(null, vals);
+      const hi = Math.max.apply(null, vals);
+      const span = hi - lo || 1;
+      const W = 300, H = 64, pad = 6;
+      const x = function (i) { return (i / (pts.length - 1)) * W; };
+      const y = function (v) { return H - pad - ((v - lo) / span) * (H - pad * 2); };
+
+      const line = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.sol).toFixed(1); }).join(' ');
+      const area = line + ' L' + W + ' ' + H + ' L0 ' + H + ' Z';
+      const last = pts[pts.length - 1];
+
+      svg.innerHTML =
+        '<defs><linearGradient id="an-fade" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="#F0821E" stop-opacity="0.35"/>' +
+        '<stop offset="100%" stop-color="#F0821E" stop-opacity="0"/></linearGradient></defs>' +
+        '<path d="' + area + '" fill="url(#an-fade)"/>' +
+        '<path d="' + line + '" fill="none" stroke="#FFD98A" stroke-width="2" ' +
+        'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+        '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + y(last.sol).toFixed(1) + '" r="3" fill="#FFD98A"/>';
+
+      note.textContent = pts.length + ' days recorded · low ' + lo + ' ◎ · high ' + hi + ' ◎' +
+        (floor.change7d !== null && floor.change7d !== undefined ? ' · ' + floor.change7d + '% over 7 days' : '');
+    }
+
+    async function lookupWallet() {
+      const el = document.getElementById('an-addr');
+      const out = document.getElementById('an-result');
+      const who = (el.value || '').trim();
+      if (!who) { out.textContent = ''; return; }
+      out.textContent = 'Looking…';
+      try {
+        const res = await fetch(POINTS_API + '/api/analytics/wallet?address=' + encodeURIComponent(who));
+        const r = await res.json();
+        if (r.error) { out.textContent = r.error; return; }
+        if (!r.holds) {
+          out.innerHTML = 'That wallet holds <strong>no</strong> Moon Rangers.';
+          return;
+        }
+        out.innerHTML = 'Holds <strong>' + r.holds + '</strong> Ranger' + (r.holds === 1 ? '' : 's') +
+          ' · ranked <strong>#' + r.rank + '</strong> of ' + r.ofHolders + ' holders' +
+          (r.staked ? ' · <strong>' + r.staked + '</strong> locked' : ' · none locked');
+      } catch (e) {
+        out.textContent = 'Could not reach the collection data just now.';
+      }
+    }
+
+    function ago(ts) {
+      const mins = Math.round((Date.now() - ts) / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + ' min ago';
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      return Math.round(hrs / 24) + 'd ago';
     }
 
     // ── QUARTERLY MISSIONS ──
