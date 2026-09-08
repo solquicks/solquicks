@@ -1138,6 +1138,13 @@
       padding: 16px 18px;
       text-align: left;
     }
+    .bk-ad-flash { animation: bkflash 1.6s ease-out; }
+    @keyframes bkflash {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(240,130,30,0); }
+      25% { box-shadow: 0 0 0 6px rgba(240,130,30,0.35); }
+    }
+    @media (prefers-reduced-motion: reduce) { .bk-ad-flash { animation: none; } }
+
     .bk-weeks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
     .bk-week {
       appearance: none; cursor: pointer; background: var(--cream);
@@ -1761,7 +1768,6 @@
     <div id="panel-book" class="panel">
       <div class="bk-intro">
         <div class="bk-lead">Book The Fox</div>
-        <p class="bk-sub">Hire me to host, speak, or make something for you. Pay in SOL, get a reference, and I'll be in touch to confirm the details.</p>
       </div>
       <div class="bk-list" id="bk-list"></div>
       <div id="bk-flow" hidden></div>
@@ -2280,8 +2286,13 @@
         ev.preventDefault();
         const btn = tabButton('book');
         if (btn) switchTab('book', btn);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        setTimeout(function () { startAdBooking(); }, 250);
+        setTimeout(function () {
+          const card = document.querySelector('.bk-ad');
+          if (!card) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.classList.add('bk-ad-flash');
+          setTimeout(function () { card.classList.remove('bk-ad-flash'); }, 1600);
+        }, 300);
       });
     }
 
