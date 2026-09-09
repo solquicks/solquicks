@@ -430,7 +430,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-5';
+const BUILD = 'swap-6';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2446,7 +2446,7 @@ export default {
         ).bind(wallet, dayStart).first();
         const used = (today && today.n) || 0;
         const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
-        const points = Math.min(room, Math.floor(v.usd * SWAP_POINTS_PER_USD));
+        const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
 
         await env.DB.prepare(
           'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'

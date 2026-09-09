@@ -3960,7 +3960,7 @@
         el.textContent = 'none under $' + swapPointsInfo.minUsd;
         return;
       }
-      const earn = Math.min(swapPointsInfo.remaining, Math.floor(usd * swapPointsInfo.perUsd));
+      const earn = Math.min(swapPointsInfo.remaining, Math.round(usd * swapPointsInfo.perUsd));
       el.textContent = earn > 0
         ? '+' + earn.toLocaleString()
         : 'daily cap reached';
