@@ -1115,6 +1115,45 @@
     .pay-tab.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(46,36,64,0.14); }
     .pay-tab:hover:not(.on) { color: var(--ink-soft); }
 
+    /* ── CLEANUP ── */
+    .cl-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+    .cl-cell { background: var(--cream); border-radius: 12px; padding: 12px 8px; text-align: center; }
+    .cl-val { font-family: 'Baloo 2', sans-serif; font-size: 1.4rem; font-weight: 800; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .cl-val.good { color: var(--green); }
+    .cl-key { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+
+    .cl-block { border-top: 2px solid #EFE9F2; padding-top: 16px; margin-top: 16px; }
+    .cl-block-title { font-family: 'Baloo 2', sans-serif; font-size: 1.05rem; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
+    .cl-block-note { font-size: 0.82rem; color: var(--ink-soft); line-height: 1.5; margin: 0 0 12px; }
+
+    .cl-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; margin-bottom: 12px; }
+    .cl-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--cream); border: 2px solid transparent; border-radius: 12px; padding: 9px 11px;
+    }
+    .cl-row.on { border-color: var(--crimson); background: #FCEEF1; }
+    .cl-row input[type=checkbox] { width: 17px; height: 17px; flex-shrink: 0; accent-color: var(--crimson); cursor: pointer; }
+    .cl-row img { width: 30px; height: 30px; border-radius: 7px; flex-shrink: 0; background: #E7DFD2; object-fit: cover; }
+    .cl-body { flex: 1; min-width: 0; }
+    .cl-name { font-weight: 800; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cl-sub { font-size: 0.73rem; color: var(--muted); }
+    .cl-tagline { font-size: 0.71rem; font-weight: 800; margin-top: 1px; }
+    .cl-tag-nft { color: var(--crimson); }
+    .cl-tag-unpriced { color: #B5821F; }
+    .cl-worth { font-weight: 800; font-size: 0.84rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+    .cl-confirm { background: #FCEEF1; border: 2px solid var(--crimson); border-radius: 14px; padding: 14px; }
+    .cl-confirm-note { font-size: 0.84rem; color: var(--ink); line-height: 1.5; margin: 0 0 10px; }
+    .cl-confirm-note strong { color: var(--crimson); }
+    .cl-confirm input {
+      width: 100%; box-sizing: border-box; background: #fff;
+      border: 2px solid var(--crimson); border-radius: 10px; padding: 9px 12px;
+      font-family: monospace; font-size: 0.9rem; margin-bottom: 10px;
+    }
+    .sw-go.cl-danger { background: var(--crimson); margin-top: 0; }
+    .sw-go.cl-danger:hover:not(:disabled) { background: #B8365E; }
+    .cl-none { font-size: 0.84rem; color: var(--muted); text-align: center; padding: 14px; }
+
     /* ── SWAP ── */
     .sw-card {
       background: var(--card); border: var(--line); border-radius: var(--radius);
@@ -1706,6 +1745,11 @@
           <span><span class="nav-item-name">Swap</span>
           <span class="nav-item-note">Trade tokens, routed by Jupiter</span></span>
         </button>
+        <button class="nav-item" role="menuitem" data-tab="cleanup" onclick="switchTab('cleanup',this)">
+          <span class="nav-item-icon" aria-hidden="true">♻</span>
+          <span><span class="nav-item-name">Cleanup</span>
+          <span class="nav-item-note">Reclaim rent from dead token accounts</span></span>
+        </button>
         <button class="nav-item" role="menuitem" data-tab="store" onclick="switchTab('store',this)">
           <span class="nav-item-icon" aria-hidden="true">◉</span>
           <span><span class="nav-item-name">Store</span>
@@ -1943,6 +1987,52 @@
       </div>
       <div class="bk-list" id="bk-list"></div>
       <div id="bk-flow" hidden></div>
+    </div>
+
+    <!-- CLEANUP PANEL -->
+    <div id="panel-cleanup" class="panel">
+      <div class="bk-intro">
+        <div class="bk-lead">Wallet Cleanup</div>
+        <p class="bk-sub">Every token account in your wallet holds a small SOL deposit. Close the dead ones and it comes back.</p>
+      </div>
+
+      <div class="sw-card">
+        <div id="cl-start">
+          <button class="sw-go" id="cl-scan" onclick="scanCleanup()">Scan my wallet</button>
+          <p class="sw-foot">Read-only. Nothing is closed until you choose what to close.</p>
+        </div>
+
+        <div id="cl-results" hidden>
+          <div class="cl-summary" id="cl-summary"></div>
+
+          <div class="cl-block" id="cl-empty-block" hidden>
+            <div class="cl-block-title">Empty accounts</div>
+            <p class="cl-block-note" id="cl-empty-note"></p>
+            <button class="sw-go" id="cl-close-btn" onclick="closeEmpty()">Close them</button>
+          </div>
+
+          <div class="cl-block" id="cl-wsol-block" hidden>
+            <div class="cl-block-title">Wrapped SOL</div>
+            <p class="cl-block-note" id="cl-wsol-note"></p>
+            <button class="sw-go" id="cl-wsol-btn" onclick="unwrapSol()">Unwrap and close</button>
+          </div>
+
+          <div class="cl-block" id="cl-held-block" hidden>
+            <div class="cl-block-title">Still holding something</div>
+            <p class="cl-block-note">Closing these means <strong>burning what is inside first</strong>. That cannot be undone.
+              Nothing here is selected for you.</p>
+            <div class="cl-list" id="cl-held"></div>
+            <div class="cl-confirm" id="cl-confirm" hidden>
+              <p class="cl-confirm-note" id="cl-confirm-note"></p>
+              <input id="cl-confirm-input" placeholder="Type BURN to confirm" autocomplete="off" spellcheck="false">
+              <button class="sw-go cl-danger" id="cl-burn-btn" onclick="burnSelected()" disabled>Burn and close</button>
+            </div>
+          </div>
+
+          <div class="sw-msg" id="cl-msg"></div>
+          <button class="bk-back" onclick="resetCleanup()" style="margin-top:12px">← Scan again</button>
+        </div>
+      </div>
     </div>
 
     <!-- SWAP PANEL -->
@@ -3647,6 +3737,359 @@
       return b58encode(bytes);
     }
 
+    // ── WALLET CLEANUP ──
+    // Closing an empty account is free money. Burning a token that still has a
+    // balance is permanent. The code keeps those apart at every step, and
+    // nothing that still holds anything is ever selected on the user's behalf.
+    var clScan = null;
+    var clSelected = {};
+    const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+    const CLOSE_PER_TX = 18;
+    const BURN_PER_TX = 8;
+
+    async function scanCleanup() {
+      const btn = document.getElementById('cl-scan');
+      const msg = document.getElementById('cl-msg');
+      if (!Wallet.pubkey) {
+        try { await connectWallet(); } catch (e) { /* closed the picker */ }
+        if (!Wallet.pubkey) return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Reading your wallet…';
+      try {
+        const res = await fetch(POINTS_API + '/api/cleanup/scan?wallet=' + encodeURIComponent(Wallet.pubkey));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        clScan = d;
+        clSelected = {};
+        renderCleanup();
+        document.getElementById('cl-start').hidden = true;
+        document.getElementById('cl-results').hidden = false;
+      } catch (e) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = e.message || 'Could not read that wallet.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Scan my wallet';
+      }
+    }
+
+    function resetCleanup() {
+      document.getElementById('cl-start').hidden = false;
+      document.getElementById('cl-results').hidden = true;
+      document.getElementById('cl-msg').textContent = '';
+      clScan = null;
+      clSelected = {};
+    }
+
+    function clEmptyAccounts() {
+      return clScan.accounts.filter(function (a) { return a.empty && !a.frozen; });
+    }
+    function clHeldAccounts() {
+      return clScan.accounts.filter(function (a) {
+        return !a.empty && !a.frozen && a.mint !== WSOL_MINT;
+      });
+    }
+
+    /// Wrapped SOL is its own case: closing the account unwraps the balance
+    /// back to SOL. Burning it would destroy real money, so it never appears
+    /// in the burn list at all.
+    function clWrappedSol() {
+      return clScan.accounts.filter(function (a) {
+        return a.mint === WSOL_MINT && !a.empty && !a.frozen;
+      });
+    }
+
+    function renderCleanup() {
+      const empty = clEmptyAccounts();
+      const held = clHeldAccounts();
+      const frozen = clScan.accounts.filter(function (a) { return a.frozen; });
+      const gross = clScan.emptyRentLamports / 1e9;
+      const keep = gross * (1 - clScan.feePct / 100);
+
+      document.getElementById('cl-summary').innerHTML =
+        '<div class="cl-cell"><div class="cl-val">' + empty.length + '</div><div class="cl-key">Empty accounts</div></div>' +
+        '<div class="cl-cell"><div class="cl-val good">' + keep.toFixed(4) + '</div><div class="cl-key">SOL you get back</div></div>' +
+        '<div class="cl-cell"><div class="cl-val">' + held.length + '</div><div class="cl-key">Still holding</div></div>';
+
+      const emptyBlock = document.getElementById('cl-empty-block');
+      if (empty.length) {
+        emptyBlock.hidden = false;
+        document.getElementById('cl-empty-note').innerHTML =
+          '<strong>' + empty.length + '</strong> account' + (empty.length === 1 ? '' : 's') +
+          ' hold nothing at all. Closing them destroys no tokens and returns <strong>' +
+          gross.toFixed(4) + ' SOL</strong> of rent — you keep <strong>' + keep.toFixed(4) +
+          ' SOL</strong> after the ' + clScan.feePct + '% fee.' +
+          (frozen.length ? ' ' + frozen.length + ' frozen account' + (frozen.length === 1 ? ' is' : 's are') +
+            ' skipped — those cannot be closed.' : '');
+        const txs = Math.ceil(empty.length / CLOSE_PER_TX);
+        document.getElementById('cl-close-btn').textContent =
+          'Close ' + empty.length + ' and reclaim ' + keep.toFixed(4) + ' ◎' +
+          (txs > 1 ? ' (' + txs + ' signatures)' : '');
+      } else {
+        emptyBlock.hidden = true;
+      }
+
+      const wsol = clWrappedSol();
+      const wsolBlock = document.getElementById('cl-wsol-block');
+      if (wsol.length) {
+        const total = wsol.reduce(function (s, a) { return s + a.amount; }, 0);
+        wsolBlock.hidden = false;
+        document.getElementById('cl-wsol-note').innerHTML =
+          'You have <strong>' + total.toLocaleString(undefined, { maximumFractionDigits: 6 }) +
+          ' wrapped SOL</strong>. Closing that account unwraps it straight back to ordinary SOL — ' +
+          'nothing is burned and nothing is lost.';
+        document.getElementById('cl-wsol-btn').textContent =
+          'Unwrap ' + total.toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ◎ and close';
+      } else {
+        wsolBlock.hidden = true;
+      }
+
+      const heldBlock = document.getElementById('cl-held-block');
+      heldBlock.hidden = held.length === 0;
+      document.getElementById('cl-held').innerHTML = held.length === 0
+        ? '<div class="cl-none">Nothing here still holds a balance.</div>'
+        : held.map(function (a) {
+            const label = a.name || a.symbol || (a.mint.slice(0, 6) + '…' + a.mint.slice(-4));
+            const tags = [];
+            if (a.nft) tags.push('<span class="cl-tag-nft">NFT — likely a collectible</span>');
+            if (!a.priced) tags.push('<span class="cl-tag-unpriced">No price found — that does not mean worthless</span>');
+            return '<label class="cl-row" data-acct="' + a.account + '">' +
+              '<input type="checkbox" onchange="toggleBurn(this,\'' + a.account + '\')">' +
+              (a.image ? '<img src="' + escapeHtml(a.image) + '" alt="" loading="lazy">' : '<img alt="">') +
+              '<span class="cl-body"><span class="cl-name">' + escapeHtml(label) + '</span>' +
+              '<span class="cl-sub">' + a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 }) + '</span>' +
+              (tags.length ? '<span class="cl-tagline">' + tags.join(' · ') + '</span>' : '') +
+              '</span>' +
+              '<span class="cl-worth">' + (a.priced ? '$' + a.usd.toFixed(2) : '—') + '</span></label>';
+          }).join('');
+      paintBurnConfirm();
+    }
+
+    function toggleBurn(box, account) {
+      const row = box.closest('.cl-row');
+      if (box.checked) clSelected[account] = true; else delete clSelected[account];
+      row.classList.toggle('on', box.checked);
+      paintBurnConfirm();
+    }
+
+    /// The confirm step spells out exactly what is about to be destroyed, in
+    /// dollars where a price exists and by name where it does not.
+    function paintBurnConfirm() {
+      const wrap = document.getElementById('cl-confirm');
+      const chosen = clHeldAccounts().filter(function (a) { return clSelected[a.account]; });
+      if (!chosen.length) { wrap.hidden = true; return; }
+      wrap.hidden = false;
+
+      const nfts = chosen.filter(function (a) { return a.nft; });
+      const unpriced = chosen.filter(function (a) { return !a.priced; });
+      const worth = chosen.reduce(function (s, a) { return s + (a.usd || 0); }, 0);
+      const rent = chosen.reduce(function (s, a) { return s + a.rent; }, 0) / 1e9;
+      const keep = rent * (1 - clScan.feePct / 100);
+
+      let note = 'You are about to <strong>permanently destroy ' + chosen.length + ' holding' +
+        (chosen.length === 1 ? '' : 's') + '</strong> to reclaim ' + keep.toFixed(4) + ' SOL.';
+      if (worth > 0) note += ' Known value being burned: <strong>$' + worth.toFixed(2) + '</strong>.';
+      if (nfts.length) note += ' <strong>' + nfts.length + ' of them look like collectibles.</strong>';
+      if (unpriced.length) {
+        note += ' ' + unpriced.length + ' have no price — that usually means illiquid, not worthless.';
+      }
+      document.getElementById('cl-confirm-note').innerHTML = note;
+
+      const input = document.getElementById('cl-confirm-input');
+      const btn = document.getElementById('cl-burn-btn');
+      btn.disabled = input.value.trim().toUpperCase() !== 'BURN';
+      input.oninput = function () {
+        btn.disabled = input.value.trim().toUpperCase() !== 'BURN';
+      };
+    }
+
+    // ── instructions ──
+    function closeAccountIx(account, owner, programId) {
+      const { PublicKey, TransactionInstruction } = w3();
+      return new TransactionInstruction({
+        programId: new PublicKey(programId),
+        keys: [
+          { pubkey: new PublicKey(account), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(owner), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(owner), isSigner: true, isWritable: false }
+        ],
+        data: new Uint8Array([9])   // CloseAccount
+      });
+    }
+
+    /// BurnChecked rather than Burn: it carries the mint and decimals, so a
+    /// mismatch fails on chain instead of burning the wrong amount.
+    function burnCheckedIx(account, mint, owner, amountRaw, decimals, programId) {
+      const { PublicKey, TransactionInstruction } = w3();
+      const data = new Uint8Array(10);
+      data[0] = 15;
+      new DataView(data.buffer).setBigUint64(1, BigInt(amountRaw), true);
+      data[9] = decimals;
+      return new TransactionInstruction({
+        programId: new PublicKey(programId),
+        keys: [
+          { pubkey: new PublicKey(account), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(mint), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(owner), isSigner: true, isWritable: false }
+        ],
+        data: data
+      });
+    }
+
+    async function sendCleanupBatch(instructions, feeLamports) {
+      const { PublicKey, Transaction, SystemProgram } = w3();
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+      const connection = rpc();
+      const from = new PublicKey(Wallet.pubkey);
+
+      const tx = new Transaction();
+      instructions.forEach(function (ix) { tx.add(ix); });
+      // the fee rides in the same transaction as the closes that fund it, so it
+      // is impossible to take a cut of rent that was never reclaimed
+      if (feeLamports > 0 && clScan.treasury) {
+        tx.add(SystemProgram.transfer({
+          fromPubkey: from,
+          toPubkey: new PublicKey(clScan.treasury),
+          lamports: feeLamports
+        }));
+      }
+      tx.feePayer = from;
+      const latest = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = latest.blockhash;
+
+      let signature;
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        signature = signatureOf(res.signature || res);
+      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        signature = await connection.sendRawTransaction(signed.serialize());
+      } else if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: provider.w.accounts[0],
+          chain: 'solana:mainnet',
+          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        signature = signatureOf(out[0].signature);
+      } else {
+        throw new Error('This wallet cannot send transactions.');
+      }
+
+      await connection.confirmTransaction(
+        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+        'confirmed'
+      );
+      return signature;
+    }
+
+    async function closeEmpty() {
+      const btn = document.getElementById('cl-close-btn');
+      const msg = document.getElementById('cl-msg');
+      msg.className = 'sw-msg';
+      msg.textContent = '';
+      const accounts = clEmptyAccounts();
+      if (!accounts.length) return;
+
+      btn.disabled = true;
+      let done = 0;
+      try {
+        for (let i = 0; i < accounts.length; i += CLOSE_PER_TX) {
+          const batch = accounts.slice(i, i + CLOSE_PER_TX);
+          btn.textContent = 'Signing ' + (Math.floor(i / CLOSE_PER_TX) + 1) + ' of ' +
+            Math.ceil(accounts.length / CLOSE_PER_TX) + '…';
+          const ixs = batch.map(function (a) {
+            return closeAccountIx(a.account, Wallet.pubkey, a.programId);
+          });
+          const rent = batch.reduce(function (s, a) { return s + a.rent; }, 0);
+          await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
+          done += batch.length;
+        }
+        msg.className = 'sw-msg good';
+        msg.textContent = 'Closed ' + done + ' accounts. The rent is back in your wallet.';
+        await scanCleanup();
+      } catch (e) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = (done ? 'Closed ' + done + ' before stopping. ' : '') + friendlySwapError(e);
+        btn.disabled = false;
+        btn.textContent = 'Try again';
+      }
+    }
+
+    /// No burn instruction here — CloseAccount alone unwraps and returns it.
+    async function unwrapSol() {
+      const btn = document.getElementById('cl-wsol-btn');
+      const msg = document.getElementById('cl-msg');
+      msg.className = 'sw-msg';
+      msg.textContent = '';
+      const accounts = clWrappedSol();
+      if (!accounts.length) return;
+      btn.disabled = true;
+      btn.textContent = 'Check your wallet…';
+      try {
+        const ixs = accounts.map(function (a) {
+          return closeAccountIx(a.account, Wallet.pubkey, a.programId);
+        });
+        // the fee is on the rent deposit only, never on the unwrapped balance
+        const rent = accounts.reduce(function (s, a) { return s + a.rent; }, 0);
+        await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
+        msg.className = 'sw-msg good';
+        msg.textContent = 'Unwrapped. The SOL is back in your wallet.';
+        await scanCleanup();
+      } catch (e) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = friendlySwapError(e);
+        btn.disabled = false;
+      }
+    }
+
+    async function burnSelected() {
+      const btn = document.getElementById('cl-burn-btn');
+      const msg = document.getElementById('cl-msg');
+      msg.className = 'sw-msg';
+      msg.textContent = '';
+      const chosen = clHeldAccounts().filter(function (a) { return clSelected[a.account]; });
+      if (!chosen.length) return;
+
+      btn.disabled = true;
+      let done = 0;
+      let lastSig = null;
+      try {
+        for (let i = 0; i < chosen.length; i += BURN_PER_TX) {
+          const batch = chosen.slice(i, i + BURN_PER_TX);
+          btn.textContent = 'Signing ' + (Math.floor(i / BURN_PER_TX) + 1) + ' of ' +
+            Math.ceil(chosen.length / BURN_PER_TX) + '…';
+          const ixs = [];
+          batch.forEach(function (a) {
+            ixs.push(burnCheckedIx(a.account, a.mint, Wallet.pubkey, a.amountRaw, a.decimals, a.programId));
+            ixs.push(closeAccountIx(a.account, Wallet.pubkey, a.programId));
+          });
+          const rent = batch.reduce(function (s, a) { return s + a.rent; }, 0);
+          lastSig = await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
+          done += batch.length;
+          if (FoxPoints.token && lastSig) {
+            FoxPoints.api('/api/cleanup/award', { method: 'POST', body: { signature: lastSig } })
+              .then(function (r) {
+                if (r && r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
+              }).catch(function () {});
+          }
+        }
+        msg.className = 'sw-msg good';
+        msg.textContent = 'Burned and closed ' + done + '. Rent is back in your wallet.';
+        document.getElementById('cl-confirm-input').value = '';
+        await scanCleanup();
+      } catch (e) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = (done ? 'Finished ' + done + ' before stopping. ' : '') + friendlySwapError(e);
+        btn.disabled = false;
+        btn.textContent = 'Burn and close';
+      }
+    }
+
+    // ── WALLET CLEANUP END ──
     // ── SWAP ──
     // Quotes and route-building go through the Worker, so the browser never
     // talks to Jupiter directly and the CSP stays as tight as it is.

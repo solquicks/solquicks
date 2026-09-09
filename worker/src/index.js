@@ -314,6 +314,8 @@ const RATE_RULES = [
   { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/cleanup/scan'], name: 'cleanscan', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/cleanup/award'], name: 'cleanaward', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
@@ -430,7 +432,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-7';
+const BUILD = 'cleanup-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -984,6 +986,119 @@ async function swapValueUsd(env, signature, wallet) {
   return { ok: true, usd: best };
 }
 
+
+// ── WALLET CLEANUP ──────────────────────────────────────────────────────────
+// Two very different jobs behind one screen. Closing an EMPTY token account
+// destroys nothing and hands back the rent Solana was holding. Burning a token
+// that still has a balance destroys it forever. The scan below exists mainly to
+// keep those two apart, and to make sure nothing valuable is ever mistaken for
+// junk — an unpriced token is suspicious, not worthless.
+
+const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const CLEANUP_FEE_PCT = 10;
+const BURN_POINTS_PER_ACCOUNT = 5;
+const BURN_POINTS_DAILY_CAP = 250;
+
+async function rpcCall(env, method, params) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 'c', method: method, params: params })
+  });
+  if (!res.ok) throw new Error('rpc ' + res.status);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'rpc error');
+  return data.result;
+}
+
+async function scanWallet(env, wallet) {
+  const rows = [];
+  for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    const res = await rpcCall(env, 'getTokenAccountsByOwner',
+      [wallet, { programId: programId }, { encoding: 'jsonParsed' }]);
+    for (const item of (res && res.value) || []) {
+      const info = item.account.data.parsed.info;
+      const amountRaw = info.tokenAmount.amount;
+      const decimals = info.tokenAmount.decimals;
+      rows.push({
+        account: item.pubkey,
+        mint: info.mint,
+        programId: programId,
+        amountRaw: amountRaw,
+        amount: Number(info.tokenAmount.uiAmount || 0),
+        decimals: decimals,
+        frozen: info.state === 'frozen',
+        rent: item.account.lamports,
+        // one unit with no decimal places is the shape of an NFT
+        nftShaped: amountRaw === '1' && decimals === 0
+      });
+    }
+  }
+
+  // metadata and prices for anything that still holds something — the whole
+  // point is to know what you would be destroying
+  const held = rows.filter(function (r) { return r.amountRaw !== '0'; });
+  const mints = Array.from(new Set(held.map(function (r) { return r.mint; }))).slice(0, 200);
+
+  let assets = {};
+  if (mints.length) {
+    try {
+      const batch = await rpcCall(env, 'getAssetBatch', { ids: mints });
+      for (const a of batch || []) {
+        if (!a || !a.id) continue;
+        const c = a.content || {};
+        assets[a.id] = {
+          name: (c.metadata && c.metadata.name) || null,
+          symbol: (c.metadata && c.metadata.symbol) || null,
+          image: (c.links && c.links.image) || null,
+          collection: ((a.grouping || []).find(function (g) { return g.group_key === 'collection'; }) || {}).group_value || null
+        };
+      }
+    } catch (e) { await logError(env, 'cleanup.assets', (e && e.message) || e); }
+  }
+
+  let prices = {};
+  if (mints.length) {
+    try { prices = await jupPrices(mints.slice(0, 50)); } catch (e) { /* unpriced is handled below */ }
+  }
+
+  let emptyRent = 0;
+  const out = rows.map(function (r) {
+    const meta = assets[r.mint] || {};
+    const price = prices[r.mint] && Number(prices[r.mint].usdPrice);
+    const usd = price ? r.amount * price : null;
+    if (r.amountRaw === '0' && !r.frozen) emptyRent += r.rent;
+    return {
+      account: r.account,
+      mint: r.mint,
+      programId: r.programId,
+      amountRaw: r.amountRaw,
+      amount: r.amount,
+      decimals: r.decimals,
+      frozen: r.frozen,
+      rent: r.rent,
+      empty: r.amountRaw === '0',
+      nft: r.nftShaped,
+      name: meta.name || null,
+      symbol: meta.symbol || null,
+      image: meta.image || null,
+      collection: meta.collection || null,
+      usd: usd === null ? null : Math.round(usd * 100) / 100,
+      priced: price ? true : false
+    };
+  });
+
+  return {
+    accounts: out,
+    rentPerAccount: 2039280,
+    emptyRentLamports: emptyRent,
+    feePct: CLEANUP_FEE_PCT,
+    treasury: env.TREASURY_WALLET || null,
+    pointsPerBurn: BURN_POINTS_PER_ACCOUNT
+  };
+}
+
 // ── USDC ────────────────────────────────────────────────────────────────────
 // Priced in dollars, so USDC is the honest default: what the invoice says is
 // what lands, with no exchange-rate risk between quote and payment. SOL stays
@@ -1396,6 +1511,7 @@ export default {
           path === '/api/swap/quote' || path === '/api/swap/build' ||
           path === '/api/swap/earned' || path === '/api/swap/search' ||
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
+          path === '/api/cleanup/scan' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -1805,6 +1921,18 @@ export default {
           if (v && v.usdPrice) prices[mint] = Number(v.usdPrice);
         }
         return json(request, env, { prices: prices });
+      }
+
+      if (path === '/api/cleanup/scan' && request.method === 'GET') {
+        const who = url.searchParams.get('wallet');
+        if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
+        if (!env.HELIUS_API_KEY) return json(request, env, { error: 'unavailable' }, 503);
+        try {
+          return json(request, env, await scanWallet(env, who));
+        } catch (e) {
+          await logError(env, 'cleanup.scan', (e && e.message) || e);
+          return json(request, env, { error: 'could not read that wallet just now' }, 502);
+        }
       }
 
       // ── public: swap ──
@@ -2410,6 +2538,50 @@ export default {
 
       // What a swap of this size would be worth, so the page can say it up front
       // rather than after the fact.
+      // Points for burning, paid per account actually closed — verified from
+      // the transaction, not from what the page claims.
+      if (path === '/api/cleanup/award' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const signature = String(body.signature || '').trim();
+        if (!signature) return json(request, env, { error: 'which transaction?' }, 400);
+
+        const seen = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?')
+          .bind(signature).first();
+        if (seen) return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
+
+        let closed = 0;
+        try {
+          const tx = await rpcCall(env, 'getTransaction',
+            [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]);
+          if (!tx) return json(request, env, { error: 'not found yet' }, 400);
+          if (tx.meta && tx.meta.err) return json(request, env, { error: 'that transaction failed' }, 400);
+          const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
+          if (keys[0] !== wallet) return json(request, env, { error: 'that was not signed by your wallet' }, 400);
+          for (const ix of tx.transaction.message.instructions || []) {
+            const t = ix.parsed && ix.parsed.type;
+            if (t === 'burn' || t === 'burnChecked') closed++;
+          }
+        } catch (e) {
+          await logError(env, 'cleanup.award', (e && e.message) || e);
+          return json(request, env, { error: 'could not read that transaction' }, 502);
+        }
+        if (closed === 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
+
+        const dayStart = Date.now() - (Date.now() % 86400000);
+        const today = await env.DB.prepare(
+          "SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type = 'burn' AND ts >= ?"
+        ).bind(wallet, dayStart).first();
+        const room = Math.max(0, BURN_POINTS_DAILY_CAP - ((today && today.n) || 0));
+        const points = Math.min(room, closed * BURN_POINTS_PER_ACCOUNT);
+
+        await env.DB.prepare(
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'
+        ).bind(signature, wallet, 0, points, Date.now()).run();
+        if (points > 0) await addPoints(env, wallet, 'burn', points);
+
+        return json(request, env, { awarded: points, burned: closed, player: await playerState(env, wallet) });
+      }
+
       if (path === '/api/swap/points' && request.method === 'GET') {
         const dayStart = Date.now() - (Date.now() % 86400000);
         const today = await env.DB.prepare(
