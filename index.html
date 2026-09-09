@@ -3424,10 +3424,13 @@
         const locked = stakedMints.indexOf(r.mint) >= 0;
         const on = picked.has(r.mint);
         const cls = 'rg-card' + (locked ? ' locked' : (on ? ' picked' : ''));
-        // Served through our own worker: IPFS gateways 403 browser User-Agents,
-        // so the artwork has to be fetched server-side. Falls back to a glyph.
-        const img = '<img class="rg-img" src="' + POINTS_API + '/api/img?mint=' +
-          encodeURIComponent(r.mint) + '" alt="" loading="lazy" onerror="rgImgFallback(this)"/>';
+        // Straight from Arweave, which serves browsers happily and spreads the
+        // load. Falls through the CDN copy, the original, our proxy, then a glyph.
+        const chain = [r.image, r.imageAlt, POINTS_API + '/api/img?mint=' + encodeURIComponent(r.mint)]
+          .filter(Boolean);
+        const img = '<img class="rg-img" src="' + escapeHtml(chain[0] || '') + '" alt="" loading="lazy" ' +
+          'data-fallbacks="' + escapeHtml(JSON.stringify(chain.slice(1))) + '" ' +
+          'onerror="rgImgFallback(this)"/>';
         return '<div class="' + cls + '" data-mint="' + escapeHtml(r.mint) + '" ' +
           (locked ? '' : 'onclick="togglePick(this)"') + '>' +
           img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' +
@@ -3454,7 +3457,16 @@
       }
     }
 
+    /// Walks the remaining sources before giving up on a Ranger's artwork.
     function rgImgFallback(img) {
+      let left = [];
+      try { left = JSON.parse(img.getAttribute('data-fallbacks') || '[]'); } catch (e) {}
+      if (left.length) {
+        const next = left.shift();
+        img.setAttribute('data-fallbacks', JSON.stringify(left));
+        img.src = next;
+        return;
+      }
       const div = document.createElement('div');
       div.className = 'rg-img rg-fallback';
       div.textContent = '\ud83c\udf15';

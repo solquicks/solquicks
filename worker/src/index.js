@@ -166,8 +166,12 @@ async function fetchFirstAvailable(src) {
       redirect: 'follow',
       signal: AbortSignal.timeout(11000)
     }).then(function (res) {
-      if (res.ok && (res.headers.get('Content-Type') || '').startsWith('image/')) return res;
-      throw new Error('no image');
+      const type = res.headers.get('Content-Type') || '';
+      // Gateways mislabel image bytes as octet-stream often enough that
+      // requiring image/* loses real artwork. Reject only what is obviously an
+      // error page.
+      if (res.ok && !type.startsWith('text/')) return res;
+      throw new Error('not an image');
     });
   });
   // AbortSignal is not reliably honoured for subrequests here, so cap the whole
@@ -452,7 +456,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'arweave-img-2';
+const BUILD = 'arweave-img-4';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1550,7 +1554,7 @@ export default {
         if (!env.HELIUS_API_KEY) return new Response('unavailable', { status: 503 });
 
         const cache = caches.default;
-        const cacheKey = new Request(new URL('/api/img?v=2&mint=' + mint, url.origin).toString(), request);
+        const cacheKey = new Request(new URL('/api/img?v=' + BUILD + '&mint=' + mint, url.origin).toString(), request);
         const hit = await cache.match(cacheKey);
         if (hit) return hit;
 
