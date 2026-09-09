@@ -430,7 +430,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-6';
+const BUILD = 'swap-7';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -893,7 +893,10 @@ const SWAP_FEE_BPS = 20;
 // account is chosen per quote. A pair touching neither simply pays no fee.
 const SWAP_FEE_ACCOUNTS = {
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn',
-  'So11111111111111111111111111111111111111112': 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp'
+  'So11111111111111111111111111111111111111112': 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
+  // Token-2022, so its referral account lives under that program — which is
+  // exactly the mismatch that broke this pair before it existed.
+  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo': '6aypgwsaHJmrVA6gS2EH5d67EmQyoSR2CRtoX33iZ9Yh'
 };
 
 const SWAP_TOKENS = [
@@ -902,7 +905,8 @@ const SWAP_TOKENS = [
   { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT', name: 'Tether', decimals: 6 },
   { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', name: 'Jupiter', decimals: 6 },
   { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', name: 'Bonk', decimals: 5 },
-  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', name: 'dogwifhat', decimals: 6 }
+  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', name: 'dogwifhat', decimals: 6 },
+  { mint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo', symbol: 'PYUSD', name: 'PayPal USD', decimals: 6 }
 ];
 
 /// On an ExactIn swap Jupiter denominates the platform fee in the OUTPUT
