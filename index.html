@@ -1116,6 +1116,14 @@
     .pay-tab:hover:not(.on) { color: var(--ink-soft); }
 
     /* ── CLEANUP ── */
+    .cl-safe { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--green); background: #E6F2EC; padding: 2px 7px; border-radius: 4px; margin-left: 7px; vertical-align: middle; }
+    .cl-danger-tag { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--crimson); background: #FCE3EA; padding: 2px 7px; border-radius: 4px; margin-left: 7px; vertical-align: middle; }
+    .cl-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .cl-selall { background: none; border: none; cursor: pointer; color: var(--orange-deep); font-family: inherit; font-size: 0.78rem; font-weight: 800; padding: 0; }
+    .cl-selall:hover { text-decoration: underline; }
+    .cl-count { font-size: 0.74rem; color: var(--muted); font-weight: 700; }
+    .cl-empty-note-none { font-size: 0.84rem; color: var(--muted); }
+
     .cl-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
     .cl-cell { background: var(--cream); border-radius: 12px; padding: 12px 8px; text-align: center; }
     .cl-val { font-family: 'Baloo 2', sans-serif; font-size: 1.4rem; font-weight: 800; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -2005,28 +2013,45 @@
         <div id="cl-results" hidden>
           <div class="cl-summary" id="cl-summary"></div>
 
-          <div class="cl-block" id="cl-empty-block" hidden>
-            <div class="cl-block-title">Empty accounts</div>
+          <div class="cl-block" id="cl-empty-block">
+            <div class="cl-block-title">Empty accounts <span class="cl-safe">nothing is destroyed</span></div>
             <p class="cl-block-note" id="cl-empty-note"></p>
             <button class="sw-go" id="cl-close-btn" onclick="closeEmpty()">Close them</button>
           </div>
 
           <div class="cl-block" id="cl-wsol-block" hidden>
-            <div class="cl-block-title">Wrapped SOL</div>
+            <div class="cl-block-title">Wrapped SOL <span class="cl-safe">unwraps, does not burn</span></div>
             <p class="cl-block-note" id="cl-wsol-note"></p>
             <button class="sw-go" id="cl-wsol-btn" onclick="unwrapSol()">Unwrap and close</button>
           </div>
 
-          <div class="cl-block" id="cl-held-block" hidden>
-            <div class="cl-block-title">Still holding something</div>
-            <p class="cl-block-note">Closing these means <strong>burning what is inside first</strong>. That cannot be undone.
-              Nothing here is selected for you.</p>
-            <div class="cl-list" id="cl-held"></div>
-            <div class="cl-confirm" id="cl-confirm" hidden>
-              <p class="cl-confirm-note" id="cl-confirm-note"></p>
-              <input id="cl-confirm-input" placeholder="Type BURN to confirm" autocomplete="off" spellcheck="false">
-              <button class="sw-go cl-danger" id="cl-burn-btn" onclick="burnSelected()" disabled>Burn and close</button>
-            </div>
+          <div class="cl-block" id="cl-nft-block" hidden>
+            <div class="cl-block-title">NFTs <span class="cl-danger-tag">burning is permanent</span></div>
+            <p class="cl-block-note">Collectibles. Closing one means <strong>destroying it</strong> to reclaim
+              about 0.002 SOL. Check what it is worth before you tick anything.</p>
+            <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('nft')">Select all</button>
+              <span class="cl-count" id="cl-nft-count"></span></div>
+            <div class="cl-list" id="cl-nfts"></div>
+          </div>
+
+          <div class="cl-block" id="cl-tok-block" hidden>
+            <div class="cl-block-title">Tokens <span class="cl-danger-tag">burning is permanent</span></div>
+            <p class="cl-block-note">Fungible balances. Worth checking the value column — a token with no
+              price is usually illiquid rather than worthless.</p>
+            <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('tok')">Select all</button>
+              <span class="cl-count" id="cl-tok-count"></span></div>
+            <div class="cl-list" id="cl-toks"></div>
+          </div>
+
+          <div class="cl-block" id="cl-frozen-block" hidden>
+            <div class="cl-block-title">Cannot be closed</div>
+            <p class="cl-block-note" id="cl-frozen-note"></p>
+          </div>
+
+          <div class="cl-confirm" id="cl-confirm" hidden>
+            <p class="cl-confirm-note" id="cl-confirm-note"></p>
+            <input id="cl-confirm-input" placeholder="Type BURN to confirm" autocomplete="off" spellcheck="false">
+            <button class="sw-go cl-danger" id="cl-burn-btn" onclick="burnSelected()" disabled>Burn and close</button>
           </div>
 
           <div class="sw-msg" id="cl-msg"></div>
@@ -3843,36 +3868,52 @@
       });
     }
 
+    function clNfts() {
+      return clScan.accounts.filter(function (a) {
+        return !a.empty && !a.frozen && a.nft && a.mint !== WSOL_MINT;
+      });
+    }
+    function clTokens() {
+      return clScan.accounts.filter(function (a) {
+        return !a.empty && !a.frozen && !a.nft && a.mint !== WSOL_MINT;
+      });
+    }
+
     function renderCleanup() {
       const empty = clEmptyAccounts();
-      const held = clHeldAccounts();
+      const nfts = clNfts();
+      const toks = clTokens();
       const frozen = clScan.accounts.filter(function (a) { return a.frozen; });
       const gross = clScan.emptyRentLamports / 1e9;
       const keep = gross * (1 - clScan.feePct / 100);
 
       document.getElementById('cl-summary').innerHTML =
+        '<div class="cl-cell"><div class="cl-val' + (keep > 0 ? ' good' : '') + '">' + keep.toFixed(4) +
+        '</div><div class="cl-key">SOL to reclaim</div></div>' +
         '<div class="cl-cell"><div class="cl-val">' + empty.length + '</div><div class="cl-key">Empty accounts</div></div>' +
-        '<div class="cl-cell"><div class="cl-val good">' + keep.toFixed(4) + '</div><div class="cl-key">SOL you get back</div></div>' +
-        '<div class="cl-cell"><div class="cl-val">' + held.length + '</div><div class="cl-key">Still holding</div></div>';
+        '<div class="cl-cell"><div class="cl-val">' + (nfts.length + toks.length) +
+        '</div><div class="cl-key">Holding something</div></div>';
 
-      const emptyBlock = document.getElementById('cl-empty-block');
+      // ── empty accounts ──
+      const note = document.getElementById('cl-empty-note');
+      const closeBtn = document.getElementById('cl-close-btn');
       if (empty.length) {
-        emptyBlock.hidden = false;
-        document.getElementById('cl-empty-note').innerHTML =
-          '<strong>' + empty.length + '</strong> account' + (empty.length === 1 ? '' : 's') +
+        note.innerHTML = '<strong>' + empty.length + '</strong> account' + (empty.length === 1 ? '' : 's') +
           ' hold nothing at all. Closing them destroys no tokens and returns <strong>' +
           gross.toFixed(4) + ' SOL</strong> of rent — you keep <strong>' + keep.toFixed(4) +
-          ' SOL</strong> after the ' + clScan.feePct + '% fee.' +
-          (frozen.length ? ' ' + frozen.length + ' frozen account' + (frozen.length === 1 ? ' is' : 's are') +
-            ' skipped — those cannot be closed.' : '');
+          ' SOL</strong> after the ' + clScan.feePct + '% fee.';
+        closeBtn.hidden = false;
         const txs = Math.ceil(empty.length / CLOSE_PER_TX);
-        document.getElementById('cl-close-btn').textContent =
-          'Close ' + empty.length + ' and reclaim ' + keep.toFixed(4) + ' ◎' +
+        closeBtn.textContent = 'Close ' + empty.length + ' and reclaim ' + keep.toFixed(4) + ' ◎' +
           (txs > 1 ? ' (' + txs + ' signatures)' : '');
       } else {
-        emptyBlock.hidden = true;
+        // saying "none" beats hiding the section and looking broken
+        note.innerHTML = '<span class="cl-empty-note-none">This wallet has no empty accounts — nothing to reclaim here. ' +
+          'Try another wallet if you have one with old, sold-out tokens.</span>';
+        closeBtn.hidden = true;
       }
 
+      // ── wrapped SOL ──
       const wsol = clWrappedSol();
       const wsolBlock = document.getElementById('cl-wsol-block');
       if (wsol.length) {
@@ -3888,25 +3929,54 @@
         wsolBlock.hidden = true;
       }
 
-      const heldBlock = document.getElementById('cl-held-block');
-      heldBlock.hidden = held.length === 0;
-      document.getElementById('cl-held').innerHTML = held.length === 0
-        ? '<div class="cl-none">Nothing here still holds a balance.</div>'
-        : held.map(function (a) {
-            const label = a.name || a.symbol || (a.mint.slice(0, 6) + '…' + a.mint.slice(-4));
-            const tags = [];
-            if (a.nft) tags.push('<span class="cl-tag-nft">NFT — likely a collectible</span>');
-            if (!a.priced) tags.push('<span class="cl-tag-unpriced">No price found — that does not mean worthless</span>');
-            return '<label class="cl-row" data-acct="' + a.account + '">' +
-              '<input type="checkbox" onchange="toggleBurn(this,\'' + a.account + '\')">' +
-              (a.image ? '<img src="' + escapeHtml(a.image) + '" alt="" loading="lazy">' : '<img alt="">') +
-              '<span class="cl-body"><span class="cl-name">' + escapeHtml(label) + '</span>' +
-              '<span class="cl-sub">' + a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 }) + '</span>' +
-              (tags.length ? '<span class="cl-tagline">' + tags.join(' · ') + '</span>' : '') +
-              '</span>' +
-              '<span class="cl-worth">' + (a.priced ? '$' + a.usd.toFixed(2) : '—') + '</span></label>';
-          }).join('');
+      document.getElementById('cl-nft-block').hidden = nfts.length === 0;
+      document.getElementById('cl-tok-block').hidden = toks.length === 0;
+      document.getElementById('cl-nfts').innerHTML = nfts.map(clRow).join('');
+      document.getElementById('cl-toks').innerHTML = toks.map(clRow).join('');
+      document.getElementById('cl-nft-count').textContent = nfts.length + ' collectible' + (nfts.length === 1 ? '' : 's');
+      const priced = toks.filter(function (t) { return t.priced; }).length;
+      document.getElementById('cl-tok-count').textContent =
+        toks.length + ' token' + (toks.length === 1 ? '' : 's') +
+        (priced ? ' · ' + priced + ' with a known price' : '');
+
+      // ── what cannot be closed, and why ──
+      const frozenBlock = document.getElementById('cl-frozen-block');
+      frozenBlock.hidden = frozen.length === 0;
+      if (frozen.length) {
+        document.getElementById('cl-frozen-note').innerHTML =
+          '<strong>' + frozen.length + '</strong> account' + (frozen.length === 1 ? ' is' : 's are') +
+          ' frozen — usually staked, listed for sale, or locked by another service. ' +
+          'They cannot be closed until they are released, so they are left out entirely.';
+      }
       paintBurnConfirm();
+    }
+
+    function clRow(a) {
+      const label = a.name || a.symbol || (a.mint.slice(0, 6) + '…' + a.mint.slice(-4));
+      const tags = [];
+      if (a.nft) tags.push('<span class="cl-tag-nft">Collectible</span>');
+      if (!a.priced) tags.push('<span class="cl-tag-unpriced">No price found — that does not mean worthless</span>');
+      const checked = clSelected[a.account] ? ' checked' : '';
+      return '<label class="cl-row' + (clSelected[a.account] ? ' on' : '') + '" data-acct="' + a.account + '">' +
+        '<input type="checkbox"' + checked + ' onchange="toggleBurn(this,\'' + a.account + '\')">' +
+        (a.image ? '<img src="' + escapeHtml(a.image) + '" alt="" loading="lazy">' : '<img alt="">') +
+        '<span class="cl-body"><span class="cl-name">' + escapeHtml(label) + '</span>' +
+        '<span class="cl-sub">' + a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 }) + '</span>' +
+        (tags.length ? '<span class="cl-tagline">' + tags.join(' · ') + '</span>' : '') +
+        '</span>' +
+        '<span class="cl-worth">' + (a.priced ? '$' + a.usd.toFixed(2) : '—') + '</span></label>';
+    }
+
+    /// Select-all is per group, and it toggles — so it is as easy to clear a
+    /// mistaken selection as to make one.
+    function selectGroup(which) {
+      const list = which === 'nft' ? clNfts() : clTokens();
+      const allOn = list.every(function (a) { return clSelected[a.account]; });
+      list.forEach(function (a) {
+        if (allOn) delete clSelected[a.account];
+        else clSelected[a.account] = true;
+      });
+      renderCleanup();
     }
 
     function toggleBurn(box, account) {
