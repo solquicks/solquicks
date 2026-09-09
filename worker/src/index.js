@@ -134,6 +134,15 @@ const IPFS_GATEWAYS = [
 /// whichever answers first. Racing rather than trying in turn matters: a stalled
 /// gateway would otherwise add its whole timeout to the wait, and a genuinely
 /// missing file would cost the sum of them all before falling back.
+// Arweave has the same problem IPFS does: one gateway can be slow or busy, and
+// arweave.net in particular lags on freshly uploaded data. Race several.
+const ARWEAVE_GATEWAYS = [
+  'https://arweave.net/',
+  'https://vilenarios.com/',
+  'https://frostor.xyz/',
+  'https://permagate.io/'
+];
+
 async function fetchFirstAvailable(src) {
   const candidates = [src];
   const m = src.match(/\/ipfs\/(.+)$/);
@@ -143,11 +152,19 @@ async function fetchFirstAvailable(src) {
       if (!candidates.includes(alt)) candidates.push(alt);
     }
   }
+  // arweave.net and www.arweave.net both appear in this collection
+  const ar = src.match(/^https?:\/\/(?:www\.)?arweave\.net\/(.+)$/);
+  if (ar) {
+    for (const gw of ARWEAVE_GATEWAYS) {
+      const alt = gw + ar[1];
+      if (!candidates.includes(alt)) candidates.push(alt);
+    }
+  }
   const attempts = candidates.map(function (url) {
     return fetch(url, {
       headers: { Accept: 'image/*' },
       redirect: 'follow',
-      signal: AbortSignal.timeout(9000)
+      signal: AbortSignal.timeout(11000)
     }).then(function (res) {
       if (res.ok && (res.headers.get('Content-Type') || '').startsWith('image/')) return res;
       throw new Error('no image');
@@ -155,7 +172,7 @@ async function fetchFirstAvailable(src) {
   });
   // AbortSignal is not reliably honoured for subrequests here, so cap the whole
   // race with an explicit deadline: a missing file must not stall the page.
-  const deadline = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 6000); });
+  const deadline = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 12000); });
   return Promise.race([
     Promise.any(attempts).catch(function () { return null; }),
     deadline
@@ -435,7 +452,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'seeker-treasury-1';
+const BUILD = 'arweave-img-2';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1533,7 +1550,7 @@ export default {
         if (!env.HELIUS_API_KEY) return new Response('unavailable', { status: 503 });
 
         const cache = caches.default;
-        const cacheKey = new Request(new URL('/api/img?mint=' + mint, url.origin).toString(), request);
+        const cacheKey = new Request(new URL('/api/img?v=2&mint=' + mint, url.origin).toString(), request);
         const hit = await cache.match(cacheKey);
         if (hit) return hit;
 
@@ -1564,7 +1581,7 @@ export default {
           // cache the miss briefly so a missing file is not re-fetched on every view
           const miss = new Response('artwork unavailable', {
             status: 502,
-            headers: { 'Cache-Control': 'public, max-age=300', 'Access-Control-Allow-Origin': '*' }
+            headers: { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }
           });
           ctx.waitUntil(cache.put(cacheKey, miss.clone()));
           return miss;
