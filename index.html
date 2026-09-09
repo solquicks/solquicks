@@ -3320,7 +3320,7 @@
         throw new Error('This wallet cannot send transactions.');
       }
 
-      await connection.confirmTransaction(signature, 'confirmed');
+      await confirmSignature(connection, signature);
       return signature;
     }
 
@@ -3604,10 +3604,7 @@
         throw new Error('This wallet cannot send transactions.');
       }
 
-      await connection.confirmTransaction(
-        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-        'confirmed'
-      );
+      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
       return signature;
     }
 
@@ -3681,10 +3678,7 @@
         throw new Error('This wallet cannot send transactions.');
       }
 
-      await connection.confirmTransaction(
-        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-        'confirmed'
-      );
+      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
       return signature;
     }
 
@@ -3704,6 +3698,43 @@
           next(url, options);
         }
       });
+    }
+
+    /// web3.js `confirmTransaction` waits on a WebSocket subscription, and the
+    /// RPC proxy does not speak WebSocket — so it never hears back and hangs
+    /// until the blockhash expires, leaving a finished swap looking stuck.
+    /// Poll over plain HTTP instead.
+    async function confirmSignature(connection, signature, lastValidBlockHeight) {
+      const deadline = Date.now() + 90000;
+      let checks = 0;
+      while (Date.now() < deadline) {
+        const res = await connection.getSignatureStatuses([signature]);
+        const status = res && res.value && res.value[0];
+        if (status) {
+          if (status.err) {
+            const e = new Error('The transaction failed on chain.');
+            e.sentSignature = signature;
+            throw e;
+          }
+          if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+            return signature;
+          }
+        }
+        // every few rounds, check the blockhash has not aged out — otherwise a
+        // dropped transaction would sit here for the full ninety seconds
+        if (lastValidBlockHeight && ++checks % 4 === 0) {
+          const height = await connection.getBlockHeight('confirmed').catch(function () { return 0; });
+          if (height && height > lastValidBlockHeight) {
+            const e = new Error('That expired before it landed. Nothing was swapped — try again.');
+            e.sentSignature = signature;
+            throw e;
+          }
+        }
+        await new Promise(function (r) { setTimeout(r, 1500); });
+      }
+      const e = new Error('Still confirming — it may well have gone through.');
+      e.sentSignature = signature;
+      throw e;
     }
 
     const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -3979,10 +4010,7 @@
         throw new Error('This wallet cannot send transactions.');
       }
 
-      await connection.confirmTransaction(
-        { signature: signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-        'confirmed'
-      );
+      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
       return signature;
     }
 
@@ -4600,14 +4628,7 @@
       // confirm against the blockhash the transaction was built with, not a
       // fresh one fetched after sending
       try {
-        await connection.confirmTransaction(
-          {
-            signature: signature,
-            blockhash: tx.message.recentBlockhash,
-            lastValidBlockHeight: lastValidBlockHeight || (await connection.getBlockHeight('confirmed')) + 150
-          },
-          'confirmed'
-        );
+        await confirmSignature(connection, signature, lastValidBlockHeight);
       } catch (e) {
         // carry the signature out so the caller can tell "maybe landed" from
         // "definitely did not"
