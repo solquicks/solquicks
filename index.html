@@ -1123,6 +1123,7 @@
       font-family: inherit; color: var(--ink-soft); text-align: center;
     }
     .cl-tab:hover { border-color: var(--orange); }
+    .cl-tab.on { box-shadow: 0 2px 0 var(--orange); }
     .cl-tab.on { background: var(--orange-soft); border-color: var(--orange); color: var(--ink); }
     .cl-tab.empty { opacity: 0.55; }
     .cl-tab-n { display: block; font-family: 'Baloo 2', sans-serif; font-size: 1.25rem; font-weight: 800; line-height: 1.1; }
@@ -1138,11 +1139,11 @@
     .cl-count { font-size: 0.74rem; color: var(--muted); font-weight: 700; }
     .cl-empty-note-none { font-size: 0.84rem; color: var(--muted); }
 
-    .cl-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
-    .cl-cell { background: var(--cream); border-radius: 12px; padding: 12px 8px; text-align: center; }
-    .cl-val { font-family: 'Baloo 2', sans-serif; font-size: 1.4rem; font-weight: 800; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .cl-summary { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 2px solid #EFE9F2; }
+    .cl-cell { display: flex; align-items: baseline; gap: 6px; }
+    .cl-val { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 800; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
     .cl-val.good { color: var(--green); }
-    .cl-key { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+    .cl-key { font-size: 0.68rem; font-weight: 700; color: var(--muted); }
 
     .cl-block { border-top: 2px solid #EFE9F2; padding-top: 16px; margin-top: 16px; }
     .cl-block-title { font-family: 'Baloo 2', sans-serif; font-size: 1.05rem; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
@@ -1166,6 +1167,7 @@
 
     .cl-confirm { background: #FCEEF1; border: 2px solid var(--crimson); border-radius: 14px; padding: 14px; }
     .cl-confirm-note { font-size: 0.84rem; color: var(--ink); line-height: 1.5; margin: 0 0 10px; }
+    .cl-where { display: block; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--crimson); margin-bottom: 5px; }
     .cl-confirm-note strong { color: var(--crimson); }
     .cl-confirm input {
       width: 100%; box-sizing: border-box; background: #fff;
@@ -4070,7 +4072,13 @@
       const rent = chosen.reduce(function (s, a) { return s + a.rent; }, 0) / 1e9;
       const keep = rent * (1 - clScan.feePct / 100);
 
-      let note = 'You are about to <strong>permanently destroy ' + chosen.length + ' holding' +
+      const inNfts = chosen.filter(function (a) { return a.nft; }).length;
+      const inToks = chosen.length - inNfts;
+      const where = [];
+      if (inToks) where.push(inToks + ' from Tokens');
+      if (inNfts) where.push(inNfts + ' from NFTs');
+      let note = '<span class="cl-where">Selected: ' + where.join(' · ') + '</span>' +
+        'You are about to <strong>permanently destroy ' + chosen.length + ' holding' +
         (chosen.length === 1 ? '' : 's') + '</strong> to reclaim ' + keep.toFixed(4) + ' SOL.';
       if (worth > 0) note += ' Known value being burned: <strong>$' + worth.toFixed(2) + '</strong>.';
       if (nfts.length) note += ' <strong>' + nfts.length + ' of them look like collectibles.</strong>';
