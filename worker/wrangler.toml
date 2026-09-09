@@ -6,8 +6,10 @@ workers_dev = true
 [vars]
 ALLOWED_ORIGINS = "https://solquicks.com,https://www.solquicks.com"
 MOON_RANGERS_COLLECTION = "5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"
-# Public address, not a secret. Booking payments are verified against it.
-TREASURY_WALLET = "6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd"
+# solquicks.skr, the Seeker hardware wallet. Public address, not a secret.
+# Stored as the resolved ADDRESS rather than the domain on purpose: a domain can
+# be transferred or repointed, and money must go somewhere fixed.
+TREASURY_WALLET = "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc"
 
 # health check every 30 minutes; alerts only when the state changes
 [triggers]
