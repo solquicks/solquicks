@@ -456,7 +456,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'arweave-img-4';
+const BUILD = 'cleanup-points-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1022,6 +1022,10 @@ async function swapValueUsd(env, signature, wallet) {
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const CLEANUP_FEE_PCT = 10;
+// Closing an empty account is the behaviour worth encouraging — it costs the
+// holder nothing and tidies the chain. Burning earns more because it is a
+// bigger commitment, but not so much more that it tempts anyone to burn.
+const CLOSE_POINTS_PER_ACCOUNT = 2;
 const BURN_POINTS_PER_ACCOUNT = 5;
 const BURN_POINTS_DAILY_CAP = 250;
 
@@ -2574,7 +2578,7 @@ export default {
           .bind(signature).first();
         if (seen) return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
 
-        let closed = 0;
+        let burns = 0, closes = 0;
         try {
           const tx = await rpcCall(env, 'getTransaction',
             [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]);
@@ -2584,27 +2588,37 @@ export default {
           if (keys[0] !== wallet) return json(request, env, { error: 'that was not signed by your wallet' }, 400);
           for (const ix of tx.transaction.message.instructions || []) {
             const t = ix.parsed && ix.parsed.type;
-            if (t === 'burn' || t === 'burnChecked') closed++;
+            if (t === 'burn' || t === 'burnChecked') burns++;
+            else if (t === 'closeAccount') closes++;
           }
         } catch (e) {
           await logError(env, 'cleanup.award', (e && e.message) || e);
           return json(request, env, { error: 'could not read that transaction' }, 502);
         }
-        if (closed === 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
+        // a burn is always paired with a close, so only the surplus closes are
+        // counted at the lower rate — nobody is paid twice for one account
+        const bareCloses = Math.max(0, closes - burns);
+        const earned = burns * BURN_POINTS_PER_ACCOUNT + bareCloses * CLOSE_POINTS_PER_ACCOUNT;
+        if (earned === 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
 
         const dayStart = Date.now() - (Date.now() % 86400000);
         const today = await env.DB.prepare(
-          "SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type = 'burn' AND ts >= ?"
+          "SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type IN ('burn','cleanup') AND ts >= ?"
         ).bind(wallet, dayStart).first();
         const room = Math.max(0, BURN_POINTS_DAILY_CAP - ((today && today.n) || 0));
-        const points = Math.min(room, closed * BURN_POINTS_PER_ACCOUNT);
+        const points = Math.min(room, earned);
 
         await env.DB.prepare(
           'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'
         ).bind(signature, wallet, 0, points, Date.now()).run();
-        if (points > 0) await addPoints(env, wallet, 'burn', points);
+        if (points > 0) await addPoints(env, wallet, 'cleanup', points);
 
-        return json(request, env, { awarded: points, burned: closed, player: await playerState(env, wallet) });
+        return json(request, env, {
+          awarded: points, burned: burns, closed: bareCloses,
+          cappedOut: points === 0 && room === 0,
+          dailyCap: BURN_POINTS_DAILY_CAP,
+          player: await playerState(env, wallet)
+        });
       }
 
       if (path === '/api/swap/points' && request.method === 'GET') {

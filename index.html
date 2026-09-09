@@ -1937,6 +1937,11 @@
           <div class="lb-earn-pts">+100 ea</div>
         </div>
         <div class="lb-earn-row">
+          <div class="lb-earn-icon">♻</div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Clean up your wallet</div><div class="lb-earn-sub">2 per account closed · 5 per burn · 250 a day</div></div>
+          <div class="lb-earn-pts">+2 ea</div>
+        </div>
+        <div class="lb-earn-row">
           <div class="lb-earn-icon">⇅</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Swap tokens</div><div class="lb-earn-sub">1 point per dollar swapped · $5 minimum · 500 a day</div></div>
           <div class="lb-earn-pts">+1 / $</div>
@@ -2729,6 +2734,8 @@
       gacha:    { pts: 50,  label: 'Gacha pull 🎰' },
       stake:    { pts: 100, label: 'Moon Ranger staking 🌕' },
       swap:     { pts: 0,   label: 'Token swap ⇅' },
+      cleanup:  { pts: 0,   label: 'Wallet cleanup ♻' },
+      burn:     { pts: 0,   label: 'Wallet cleanup ♻' },
       mission:  { pts: 0,   label: 'Mission reward 🎯' },
       migrated: { pts: 0,   label: 'Points carried over 📦' },
       spin:     { pts: 0,   label: 'Giveaway wheel spin 🎡' } // retired; kept so past entries still render
@@ -4159,6 +4166,23 @@
       return signature;
     }
 
+    /// Points are worked out server-side from the instructions in the confirmed
+    /// transaction, so this only nudges it — nothing here decides the number.
+    async function awardCleanupPoints(signature, msg) {
+      if (!FoxPoints.token) {
+        if (msg) msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Sign in to earn Fox Points for tidying up.</span>';
+        return;
+      }
+      try {
+        const r = await FoxPoints.api('/api/cleanup/award', { method: 'POST', body: { signature: signature } });
+        if (!r || r.error) return;
+        if (r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
+        if (msg && r.awarded > 0) msg.innerHTML += ' <strong>+' + r.awarded + ' Fox Points</strong>';
+        else if (msg && r.cappedOut) msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Daily points cap reached.</span>';
+        renderLeaderboard();
+      } catch (e) { /* the close succeeded; points are a bonus */ }
+    }
+
     async function closeEmpty() {
       const btn = document.getElementById('cl-close-btn');
       const msg = document.getElementById('cl-msg');
@@ -4169,6 +4193,7 @@
 
       btn.disabled = true;
       let done = 0;
+      let lastSig = null;
       try {
         for (let i = 0; i < accounts.length; i += CLOSE_PER_TX) {
           const batch = accounts.slice(i, i + CLOSE_PER_TX);
@@ -4178,11 +4203,13 @@
             return closeAccountIx(a.account, Wallet.pubkey, a.programId);
           });
           const rent = batch.reduce(function (s, a) { return s + a.rent; }, 0);
-          await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
+          lastSig = await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
+          if (lastSig) awardCleanupPoints(lastSig, null);
           done += batch.length;
         }
         msg.className = 'sw-msg good';
         msg.textContent = 'Closed ' + done + ' accounts. The rent is back in your wallet.';
+        if (lastSig) awardCleanupPoints(lastSig, msg);
         await scanCleanup();
       } catch (e) {
         msg.className = 'sw-msg bad';
@@ -4243,12 +4270,7 @@
           const rent = batch.reduce(function (s, a) { return s + a.rent; }, 0);
           lastSig = await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
           done += batch.length;
-          if (FoxPoints.token && lastSig) {
-            FoxPoints.api('/api/cleanup/award', { method: 'POST', body: { signature: lastSig } })
-              .then(function (r) {
-                if (r && r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
-              }).catch(function () {});
-          }
+          if (lastSig) awardCleanupPoints(lastSig, null);
         }
         msg.className = 'sw-msg good';
         msg.textContent = 'Burned and closed ' + done + '. Rent is back in your wallet.';
