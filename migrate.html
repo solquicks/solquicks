@@ -234,6 +234,12 @@
   };
 
   // ── run ──
+  // A blockhash lives about 60–90 seconds. Signing all 73 transactions against
+  // one blockhash meant everything after the first ~20 expired before it was
+  // sent. So: sign and send in chunks, each with a blockhash of its own, and
+  // fire a whole chunk at once rather than one at a time.
+  const CHUNK = 12;
+
   document.getElementById('run').onclick = async () => {
     const btn = document.getElementById('run');
     btn.disabled = true;
@@ -242,63 +248,78 @@
 
     const batches = [];
     for (let i = 0; i < work.length; i += PER_TX) batches.push(work.slice(i, i + PER_TX));
-    log('Building ' + batches.length + ' transactions…');
+    const rounds = Math.ceil(batches.length / CHUNK);
+    log('Building ' + batches.length + ' transactions in ' + rounds + ' signing round' + (rounds === 1 ? '' : 's') + '.');
 
-    const latest = await c.getLatestBlockhash('confirmed');
-    const txs = batches.map((batch) => {
-      const tx = new Transaction();
-      batch.forEach((w) => {
-        tx.add(new TransactionInstruction({
-          programId: new PublicKey(TMETA),
-          keys: [
-            { pubkey: w.pda, isSigner: false, isWritable: true },
-            { pubkey: new PublicKey(wallet), isSigner: true, isWritable: false }
-          ],
-          data: updateIxData(w.meta, w.uri, w.name)
-        }));
+    let sent = 0, failed = 0, processed = 0;
+
+    for (let r = 0; r < rounds; r++) {
+      const slice = batches.slice(r * CHUNK, (r + 1) * CHUNK);
+      const latest = await c.getLatestBlockhash('confirmed');
+
+      const txs = slice.map((batch) => {
+        const tx = new Transaction();
+        batch.forEach((w) => {
+          tx.add(new TransactionInstruction({
+            programId: new PublicKey(TMETA),
+            keys: [
+              { pubkey: w.pda, isSigner: false, isWritable: true },
+              { pubkey: new PublicKey(wallet), isSigner: true, isWritable: false }
+            ],
+            data: updateIxData(w.meta, w.uri, w.name)
+          }));
+        });
+        tx.feePayer = new PublicKey(wallet);
+        tx.recentBlockhash = latest.blockhash;
+        return tx;
       });
-      tx.feePayer = new PublicKey(wallet);
-      tx.recentBlockhash = latest.blockhash;
-      return tx;
-    });
 
-    let signed;
-    try {
-      log('Approve the batch in your wallet — one prompt for all ' + txs.length + '.');
-      signed = provider.signAllTransactions
-        ? await provider.signAllTransactions(txs)
-        : null;
-      if (!signed) { log('This wallet cannot sign a batch. Stopping.', 'bad'); btn.disabled = false; return; }
-    } catch (e) {
-      log('Signing cancelled — nothing was sent.', 'dim');
-      btn.disabled = false; return;
-    }
-
-    let sent = 0, failed = 0;
-    for (let i = 0; i < signed.length; i++) {
+      let signed;
       try {
-        const sig = await c.sendRawTransaction(signed[i].serialize(), { maxRetries: 3 });
-        // poll rather than subscribe: the RPC proxy has no websocket
-        let confirmed = false;
-        for (let t = 0; t < 40 && !confirmed; t++) {
-          const st = await c.getSignatureStatuses([sig]);
-          const v = st && st.value && st.value[0];
-          if (v && v.err) throw new Error('failed on chain');
-          if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) confirmed = true;
-          else await new Promise((r) => setTimeout(r, 1200));
-        }
-        if (!confirmed) throw new Error('not confirmed in time');
-        sent++;
-        log('✓ ' + (i + 1) + '/' + signed.length + '  ' + batches[i].map((b) => b.name || b.mint.slice(0, 6)).join(', '), 'ok');
+        log('Round ' + (r + 1) + '/' + rounds + ' — approve ' + txs.length + ' transactions in your wallet.');
+        signed = provider.signAllTransactions ? await provider.signAllTransactions(txs) : null;
+        if (!signed) { log('This wallet cannot sign a batch. Stopping.', 'bad'); break; }
       } catch (e) {
-        failed++;
-        log('✗ ' + (i + 1) + '/' + signed.length + '  ' + e.message + ' — re-scan and run again to retry', 'bad');
+        log('Signing cancelled — nothing further was sent.', 'dim');
+        break;
       }
-      document.getElementById('prog').style.width = (((i + 1) / signed.length) * 100) + '%';
+
+      // fire them together so they all land well inside the blockhash's life
+      const results = await Promise.all(signed.map(async (tx, i) => {
+        try {
+          const sig = await c.sendRawTransaction(tx.serialize(), { maxRetries: 5, skipPreflight: true });
+          return { i, sig };
+        } catch (e) {
+          return { i, err: e.message };
+        }
+      }));
+
+      // then confirm by polling, because the RPC proxy has no websocket
+      for (const res of results) {
+        processed++;
+        const label = slice[res.i].map((b) => b.name || b.mint.slice(0, 6)).join(', ');
+        if (res.err) {
+          failed++;
+          log('x ' + label + ' — ' + res.err, 'bad');
+        } else {
+          let ok = false;
+          for (let t = 0; t < 45 && !ok; t++) {
+            const st = await c.getSignatureStatuses([res.sig]);
+            const v = st && st.value && st.value[0];
+            if (v && v.err) break;
+            if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) ok = true;
+            else await new Promise((x) => setTimeout(x, 1000));
+          }
+          if (ok) { sent++; log('done  ' + label, 'ok'); }
+          else { failed++; log('x ' + label + ' — not confirmed', 'bad'); }
+        }
+        document.getElementById('prog').style.width = ((processed / batches.length) * 100) + '%';
+      }
     }
+
     log('');
-    log('Done. ' + sent + ' transactions confirmed, ' + failed + ' failed.', failed ? 'bad' : 'ok');
-    if (failed) log('Press Scan again — anything already updated is skipped, so re-running only retries what failed.', 'dim');
+    log('Finished. ' + sent + ' transactions confirmed, ' + failed + ' failed.', failed ? 'bad' : 'ok');
+    if (failed) log('Press Scan again, then Run — anything already updated is skipped, so this only retries what is left.', 'dim');
     btn.disabled = false;
   };
 </script>
