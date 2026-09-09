@@ -172,6 +172,9 @@ async function listRangers(env, wallet) {
       params: {
         ownerAddress: wallet,
         grouping: ['collection', env.MOON_RANGERS_COLLECTION],
+        // Without this DAS still reports burned NFTs as owned — a wallet that
+        // burned its Rangers was being offered them to stake.
+        burnt: false,
         page: 1, limit: 1000
       }
     })
@@ -432,7 +435,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'cleanup-1';
+const BUILD = 'burnt-fix-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -683,6 +686,7 @@ async function fetchAllOwners(env) {
         jsonrpc: '2.0', id: 'a', method: 'searchAssets',
         params: {
           grouping: ['collection', env.MOON_RANGERS_COLLECTION],
+          burnt: false,
           page: page, limit: 1000
         }
       })
