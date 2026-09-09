@@ -456,7 +456,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'cleanup-points-1';
+const BUILD = 'cleanup-rows-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1077,10 +1077,11 @@ async function scanWallet(env, wallet) {
       for (const a of batch || []) {
         if (!a || !a.id) continue;
         const c = a.content || {};
+        const file = (c.files || [])[0] || {};
         assets[a.id] = {
           name: (c.metadata && c.metadata.name) || null,
           symbol: (c.metadata && c.metadata.symbol) || null,
-          image: (c.links && c.links.image) || null,
+          image: file.cdn_uri || file.uri || (c.links && c.links.image) || null,
           collection: ((a.grouping || []).find(function (g) { return g.group_key === 'collection'; }) || {}).group_value || null
         };
       }
