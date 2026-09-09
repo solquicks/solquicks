@@ -1,0 +1,1393 @@
+[
+  {
+    "mint": "GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2",
+    "uri": "https://arweave.net/N_bEwAJ9GYki0R5_0rv1i6gwrDxR8a1WNmHm2_ivYPc",
+    "source": "arweave",
+    "name": null,
+    "ok": false
+  },
+  {
+    "mint": "GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz",
+    "uri": "https://arweave.net/R-P5trY5Ri2QwY3j9Cs2JLwwKgBRWb13wFqMpR1fIFY?1707319780415",
+    "source": "arweave",
+    "name": "Ranger #320",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/DQ2QKAACPvq3YAzGsjiIKoeov5fThM8H4iYuk4gul1g",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #320",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/DQ2QKAACPvq3YAzGsjiIKoeov5fThM8H4iYuk4gul1g",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Suros"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Galaxy"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Special Ops"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Growl"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Sith"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 835
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/DQ2QKAACPvq3YAzGsjiIKoeov5fThM8H4iYuk4gul1g",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "GBZkWBY9eZedJV7UM1x69LZmDQXkHCuwBPfP3Vpmbdtn",
+    "uri": "https://arweave.net/bp7MT7XhM2PcGFLTW5l48JALN13B-IVkvPQvjsyVrho",
+    "source": "arweave",
+    "name": "Ranger #548",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/5STo_B65e1C7QWGI4jbbsB6srA89j8y2T9XCxfYdAFg",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #548",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/5STo_B65e1C7QWGI4jbbsB6srA89j8y2T9XCxfYdAFg",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Dark Mode"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Solana"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "None"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grin"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Headband"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Jedi Master"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 508
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/5STo_B65e1C7QWGI4jbbsB6srA89j8y2T9XCxfYdAFg",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "Fym1QeK7WdUNBpuxpHzS8V5YcyAJKJvLTtTySh7prrQy",
+    "uri": "https://arweave.net/44XsH_0CBsTHVI26DTse8EbkkQl6A7lxhAVCA-Wt9pQ?1707350310130",
+    "source": "arweave",
+    "name": "Ranger #686",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/H8kJlS-Nq1stzydon5PTQyvFZHoX3urSuU2Mc6pr_ws",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #686",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/H8kJlS-Nq1stzydon5PTQyvFZHoX3urSuU2Mc6pr_ws",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Royal"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Galaxy"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Stone"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Stoic"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Jedi Master"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 707
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/H8kJlS-Nq1stzydon5PTQyvFZHoX3urSuU2Mc6pr_ws",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm",
+    "uri": "https://arweave.net/_oZvyNRKNaB6MYp9krMWSxD4HUyf70zm2lIZQNSd3gA?1711424823700",
+    "source": "arweave",
+    "name": "Ranger #64",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/cMRq_wEHfd8ZO-978cE4B7gBbg1wUcxJmjGs0q6Wx-g",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #64",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/cMRq_wEHfd8ZO-978cE4B7gBbg1wUcxJmjGs0q6Wx-g",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Soul"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Galaxy"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Science Officer"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Stoic"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Headband"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Rifle"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 862
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/cMRq_wEHfd8ZO-978cE4B7gBbg1wUcxJmjGs0q6Wx-g",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "F48wpWVKQEpTFVKeepc6eDWVQKCfNbiuPBo6co2GF2ud",
+    "uri": "https://www.arweave.net/A9pLwbYG2KMoQ_r6fpT1cMvO_qe29PeWZhbjD4g8-1M?1706244443502",
+    "source": "arweave",
+    "name": "Ranger #584",
+    "ok": true,
+    "fee": 300,
+    "image": "https://www.arweave.net/xsU5eDejMRJD8EtFk7VoCmdDzvyqpRpnO0agFux0eHk?ext=png",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #584",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://www.arweave.net/xsU5eDejMRJD8EtFk7VoCmdDzvyqpRpnO0agFux0eHk?ext=png",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Soul"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Blue"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "DemDan Shirt"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grin"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Blaster"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 535
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://www.arweave.net/xsU5eDejMRJD8EtFk7VoCmdDzvyqpRpnO0agFux0eHk?ext=png",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "E7m9vEwXmzkmq5hypQvtQFzXXsUT7PCBybTRroz5YhZi",
+    "uri": "https://arweave.net/bbOe4RXMVFqbfTMYq9WomE3MuYuUCmPYuU1kh05b3ZQ?1706592357474",
+    "source": "arweave",
+    "name": "Ranger #671",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/1yMAcuQeHh37K1iV9hbu_D_Gj7q3a_6MUk9QHb0vSMo",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #671",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/1yMAcuQeHh37K1iV9hbu_D_Gj7q3a_6MUk9QHb0vSMo",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Isle"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Red"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Stone"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Gold Tokyo"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Pizza"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Headband"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Magma"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 781
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/1yMAcuQeHh37K1iV9hbu_D_Gj7q3a_6MUk9QHb0vSMo",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "DyabLRQp7Ro83sXMBynx4MpwYetRTM5rB3ftVv9eRZf9",
+    "uri": "https://arweave.net/SsMCRhM5Lcjy52QL7DGMyw620lRVjKEXKNt9w-ocS_U?1707148260954",
+    "source": "arweave",
+    "name": "Ranger #101",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/TsAfH6OYl7E9md8ylhyUMXldmU6uequ5Dms6-BMiGLo",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #101",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/TsAfH6OYl7E9md8ylhyUMXldmU6uequ5Dms6-BMiGLo",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Royal"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "White"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Stone"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Space Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grillz"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 447
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/TsAfH6OYl7E9md8ylhyUMXldmU6uequ5Dms6-BMiGLo",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "DrPL32iWgNfCsFpuNcCiEUVh5VkVtBihsgPs7cmbNw7U",
+    "uri": "https://arweave.net/05GbxeocpxnaHIspX3SrBLo-0CboLAdTZdaANZDEs3U",
+    "source": "arweave",
+    "name": "Ranger #884",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/OJKy12EKHKJK_XbxwLkbSDPO-9gvI2dnFOpLUM9cSck",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #884",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/OJKy12EKHKJK_XbxwLkbSDPO-9gvI2dnFOpLUM9cSck",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Royal"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Gold"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Chief"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "McCloud"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Ranger Mask"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 39
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/OJKy12EKHKJK_XbxwLkbSDPO-9gvI2dnFOpLUM9cSck",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "Dp5SHf9FxZVys2B5MRB89p5paW8dSV8VyeKdwkHjLKew",
+    "uri": "https://arweave.net/PXGcoMBoqMaC987NAnqME-lZyXDf0Ukv2PvnPgIASSU",
+    "source": "arweave",
+    "name": "Ranger #530",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/mjcxgDchnc1aOBa6VGBQRPAMJbwFb-awdWCVYTRlKbI",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #530",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/mjcxgDchnc1aOBa6VGBQRPAMJbwFb-awdWCVYTRlKbI",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Mint"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Green"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Commander"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Racer"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Stoic"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Gold Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Sith"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 844
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/mjcxgDchnc1aOBa6VGBQRPAMJbwFb-awdWCVYTRlKbI",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "DbwUZJUJdyjXvhpp1MfkGvmLk9R2qJE8J7WrmgcUCQaX",
+    "uri": "https://arweave.net/aJhzysTAX5WanYi5vExa--bUqBL3k0Riv28MfJBIuRY?1709004437937",
+    "source": "arweave",
+    "name": "Ranger #783",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/YsMWEhA0qyOFub_V7XvR3uiPRJUajFxwYNogZQsPWZY",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #783",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/YsMWEhA0qyOFub_V7XvR3uiPRJUajFxwYNogZQsPWZY",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Mono"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Yakuza"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "MiB Glasses"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Growl"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Moon Pistol"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 917
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/YsMWEhA0qyOFub_V7XvR3uiPRJUajFxwYNogZQsPWZY",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "C8GJiKzfzbHWaJXL3FzyQmVNTq6SB5hTNt8n83VKm7Xn",
+    "uri": "https://www.arweave.net/qdc_2uZWSl-GwPTs2z3zAcwPTinWaVjUKgUPA3xlHGk?1705794123659",
+    "source": "arweave",
+    "name": "Ranger #743",
+    "ok": true,
+    "fee": 300,
+    "image": "https://www.arweave.net/QGm0KML9-vBqccsQx5G0ysUH8S8Ung78Qmd9xVy1iRQ?ext=png",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #743",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://www.arweave.net/QGm0KML9-vBqccsQx5G0ysUH8S8Ung78Qmd9xVy1iRQ?ext=png",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Soul"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Solana"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Open"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 924
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://www.arweave.net/QGm0KML9-vBqccsQx5G0ysUH8S8Ung78Qmd9xVy1iRQ?ext=png",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "BzTkqq3bHbCar1rSFcrw4wtuT4xSckgRwAbJP76ajqx8",
+    "uri": "https://arweave.net/7Ri5VU-pmE-IsnyYR22XmpKPKh-n0qHkAYFZ9KqUgYI",
+    "source": "arweave",
+    "name": "Ranger #953",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/664389Qs-gpwuDWw5s7L_XpMF32BG-j6h3XMNVVN6NU",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #953",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/664389Qs-gpwuDWw5s7L_XpMF32BG-j6h3XMNVVN6NU",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Gold"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Black"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Science Officer"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Growl"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Ranger Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Magma"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 238,
+          "display_type": "number",
+          "max_value": 1000
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/664389Qs-gpwuDWw5s7L_XpMF32BG-j6h3XMNVVN6NU",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "8mAzM9t46wNjY5Ek7JKQUpKKvGzoRPELGx7vLzA3qBYw",
+    "uri": "https://arweave.net/6BqvqALIRpCQxQUwo9rs0ydF2EVWpuSKuVlpfp4HgiY",
+    "source": "arweave",
+    "name": "Ranger #617",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/bpWF9PKts02PFXICWCvUytO5Px8RwfV22XodBXAk5vY",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #617",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/bpWF9PKts02PFXICWCvUytO5Px8RwfV22XodBXAk5vY",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Gold"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Blue"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Cyborg"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "MiB Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grin"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 503
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/bpWF9PKts02PFXICWCvUytO5Px8RwfV22XodBXAk5vY",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "7kLpf5a6kZALTMgPNfmoEpoPeNmHZkmF7h3k1eB3hrYr",
+    "uri": "https://arweave.net/ilfV_78ciYRNF5zWcnGhCM7j1NyorUC3V3pjWKPsv6g",
+    "source": "arweave",
+    "name": "Ranger #735",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/Y68Mk9DAyx60KPXGhMZenEarx-8x0T_019kCVmLlcw0",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #735",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/Y68Mk9DAyx60KPXGhMZenEarx-8x0T_019kCVmLlcw0",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Mono"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Galaxy"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Froad"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grillz"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Moon Pistol"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 594,
+          "display_type": "number",
+          "max_value": 1000
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/Y68Mk9DAyx60KPXGhMZenEarx-8x0T_019kCVmLlcw0",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "6SrnU2JeEp2vZFcAF4hHnBxF5i61qHcCkiGsvhJPZKAL",
+    "uri": "https://arweave.net/kN7Uuof6HjZhNbh90yN4Udh1Jz9_8X477tlAAHaI5oQ?1706840510318",
+    "source": "arweave",
+    "name": "Ranger #841",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/vcH5Oexrwy2IoCGX3awPvZ6HJsVGI7D27jgsOofjU2c",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #841",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/vcH5Oexrwy2IoCGX3awPvZ6HJsVGI7D27jgsOofjU2c",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Royal"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Fox"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Chief"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "MiB Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Stoic"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Moon Pistol"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 344
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/vcH5Oexrwy2IoCGX3awPvZ6HJsVGI7D27jgsOofjU2c",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "6S1PwhmpAu7pesfcGwKicaHEA5favnAxjh8SweTixgCy",
+    "uri": "https://arweave.net/KyfbaSXmjBKA1PL1MlykeMlUqwaJtfqALRtI0ggnhzY",
+    "source": "arweave",
+    "name": "Ranger #83",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/uqB457i82U7OXtfBsPJ3-cpK0vADAxcHtXAJq8-IlX4",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #83",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/uqB457i82U7OXtfBsPJ3-cpK0vADAxcHtXAJq8-IlX4",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Isle"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Black"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Chief"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Space Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Space Breather"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Ranger Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 384
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/uqB457i82U7OXtfBsPJ3-cpK0vADAxcHtXAJq8-IlX4",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "5c9sG1HjhW6cuPF2gDsNPf65MQbZCbFdujDMuPQquHXS",
+    "uri": "https://www.arweave.net/AKfBbYN1ThbSw9_gxGGsIMUJeLpKnAgBSZHBrGQvs-w?1705473247888",
+    "source": "arweave",
+    "name": "Ranger #687",
+    "ok": true,
+    "fee": 300,
+    "image": "https://www.arweave.net/Qiqvd9L2or1D0fsEiZYB-dHOxUDYvmDgJRHjYHbobjE?ext=png",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #687",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://www.arweave.net/Qiqvd9L2or1D0fsEiZYB-dHOxUDYvmDgJRHjYHbobjE?ext=png",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Soul"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Blue"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Science Officer"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Space Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Stoic"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Headband"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 44
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://www.arweave.net/Qiqvd9L2or1D0fsEiZYB-dHOxUDYvmDgJRHjYHbobjE?ext=png",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "3DKzsMLLjtgY5NxjsHMWRS3DiK85kZHFPomcQNGWTs7i",
+    "uri": "https://arweave.net/TbgXd2niBVyljZnOXxqGvwR4bbhFaleTE2coBWAqzVA",
+    "source": "arweave",
+    "name": "Ranger #327",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/i5mTsGjksb7H_JOPWczd-P_ecHym-N29cCCLaO-rRLc",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #327",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/i5mTsGjksb7H_JOPWczd-P_ecHym-N29cCCLaO-rRLc",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Dark Mode"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Yakuza"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Special Ops"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "None"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grillz"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Jedi"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 31
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/i5mTsGjksb7H_JOPWczd-P_ecHym-N29cCCLaO-rRLc",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "2ihdZ7WPbyUGCjzmyGxWXdWM2Y7oPTjqftXqX6JA43DX",
+    "uri": "https://arweave.net/2IstEN-4vjNHPKWferVYGyuYs5oqGKqbmiQBbyzsfic",
+    "source": "arweave",
+    "name": "Ranger #109",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/fk3_Xj_lBykjZNiC8nFS-P_TqL8XTiOYArZ6GEEp1To",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #109",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/fk3_Xj_lBykjZNiC8nFS-P_TqL8XTiOYArZ6GEEp1To",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Mono"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Black"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Space Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grin"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Jedi"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 650
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/fk3_Xj_lBykjZNiC8nFS-P_TqL8XTiOYArZ6GEEp1To",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "wt6cacoVboRY9NtS1jmM3fZfueCHXvbWFD9odMzqEDH",
+    "uri": "https://arweave.net/0w187KHevAFyvm_kjo_8n1qDVkd_sTtYyP0xO3NMFlQ?1709002776719",
+    "source": "arweave",
+    "name": "Ranger #116",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/0edIo8rqIEXRoxDO8dqSnqBxfVMvBPMkip065VJo6O0",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #116",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/0edIo8rqIEXRoxDO8dqSnqBxfVMvBPMkip065VJo6O0",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Dark Mode"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Alien"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Tokyo"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Moon Breather"
+        },
+        {
+          "trait_type": "Head",
+          "value": "None"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Moon Pistol"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 453
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/0edIo8rqIEXRoxDO8dqSnqBxfVMvBPMkip065VJo6O0",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F",
+    "uri": "https://arweave.net/pMKnf9f0QGqVBiEsmeUiHuOjGi2zUgKv8wPjo71pGuY",
+    "source": "arweave",
+    "name": "",
+    "ok": true,
+    "fee": "",
+    "image": "https://arweave.net/9u0sa1vaWSDstuqF9s-Wx3Ea3FqfmCFpGFseiSOhx18",
+    "traits": 8,
+    "json": {
+      "name": "",
+      "symbol": "MNRNG",
+      "description": "",
+      "external_url": "",
+      "seller_fee_basis_points": "",
+      "image": "https://arweave.net/9u0sa1vaWSDstuqF9s-Wx3Ea3FqfmCFpGFseiSOhx18",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Isle"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Green"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Stone"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Galaxy"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Moon Breather"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Ranger Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Rifle"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 697
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/9u0sa1vaWSDstuqF9s-Wx3Ea3FqfmCFpGFseiSOhx18",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "5o83XRsPNQvSfJeDsxZt3W1Y2PQFzXCKhQB3Qi6dcxX",
+    "uri": "https://arweave.net/cmv2fJQX5iTvNy-lIgseu4f4hXsXeohNNmH6gT7gSro",
+    "source": "arweave",
+    "name": "Ranger #458",
+    "ok": true,
+    "fee": 300,
+    "image": "https://arweave.net/IAl7QOs52otkVoFAXg4ZWtPkDVn5TD5p57iZy2GjDHA",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #458",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://arweave.net/IAl7QOs52otkVoFAXg4ZWtPkDVn5TD5p57iZy2GjDHA",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Gold"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Alien"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Special Ops"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "Space Suit"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Grillz"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Headband"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Magma"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 986
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://arweave.net/IAl7QOs52otkVoFAXg4ZWtPkDVn5TD5p57iZy2GjDHA",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "mint": "12qvExMfNLy7CDVMZuztUYwctCynPGozjErQkF2irxdC",
+    "uri": "https://www.arweave.net/3_YXIEtbO_6_ZlvXRyiAdlQbizPtLKt6f-jKBQctxBA?1706346287809",
+    "source": "arweave",
+    "name": "Ranger #595",
+    "ok": true,
+    "fee": 300,
+    "image": "https://www.arweave.net/uux2T-emyyIPLEXJbT7ET1EjM6OukCYVxKU2kzMZuG4?ext=png",
+    "traits": 8,
+    "json": {
+      "name": "Ranger #595",
+      "symbol": "MNRNG",
+      "description": "Flight Class 1 - the first Rangers in Solana Space.",
+      "external_url": "",
+      "seller_fee_basis_points": 300,
+      "image": "https://www.arweave.net/uux2T-emyyIPLEXJbT7ET1EjM6OukCYVxKU2kzMZuG4?ext=png",
+      "attributes": [
+        {
+          "trait_type": "Background",
+          "value": "Mint"
+        },
+        {
+          "trait_type": "Fur",
+          "value": "Red"
+        },
+        {
+          "trait_type": "Eyes",
+          "value": "Ice"
+        },
+        {
+          "trait_type": "Flight Jacket",
+          "value": "DemDan Shirt"
+        },
+        {
+          "trait_type": "Mouth",
+          "value": "Moon Breather"
+        },
+        {
+          "trait_type": "Head",
+          "value": "Ranger Helmet"
+        },
+        {
+          "trait_type": "Moon Gun",
+          "value": "Frost"
+        },
+        {
+          "trait_type": "Rarity Rank",
+          "value": 820
+        }
+      ],
+      "properties": {
+        "files": [
+          {
+            "uri": "https://www.arweave.net/uux2T-emyyIPLEXJbT7ET1EjM6OukCYVxKU2kzMZuG4?ext=png",
+            "type": "image/png"
+          }
+        ]
+      }
+    }
+  }
+]

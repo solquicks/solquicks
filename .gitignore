@@ -7,3 +7,5 @@ worker/node_modules/
 program/target/
 program/.anchor/
 program/test-ledger/
+program/migration/uploader.json
+program/migration/prepared/
