@@ -1,0 +1,304 @@
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex, nofollow"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.mainnet-beta.solana.com;"/>
+<title>Moon Rangers — Metadata Migration</title>
+<link rel="icon" href="avatar.png"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"/>
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
+<style>
+  :root {
+    --bg: #16121F; --card: #201A31; --sunk: #1B1628;
+    --ink: #F3EFFA; --soft: #C7BFDA; --muted: #948BAC; --line: #322A47;
+    --gold: #FFD98A; --orange: #FF9A3D; --ok: #5FC79B; --bad: #E8705F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); margin: 0; padding: 40px 20px 80px;
+    font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.6;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-family: 'Baloo 2', sans-serif; font-size: 1.9rem; font-weight: 800; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+  .row span:last-child { color: var(--gold); }
+  button {
+    appearance: none; border: none; cursor: pointer; width: 100%;
+    background: var(--orange); color: #1B1628;
+    font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1rem;
+    border-radius: 999px; padding: 13px 20px; margin-top: 14px;
+  }
+  button:disabled { background: #3A3252; color: var(--muted); cursor: default; }
+  button.ghost { background: transparent; border: 2px solid var(--line); color: var(--soft); }
+  .bar { height: 8px; background: var(--sunk); border-radius: 999px; overflow: hidden; margin: 14px 0 8px; }
+  .bar span { display: block; height: 100%; background: var(--ok); width: 0; transition: width .3s ease; }
+  .log { background: var(--sunk); border-radius: 8px; padding: 12px 14px; max-height: 260px; overflow-y: auto; font-size: 12px; }
+  .log div { padding: 1px 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .dim { color: var(--muted); }
+  .warn { background: #2E1C1A; border: 1px solid var(--bad); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; color: var(--soft); }
+  .warn b { color: var(--bad); }
+  code { color: var(--gold); word-break: break-all; }
+</style>
+
+<div class="wrap">
+  <h1>Metadata Migration</h1>
+  <p class="sub">Moon Rangers — repoint every Ranger at permanent storage, and restore the names.</p>
+
+  <div class="warn">
+    <b>This writes to mainnet.</b> It changes the metadata URI and name of every Moon Ranger.
+    It can only be run by the update authority. Nothing else about the NFTs is touched — owner,
+    royalty, creators and collection are read off each account and re-sent unchanged.
+  </div>
+
+  <div class="card">
+    <div class="row"><span>Wallet</span><span id="wallet">not connected</span></div>
+    <div class="row"><span>Update authority</span><span id="ua">31jpe…6HBU</span></div>
+    <div class="row"><span>Rangers to migrate</span><span id="total">–</span></div>
+    <div class="row"><span>Already done</span><span id="done">–</span></div>
+    <div class="row"><span>Transactions needed</span><span id="txs">–</span></div>
+    <button id="connect">Connect wallet</button>
+    <button id="scan" class="ghost" disabled>Scan what needs updating</button>
+    <button id="run" disabled>Run migration</button>
+    <div class="bar"><span id="prog"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="log" id="log"><div class="dim">Waiting…</div></div>
+  </div>
+</div>
+
+<script>
+  const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
+  const TMETA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
+  const UPDATE_AUTHORITY = '31jpe6JUemS1YBSnjn8uR9vgfb2eXVAGwGyssMzz6HBU';
+  const PER_TX = 3;               // a legacy transaction fits no more than this
+  const w3 = () => window.solanaWeb3;
+
+  let wallet = null, provider = null, work = [], uris = {}, names = {};
+
+  const log = (msg, cls) => {
+    const el = document.getElementById('log');
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  };
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+
+  // web3.js tags requests with a solana-client header the proxy rejects in
+  // preflight, so it has to be stripped or every call fails CORS
+  function conn() {
+    const { Connection } = w3();
+    return new Connection(RPC, {
+      commitment: 'confirmed',
+      fetchMiddleware: (url, options, next) => {
+        if (options && options.headers) {
+          delete options.headers['solana-client'];
+          delete options.headers['Solana-Client'];
+        }
+        next(url, options);
+      }
+    });
+  }
+
+  function metadataPda(mint) {
+    const { PublicKey } = w3();
+    return PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('metadata'), new PublicKey(TMETA).toBytes(), new PublicKey(mint).toBytes()],
+      new PublicKey(TMETA))[0];
+  }
+
+  // ── borsh ──
+  const strBytes = (s) => {
+    const b = new TextEncoder().encode(s);
+    const out = new Uint8Array(4 + b.length);
+    new DataView(out.buffer).setUint32(0, b.length, true);
+    out.set(b, 4);
+    return out;
+  };
+  const cat = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  };
+
+  /// Strings are stored fixed-width and null-padded on chain; they are trimmed
+  /// here and re-sent at natural length.
+  function parseMetadata(buf) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let o = 1 + 32 + 32;
+    const readStr = () => {
+      const len = dv.getUint32(o, true); o += 4;
+      const s = new TextDecoder().decode(buf.subarray(o, o + len)).replace(/\0+$/, '');
+      o += len; return s;
+    };
+    const name = readStr(), symbol = readStr(), uri = readStr();
+    const fee = dv.getUint16(o, true); o += 2;
+    const creators = [];
+    if (buf[o++]) {
+      const n = dv.getUint32(o, true); o += 4;
+      for (let i = 0; i < n; i++) {
+        creators.push({ address: buf.subarray(o, o + 32), verified: !!buf[o + 32], share: buf[o + 33] });
+        o += 34;
+      }
+    }
+    o += 1; // primary_sale_happened
+    o += 1; // is_mutable
+    if (buf[o++]) o += 1;                       // edition_nonce
+    if (buf[o++]) o += 1;                       // token_standard
+    let collection = null;
+    if (buf[o++]) { collection = { verified: !!buf[o], key: buf.subarray(o + 1, o + 33) }; o += 33; }
+    let uses = null;
+    if (buf[o++]) { uses = buf.subarray(o, o + 17); o += 17; }
+    return { name, symbol, uri, fee, creators, collection, uses };
+  }
+
+  /// DataV2 replaces the whole struct, so everything not being changed is
+  /// re-sent exactly as it was read.
+  function updateIxData(meta, newUri, newName) {
+    const creators = meta.creators.length
+      ? cat(new Uint8Array([1]),
+          (() => { const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, meta.creators.length, true); return n; })(),
+          ...meta.creators.map((c) => cat(c.address, new Uint8Array([c.verified ? 1 : 0, c.share]))))
+      : new Uint8Array([0]);
+    const fee = new Uint8Array(2);
+    new DataView(fee.buffer).setUint16(0, meta.fee, true);
+    const collection = meta.collection
+      ? cat(new Uint8Array([1, meta.collection.verified ? 1 : 0]), meta.collection.key)
+      : new Uint8Array([0]);
+    const uses = meta.uses ? cat(new Uint8Array([1]), meta.uses) : new Uint8Array([0]);
+    const dataV2 = cat(strBytes(newName || meta.name), strBytes(meta.symbol), strBytes(newUri),
+                       fee, creators, collection, uses);
+    return cat(new Uint8Array([15]), new Uint8Array([1]), dataV2,
+               new Uint8Array([0]), new Uint8Array([0]), new Uint8Array([0]));
+  }
+
+  // ── wallet ──
+  document.getElementById('connect').onclick = async () => {
+    const injected = window.solflare || window.backpack || window.solana;
+    if (!injected) { log('No wallet found in this browser.', 'bad'); return; }
+    try {
+      const res = await injected.connect();
+      wallet = (res && res.publicKey ? res.publicKey : injected.publicKey).toString();
+      provider = injected;
+      set('wallet', wallet.slice(0, 4) + '…' + wallet.slice(-4));
+      if (wallet !== UPDATE_AUTHORITY) {
+        log('That is not the update authority. Connect ' + UPDATE_AUTHORITY, 'bad');
+        return;
+      }
+      log('Connected as the update authority.', 'ok');
+      document.getElementById('scan').disabled = false;
+    } catch (e) { log('Connection cancelled.', 'dim'); }
+  };
+
+  // ── scan ──
+  document.getElementById('scan').onclick = async () => {
+    const btn = document.getElementById('scan');
+    btn.disabled = true; btn.textContent = 'Reading the chain…';
+    try {
+      uris = await (await fetch('program/migration/new-uris.json')).json();
+      names = await (await fetch('program/migration/names.json')).json();
+      const mints = Object.keys(uris);
+      set('total', mints.length);
+
+      const c = conn();
+      const { PublicKey } = w3();
+      const pdas = mints.map(metadataPda);
+      work = [];
+      let done = 0;
+      for (let i = 0; i < pdas.length; i += 100) {
+        const infos = await c.getMultipleAccountsInfo(pdas.slice(i, i + 100));
+        infos.forEach((info, j) => {
+          const mint = mints[i + j];
+          if (!info) return;
+          const meta = parseMetadata(new Uint8Array(info.data));
+          const wantName = names[mint] || meta.name;
+          // already migrated? then skip it — this makes re-running safe
+          if (meta.uri === uris[mint] && meta.name === wantName) { done++; return; }
+          work.push({ mint, pda: pdas[i + j], meta, uri: uris[mint], name: wantName });
+        });
+        log('read ' + Math.min(i + 100, pdas.length) + ' / ' + pdas.length, 'dim');
+      }
+      set('done', done);
+      set('txs', Math.ceil(work.length / PER_TX));
+      log(work.length + ' Rangers need updating, in ' + Math.ceil(work.length / PER_TX) + ' transactions.', 'ok');
+      document.getElementById('run').disabled = work.length === 0;
+    } catch (e) {
+      log('Scan failed: ' + e.message, 'bad');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Scan what needs updating';
+    }
+  };
+
+  // ── run ──
+  document.getElementById('run').onclick = async () => {
+    const btn = document.getElementById('run');
+    btn.disabled = true;
+    const { PublicKey, Transaction, TransactionInstruction } = w3();
+    const c = conn();
+
+    const batches = [];
+    for (let i = 0; i < work.length; i += PER_TX) batches.push(work.slice(i, i + PER_TX));
+    log('Building ' + batches.length + ' transactions…');
+
+    const latest = await c.getLatestBlockhash('confirmed');
+    const txs = batches.map((batch) => {
+      const tx = new Transaction();
+      batch.forEach((w) => {
+        tx.add(new TransactionInstruction({
+          programId: new PublicKey(TMETA),
+          keys: [
+            { pubkey: w.pda, isSigner: false, isWritable: true },
+            { pubkey: new PublicKey(wallet), isSigner: true, isWritable: false }
+          ],
+          data: updateIxData(w.meta, w.uri, w.name)
+        }));
+      });
+      tx.feePayer = new PublicKey(wallet);
+      tx.recentBlockhash = latest.blockhash;
+      return tx;
+    });
+
+    let signed;
+    try {
+      log('Approve the batch in your wallet — one prompt for all ' + txs.length + '.');
+      signed = provider.signAllTransactions
+        ? await provider.signAllTransactions(txs)
+        : null;
+      if (!signed) { log('This wallet cannot sign a batch. Stopping.', 'bad'); btn.disabled = false; return; }
+    } catch (e) {
+      log('Signing cancelled — nothing was sent.', 'dim');
+      btn.disabled = false; return;
+    }
+
+    let sent = 0, failed = 0;
+    for (let i = 0; i < signed.length; i++) {
+      try {
+        const sig = await c.sendRawTransaction(signed[i].serialize(), { maxRetries: 3 });
+        // poll rather than subscribe: the RPC proxy has no websocket
+        let confirmed = false;
+        for (let t = 0; t < 40 && !confirmed; t++) {
+          const st = await c.getSignatureStatuses([sig]);
+          const v = st && st.value && st.value[0];
+          if (v && v.err) throw new Error('failed on chain');
+          if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) confirmed = true;
+          else await new Promise((r) => setTimeout(r, 1200));
+        }
+        if (!confirmed) throw new Error('not confirmed in time');
+        sent++;
+        log('✓ ' + (i + 1) + '/' + signed.length + '  ' + batches[i].map((b) => b.name || b.mint.slice(0, 6)).join(', '), 'ok');
+      } catch (e) {
+        failed++;
+        log('✗ ' + (i + 1) + '/' + signed.length + '  ' + e.message + ' — re-scan and run again to retry', 'bad');
+      }
+      document.getElementById('prog').style.width = (((i + 1) / signed.length) * 100) + '%';
+    }
+    log('');
+    log('Done. ' + sent + ' transactions confirmed, ' + failed + ' failed.', failed ? 'bad' : 'ok');
+    if (failed) log('Press Scan again — anything already updated is skipped, so re-running only retries what failed.', 'dim');
+    btn.disabled = false;
+  };
+</script>
