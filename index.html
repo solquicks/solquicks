@@ -1978,6 +1978,7 @@
           <div class="sw-line"><span>Price impact</span><span id="sw-impact">–</span></div>
           <div class="sw-line"><span>Minimum received</span><span id="sw-min">–</span></div>
           <div class="sw-line"><span>Fee</span><span id="sw-fee">–</span></div>
+          <div class="sw-line"><span>Fox Points</span><span id="sw-points">–</span></div>
           <div class="sw-line"><span>Max slippage</span>
             <span class="sw-slip">
               <button data-bps="50" onclick="setSlippage(50)">0.5%</button>
@@ -2637,6 +2638,7 @@
         // every page reload — it only ever appeared right after signing in.
         if (typeof loadRangers === 'function') loadRangers();
         if (typeof loadMission === 'function') loadMission();
+        if (typeof loadSwapPoints === 'function') loadSwapPoints().then(flushSwapPoints);
       },
 
       // called for client-side actions; server decides the actual award
@@ -3680,6 +3682,7 @@
 
       refreshSwapBalance();
       refreshSwapPrices();
+      loadSwapPoints().then(flushSwapPoints);
     }
 
     function paintPair() {
@@ -3911,6 +3914,7 @@
             ' ' + tOut.symbol + ' (' + (pf.feeBps / 100) + '%)'
           : 'none on this pair';
 
+        paintSwapPoints();
         detail.hidden = false;
         go.disabled = false;
         go.textContent = 'Swap ' + tIn.symbol + ' for ' + tOut.symbol;
@@ -3930,17 +3934,91 @@
       }
     }
 
+    var swapPointsInfo = null;
+
+    async function loadSwapPoints() {
+      if (!FoxPoints.token) { swapPointsInfo = null; return; }
+      try {
+        const r = await FoxPoints.api('/api/swap/points');
+        swapPointsInfo = r && !r.error ? r : null;
+      } catch (e) { swapPointsInfo = null; }
+    }
+
+    /// Says what the swap is worth in points before it happens — the reason to
+    /// swap here rather than anywhere else should not be a surprise afterwards.
+    function paintSwapPoints() {
+      const el = document.getElementById('sw-points');
+      if (!el) return;
+      const price = swapPrices[swapPair.in.mint];
+      const raw = parseFloat(document.getElementById('sw-in-amount').value);
+      const usd = price && raw > 0 ? raw * price : 0;
+
+      if (!FoxPoints.token) { el.textContent = 'sign in to earn'; return; }
+      if (!swapPointsInfo) { el.textContent = '–'; return; }
+      if (!usd) { el.textContent = '–'; return; }
+      if (usd < swapPointsInfo.minUsd) {
+        el.textContent = 'none under $' + swapPointsInfo.minUsd;
+        return;
+      }
+      const earn = Math.min(swapPointsInfo.remaining, Math.floor(usd * swapPointsInfo.perUsd));
+      el.textContent = earn > 0
+        ? '+' + earn.toLocaleString()
+        : 'daily cap reached';
+    }
+
+    /// A swap can land while the page is signed out, or while confirmation is
+    /// still timing out. Park the signature and settle up later rather than
+    /// silently dropping points somebody earned.
+    function queueSwapPoints(signature) {
+      try {
+        const q = JSON.parse(localStorage.getItem('fox.swapPointsQueue') || '[]');
+        if (q.indexOf(signature) < 0) q.push(signature);
+        localStorage.setItem('fox.swapPointsQueue', JSON.stringify(q.slice(-20)));
+      } catch (e) { /* private mode */ }
+    }
+
+    function dequeueSwapPoints(signature) {
+      try {
+        const q = JSON.parse(localStorage.getItem('fox.swapPointsQueue') || '[]');
+        localStorage.setItem('fox.swapPointsQueue',
+          JSON.stringify(q.filter(function (s) { return s !== signature; })));
+      } catch (e) { /* private mode */ }
+    }
+
+    async function flushSwapPoints() {
+      if (!FoxPoints.token) return;
+      let q;
+      try { q = JSON.parse(localStorage.getItem('fox.swapPointsQueue') || '[]'); } catch (e) { return; }
+      if (!q.length) return;
+      const left = [];
+      for (const sig of q) {
+        try {
+          const r = await FoxPoints.api('/api/swap/award', { method: 'POST', body: { signature: sig } });
+          // a transient failure keeps its place in the queue; a rejection does not
+          if (!r || (r.error && /not found yet/i.test(r.error))) left.push(sig);
+          else if (r && r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
+        } catch (e) { left.push(sig); }
+      }
+      try { localStorage.setItem('fox.swapPointsQueue', JSON.stringify(left)); } catch (e) {}
+      await loadSwapPoints();
+      paintSwapPoints();
+    }
+
     /// Points are worked out server-side from what the chain says was spent, so
     /// this call only nudges it — nothing here decides the number.
     async function awardSwapPoints(signature, msg) {
+      queueSwapPoints(signature);
       if (!FoxPoints.token) {
-        msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Sign in to earn Fox Points on swaps.</span>';
+        msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Sign in and these points are added automatically.</span>';
         return;
       }
       try {
         const r = await FoxPoints.api('/api/swap/award', { method: 'POST', body: { signature: signature } });
         if (!r || r.error) return;
         if (r.player) { FoxPoints.server = r.player; FoxPoints.render(); }
+        dequeueSwapPoints(signature);
+        await loadSwapPoints();
+        paintSwapPoints();
         if (r.awarded > 0) {
           msg.innerHTML += ' <strong>+' + r.awarded + ' Fox Points</strong>';
         } else if (r.cappedOut) {
@@ -3992,6 +4070,7 @@
             msg.innerHTML = 'Sent, but confirmation timed out. ' +
               '<a href="https://solscan.io/tx/' + encodeURIComponent(sendErr.sentSignature) +
               '" target="_blank" rel="noopener noreferrer">Check it here</a> before trying again.';
+            awardSwapPoints(sendErr.sentSignature, msg);
             go.textContent = 'Swap';
             go.disabled = false;
             return;

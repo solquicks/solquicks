@@ -430,7 +430,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-3';
+const BUILD = 'swap-5';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -905,18 +905,16 @@ const SWAP_TOKENS = [
   { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', name: 'dogwifhat', decimals: 6 }
 ];
 
-/// ExactIn can take the fee from either side, so prefer the output token —
-/// the user is receiving it anyway, and it keeps the input amount exact.
+/// On an ExactIn swap Jupiter denominates the platform fee in the OUTPUT
+/// token, so the fee account must belong to that mint — and to that mint's own
+/// token program. Handing it an account under the wrong program fails the whole
+/// swap with IncorrectTokenProgramID (6014), which is how a Token-2022 output
+/// like PYUSD broke an otherwise fine trade. No account for the output token
+/// means no fee: the swap still goes through, it just earns nothing.
 function swapFeeAccount(inputMint, outputMint) {
-  if (SWAP_FEE_ACCOUNTS[outputMint]) return SWAP_FEE_ACCOUNTS[outputMint];
-  if (SWAP_FEE_ACCOUNTS[inputMint]) return SWAP_FEE_ACCOUNTS[inputMint];
-  return null;
+  return SWAP_FEE_ACCOUNTS[outputMint] || null;
 }
 
-
-// Points for swapping. Volume-based rather than per-swap, because per-swap
-// pays someone to bounce a dollar back and forth all day; a daily ceiling and
-// a floor on swap size make farming cost more in fees than it earns.
 const SWAP_POINTS_PER_USD = 1;
 const SWAP_POINTS_DAILY_CAP = 500;
 const SWAP_POINTS_MIN_USD = 5;
@@ -2403,6 +2401,23 @@ export default {
         return json(request, env, {
           claimed: { kind: reward.kind, amount: reward.amount, detail: reward.detail },
           player: await playerState(env, wallet)
+        });
+      }
+
+      // What a swap of this size would be worth, so the page can say it up front
+      // rather than after the fact.
+      if (path === '/api/swap/points' && request.method === 'GET') {
+        const dayStart = Date.now() - (Date.now() % 86400000);
+        const today = await env.DB.prepare(
+          'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
+        ).bind(wallet, dayStart).first();
+        const used = (today && today.n) || 0;
+        return json(request, env, {
+          perUsd: SWAP_POINTS_PER_USD,
+          minUsd: SWAP_POINTS_MIN_USD,
+          dailyCap: SWAP_POINTS_DAILY_CAP,
+          usedToday: used,
+          remaining: Math.max(0, SWAP_POINTS_DAILY_CAP - used)
         });
       }
 
