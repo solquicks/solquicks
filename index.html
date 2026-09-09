@@ -1116,6 +1116,20 @@
     .pay-tab:hover:not(.on) { color: var(--ink-soft); }
 
     /* ── CLEANUP ── */
+    .cl-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 16px; }
+    .cl-tab {
+      appearance: none; cursor: pointer; background: var(--cream);
+      border: 2px solid #E7DFD2; border-radius: 12px; padding: 10px 6px;
+      font-family: inherit; color: var(--ink-soft); text-align: center;
+    }
+    .cl-tab:hover { border-color: var(--orange); }
+    .cl-tab.on { background: var(--orange-soft); border-color: var(--orange); color: var(--ink); }
+    .cl-tab.empty { opacity: 0.55; }
+    .cl-tab-n { display: block; font-family: 'Baloo 2', sans-serif; font-size: 1.25rem; font-weight: 800; line-height: 1.1; }
+    .cl-tab-l { display: block; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 1px; }
+    .cl-pane .cl-block:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+    .cl-locked-row { opacity: 0.75; }
+
     .cl-safe { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--green); background: #E6F2EC; padding: 2px 7px; border-radius: 4px; margin-left: 7px; vertical-align: middle; }
     .cl-danger-tag { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--crimson); background: #FCE3EA; padding: 2px 7px; border-radius: 4px; margin-left: 7px; vertical-align: middle; }
     .cl-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -2013,39 +2027,58 @@
         <div id="cl-results" hidden>
           <div class="cl-summary" id="cl-summary"></div>
 
-          <div class="cl-block" id="cl-empty-block">
-            <div class="cl-block-title">Empty accounts <span class="cl-safe">nothing is destroyed</span></div>
-            <p class="cl-block-note" id="cl-empty-note"></p>
-            <button class="sw-go" id="cl-close-btn" onclick="closeEmpty()">Close them</button>
+          <div class="cl-tabs" id="cl-tabs" role="tablist">
+            <button class="cl-tab" data-cat="rent" onclick="clShow('rent')" role="tab">
+              <span class="cl-tab-n" id="cl-n-rent">0</span><span class="cl-tab-l">Unclaimed rent</span></button>
+            <button class="cl-tab" data-cat="tok" onclick="clShow('tok')" role="tab">
+              <span class="cl-tab-n" id="cl-n-tok">0</span><span class="cl-tab-l">Tokens</span></button>
+            <button class="cl-tab" data-cat="nft" onclick="clShow('nft')" role="tab">
+              <span class="cl-tab-n" id="cl-n-nft">0</span><span class="cl-tab-l">NFTs</span></button>
+            <button class="cl-tab" data-cat="locked" onclick="clShow('locked')" role="tab">
+              <span class="cl-tab-n" id="cl-n-locked">0</span><span class="cl-tab-l">Locked</span></button>
           </div>
 
-          <div class="cl-block" id="cl-wsol-block" hidden>
-            <div class="cl-block-title">Wrapped SOL <span class="cl-safe">unwraps, does not burn</span></div>
-            <p class="cl-block-note" id="cl-wsol-note"></p>
-            <button class="sw-go" id="cl-wsol-btn" onclick="unwrapSol()">Unwrap and close</button>
+          <div class="cl-pane" id="cl-pane-rent">
+            <div class="cl-block">
+              <div class="cl-block-title">Empty accounts <span class="cl-safe">nothing is destroyed</span></div>
+              <p class="cl-block-note" id="cl-empty-note"></p>
+              <button class="sw-go" id="cl-close-btn" onclick="closeEmpty()">Close them</button>
+            </div>
+            <div class="cl-block" id="cl-wsol-block" hidden>
+              <div class="cl-block-title">Wrapped SOL <span class="cl-safe">unwraps, does not burn</span></div>
+              <p class="cl-block-note" id="cl-wsol-note"></p>
+              <button class="sw-go" id="cl-wsol-btn" onclick="unwrapSol()">Unwrap and close</button>
+            </div>
           </div>
 
-          <div class="cl-block" id="cl-nft-block" hidden>
-            <div class="cl-block-title">NFTs <span class="cl-danger-tag">burning is permanent</span></div>
-            <p class="cl-block-note">Collectibles. Closing one means <strong>destroying it</strong> to reclaim
-              about 0.002 SOL. Check what it is worth before you tick anything.</p>
-            <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('nft')">Select all</button>
-              <span class="cl-count" id="cl-nft-count"></span></div>
-            <div class="cl-list" id="cl-nfts"></div>
+          <div class="cl-pane" id="cl-pane-tok" hidden>
+            <div class="cl-block">
+              <div class="cl-block-title">Tokens <span class="cl-danger-tag">burning is permanent</span></div>
+              <p class="cl-block-note" id="cl-tok-note">Fungible balances. Check the value column — a token with
+                no price is usually illiquid rather than worthless.</p>
+              <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('tok')">Select all</button>
+                <span class="cl-count" id="cl-tok-count"></span></div>
+              <div class="cl-list" id="cl-toks"></div>
+            </div>
           </div>
 
-          <div class="cl-block" id="cl-tok-block" hidden>
-            <div class="cl-block-title">Tokens <span class="cl-danger-tag">burning is permanent</span></div>
-            <p class="cl-block-note">Fungible balances. Worth checking the value column — a token with no
-              price is usually illiquid rather than worthless.</p>
-            <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('tok')">Select all</button>
-              <span class="cl-count" id="cl-tok-count"></span></div>
-            <div class="cl-list" id="cl-toks"></div>
+          <div class="cl-pane" id="cl-pane-nft" hidden>
+            <div class="cl-block">
+              <div class="cl-block-title">NFTs <span class="cl-danger-tag">burning is permanent</span></div>
+              <p class="cl-block-note" id="cl-nft-note">Collectibles. Closing one means <strong>destroying it</strong>
+                to reclaim about 0.002 SOL. Check what it is worth first.</p>
+              <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('nft')">Select all</button>
+                <span class="cl-count" id="cl-nft-count"></span></div>
+              <div class="cl-list" id="cl-nfts"></div>
+            </div>
           </div>
 
-          <div class="cl-block" id="cl-frozen-block" hidden>
-            <div class="cl-block-title">Cannot be closed</div>
-            <p class="cl-block-note" id="cl-frozen-note"></p>
+          <div class="cl-pane" id="cl-pane-locked" hidden>
+            <div class="cl-block">
+              <div class="cl-block-title">Locked elsewhere</div>
+              <p class="cl-block-note" id="cl-frozen-note"></p>
+              <div class="cl-list" id="cl-frozen-list"></div>
+            </div>
           </div>
 
           <div class="cl-confirm" id="cl-confirm" hidden>
@@ -3879,22 +3912,44 @@
       });
     }
 
+    var clCat = 'rent';
+
+    /// Switching category is just showing a pane — the selection survives it,
+    /// so a burn can span tokens and NFTs without losing what you ticked.
+    function clShow(cat) {
+      clCat = cat;
+      ['rent', 'tok', 'nft', 'locked'].forEach(function (c) {
+        const pane = document.getElementById('cl-pane-' + c);
+        if (pane) pane.hidden = c !== cat;
+        const tab = document.querySelector('.cl-tab[data-cat="' + c + '"]');
+        if (tab) tab.classList.toggle('on', c === cat);
+      });
+    }
+
     function renderCleanup() {
       const empty = clEmptyAccounts();
       const nfts = clNfts();
       const toks = clTokens();
       const frozen = clScan.accounts.filter(function (a) { return a.frozen; });
+      const wsol = clWrappedSol();
       const gross = clScan.emptyRentLamports / 1e9;
       const keep = gross * (1 - clScan.feePct / 100);
 
       document.getElementById('cl-summary').innerHTML =
         '<div class="cl-cell"><div class="cl-val' + (keep > 0 ? ' good' : '') + '">' + keep.toFixed(4) +
         '</div><div class="cl-key">SOL to reclaim</div></div>' +
-        '<div class="cl-cell"><div class="cl-val">' + empty.length + '</div><div class="cl-key">Empty accounts</div></div>' +
+        '<div class="cl-cell"><div class="cl-val">' + clScan.accounts.length + '</div><div class="cl-key">Token accounts</div></div>' +
         '<div class="cl-cell"><div class="cl-val">' + (nfts.length + toks.length) +
         '</div><div class="cl-key">Holding something</div></div>';
 
-      // ── empty accounts ──
+      // counts live on the tabs, so the shape of the wallet is visible at a glance
+      const counts = { rent: empty.length + wsol.length, tok: toks.length, nft: nfts.length, locked: frozen.length };
+      Object.keys(counts).forEach(function (c) {
+        document.getElementById('cl-n-' + c).textContent = counts[c];
+        const tab = document.querySelector('.cl-tab[data-cat="' + c + '"]');
+        if (tab) tab.classList.toggle('empty', counts[c] === 0);
+      });
+
       const note = document.getElementById('cl-empty-note');
       const closeBtn = document.getElementById('cl-close-btn');
       if (empty.length) {
@@ -3907,14 +3962,11 @@
         closeBtn.textContent = 'Close ' + empty.length + ' and reclaim ' + keep.toFixed(4) + ' ◎' +
           (txs > 1 ? ' (' + txs + ' signatures)' : '');
       } else {
-        // saying "none" beats hiding the section and looking broken
-        note.innerHTML = '<span class="cl-empty-note-none">This wallet has no empty accounts — nothing to reclaim here. ' +
-          'Try another wallet if you have one with old, sold-out tokens.</span>';
+        note.innerHTML = '<span class="cl-empty-note-none">No empty accounts in this wallet — nothing to reclaim. ' +
+          'Rent builds up as you sell or burn tokens, so try a wallet you have traded from.</span>';
         closeBtn.hidden = true;
       }
 
-      // ── wrapped SOL ──
-      const wsol = clWrappedSol();
       const wsolBlock = document.getElementById('cl-wsol-block');
       if (wsol.length) {
         const total = wsol.reduce(function (s, a) { return s + a.amount; }, 0);
@@ -3929,25 +3981,36 @@
         wsolBlock.hidden = true;
       }
 
-      document.getElementById('cl-nft-block').hidden = nfts.length === 0;
-      document.getElementById('cl-tok-block').hidden = toks.length === 0;
-      document.getElementById('cl-nfts').innerHTML = nfts.map(clRow).join('');
-      document.getElementById('cl-toks').innerHTML = toks.map(clRow).join('');
+      document.getElementById('cl-nfts').innerHTML = nfts.length
+        ? nfts.map(clRow).join('')
+        : '<div class="cl-none">No NFTs holding a balance in this wallet.</div>';
+      document.getElementById('cl-toks').innerHTML = toks.length
+        ? toks.map(clRow).join('')
+        : '<div class="cl-none">No tokens with a balance in this wallet.</div>';
+
       document.getElementById('cl-nft-count').textContent = nfts.length + ' collectible' + (nfts.length === 1 ? '' : 's');
       const priced = toks.filter(function (t) { return t.priced; }).length;
       document.getElementById('cl-tok-count').textContent =
         toks.length + ' token' + (toks.length === 1 ? '' : 's') +
         (priced ? ' · ' + priced + ' with a known price' : '');
 
-      // ── what cannot be closed, and why ──
-      const frozenBlock = document.getElementById('cl-frozen-block');
-      frozenBlock.hidden = frozen.length === 0;
-      if (frozen.length) {
-        document.getElementById('cl-frozen-note').innerHTML =
-          '<strong>' + frozen.length + '</strong> account' + (frozen.length === 1 ? ' is' : 's are') +
-          ' frozen — usually staked, listed for sale, or locked by another service. ' +
-          'They cannot be closed until they are released, so they are left out entirely.';
-      }
+      document.getElementById('cl-frozen-note').innerHTML = frozen.length
+        ? '<strong>' + frozen.length + '</strong> account' + (frozen.length === 1 ? ' is' : 's are') +
+          ' frozen — usually staked, listed for sale, or locked by another service. They cannot be ' +
+          'closed until released, so they are left out of everything above.'
+        : '<span class="cl-empty-note-none">Nothing in this wallet is locked.</span>';
+      document.getElementById('cl-frozen-list').innerHTML = frozen.map(function (a) {
+        const label = a.name || a.symbol || (a.mint.slice(0, 6) + '…' + a.mint.slice(-4));
+        return '<div class="cl-row cl-locked-row">' +
+          (a.image ? '<img src="' + escapeHtml(a.image) + '" alt="" loading="lazy">' : '<img alt="">') +
+          '<span class="cl-body"><span class="cl-name">' + escapeHtml(label) + '</span>' +
+          '<span class="cl-sub">' + a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 }) + '</span></span>' +
+          '<span class="cl-worth">locked</span></div>';
+      }).join('');
+
+      // open on whatever this wallet actually has something to do in
+      const first = counts.rent ? 'rent' : counts.tok ? 'tok' : counts.nft ? 'nft' : 'locked';
+      clShow(clCat && counts[clCat] ? clCat : first);
       paintBurnConfirm();
     }
 
