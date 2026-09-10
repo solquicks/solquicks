@@ -77,19 +77,39 @@ serious mistake.
 
 ## P3 — revenue that already works but isn't collected
 
-**6. Claim the swap fees, and decide where they should land.**
-The 20 bps fee is working on mainnet — real money has accrued:
+**6. Swap fees — investigated 2026-09-10, deliberately left to accrue.**
 
-| Token | Balance |
-|---|---|
-| USDC | 0.047564 |
-| SOL | 0.000465 |
-| PYUSD | 0.299840 |
+The 20 bps fee works and the money is provably yours: all three fee accounts in
+`SWAP_FEE_ACCOUNTS` derive as `["referral_ata", 5Vrx9Gi4…, mint]`, and that
+referral account's partner is `31jpe6JU…`. Its `shareBps` is **10000 — you keep
+100%** of the fee, Jupiter takes nothing. (The Ultra account you also created is
+8000 = 80%, so the site is on the better of the two.)
 
-About $0.40 total, so this is proof-of-mechanism rather than income. Two
-decisions: claim it through Jupiter's referral dashboard, and decide whether the
-referral account should keep paying out to `31jpe…` or be repointed to the
-Seeker like everything else.
+Balances at the time of checking: USDC 0.047564, wSOL 0.002245, PYUSD 0.29984 —
+about **$0.57** total.
+
+Not claimed, for two reasons:
+
+- None of the three destination token accounts exist in `31jpe6JU…`, so claiming
+  creates all three and locks **~0.00615 SOL (~$0.61)** in rent — more than the
+  fees are worth. The rent is recoverable later (the cleanup tool reclaims
+  exactly this), but it is not a trip worth making yet.
+- `claim` pays the **partner**, and the partner is the hot wallet, not the
+  Seeker.
+
+Nothing is at risk while waiting: the fee accounts are owned by the referral
+program and only the partner's own ATA can receive a claim.
+
+**When you do want it**, the order matters. The Jupiter referral program has
+`transferReferralAccount` (signed by the current partner, one transaction, empty
+params). Because the fee-account PDAs derive from the *referral account* and not
+the partner, transferring it to `solquicks.skr` routes both accrued and future
+fees to the Seeker **with no change to the site at all** — `SWAP_FEE_ACCOUNTS`
+stays exactly as it is. Transfer first, then claim.
+
+`claim` is permissionless — only the `payer` signs, so it can be cranked at any
+time, by anyone, once the balances justify the ~0.006 SOL of rent. Somewhere
+north of $10 is when it starts being obviously worth it.
 
 **7. ~~The plushie award is farmable.~~ Fixed 2026-09-09.**
 The Buy Now click no longer awards anything. Points come from a code issued per
@@ -135,8 +155,8 @@ Done today: all of P0, the plushie leak, and `/api/migrate`. Both known ways to
 mint points without earning them are closed.
 
 Open, in the order I'd take them: **the two blank names** (needs the owners or
-the swap-store operator — not a code problem), then the swap fees and the Book
-The Fox wording. The mainnet
+the swap-store operator — not a code problem), then the Book The Fox wording.
+The swap fees are deliberately parked until they outgrow the rent. The mainnet
 deploy sits blocked on ~1.8 SOL and nothing about it expires.
 
 One consequence worth deciding on: points earned before signing in now vanish
