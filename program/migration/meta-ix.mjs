@@ -1,7 +1,7 @@
-// Builds a Token Metadata UpdateMetadataAccountV2 that changes ONLY the uri.
-// Everything else — name, symbol, royalty, creators, collection — is read back
-// off the account and re-sent unchanged, because DataV2 replaces the whole
-// struct and anything omitted would be wiped.
+// Builds a Token Metadata UpdateMetadataAccountV2 that changes only the uri,
+// and optionally the name. Everything else — symbol, royalty, creators,
+// collection — is read back off the account and re-sent unchanged, because
+// DataV2 replaces the whole struct and anything omitted would be wiped.
 export const TMETA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
 
 const str = (s) => {
@@ -65,7 +65,7 @@ export function parseMetadata(buf, b58decode) {
            creators, primarySaleHappened, isMutable, tokenStandard, collection, uses };
 }
 
-export function updateUriIxData(meta, newUri, newCreators) {
+export function updateUriIxData(meta, newUri, newCreators, newName) {
   const creators = newCreators || meta.creators;
   const creatorBytes = creators.length
     ? cat(new Uint8Array([1]), (() => { const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, creators.length, true); return n; })(),
@@ -80,8 +80,8 @@ export function updateUriIxData(meta, newUri, newCreators) {
     : new Uint8Array([0]);
   const usesBytes = meta.uses ? cat(new Uint8Array([1]), meta.uses) : new Uint8Array([0]);
 
-  const dataV2 = cat(str(meta.name), str(meta.symbol), str(newUri), fee,
-                     creatorBytes, collectionBytes, usesBytes);
+  const dataV2 = cat(str(newName == null ? meta.name : newName), str(meta.symbol),
+                     str(newUri), fee, creatorBytes, collectionBytes, usesBytes);
 
   return cat(
     new Uint8Array([15]),        // UpdateMetadataAccountV2

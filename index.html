@@ -1211,6 +1211,31 @@
     .cl-tag-unpriced { color: #B5821F; }
     .cl-worth { font-weight: 800; font-size: 0.84rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
+    /* live running total of the current burn selection */
+    .cl-tally {
+      background: var(--cream); border: var(--line); border-radius: 14px;
+      padding: 13px 15px; margin-bottom: 12px; box-shadow: var(--pop);
+    }
+    .cl-tally-main { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .cl-tally-label {
+      font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .cl-tally-sol {
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1.45rem;
+      color: var(--green); line-height: 1.1; font-variant-numeric: tabular-nums;
+    }
+    .cl-tally-sol span { font-size: 0.8rem; }
+    .cl-tally-usd { font-size: 0.85rem; font-weight: 700; color: var(--muted); }
+    .cl-tally-break {
+      font-size: 0.72rem; color: var(--muted); margin-top: 5px;
+      font-variant-numeric: tabular-nums; line-height: 1.5;
+    }
+    .cl-rent {
+      display: block; font-size: 0.7rem; font-weight: 700;
+      color: var(--green); margin-top: 2px;
+    }
+
     .cl-confirm { background: #FCEEF1; border: 2px solid var(--crimson); border-radius: 14px; padding: 14px; }
     .cl-confirm-note { font-size: 0.84rem; color: var(--ink); line-height: 1.5; margin: 0 0 10px; }
     .cl-where { display: block; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--crimson); margin-bottom: 5px; }
@@ -2140,6 +2165,18 @@
               <p class="cl-block-note" id="cl-frozen-note"></p>
               <div class="cl-list" id="cl-frozen-list"></div>
             </div>
+          </div>
+
+          <!-- Live running total. The rent figure is the account's real lamports
+               from the scan, not an assumed constant, so this is what actually
+               lands minus the fee. -->
+          <div class="cl-tally" id="cl-tally" hidden>
+            <div class="cl-tally-main">
+              <span class="cl-tally-label">You get back</span>
+              <span class="cl-tally-sol" id="cl-tally-sol">0.0000 <span>SOL</span></span>
+              <span class="cl-tally-usd" id="cl-tally-usd"></span>
+            </div>
+            <div class="cl-tally-break" id="cl-tally-break"></div>
           </div>
 
           <div class="cl-confirm" id="cl-confirm" hidden>
@@ -4104,7 +4141,8 @@
         (a.symbol && !a.nft ? ' ' + escapeHtml(a.symbol) : '') + '</span>' +
         (tags.length ? '<span class="cl-tagline">' + tags.join('') + '</span>' : '') +
         '</span>' +
-        '<span class="cl-worth">' + (a.priced ? '$' + a.usd.toFixed(2) : '—') + '</span></label>';
+        '<span class="cl-worth">' + (a.priced ? '$' + a.usd.toFixed(2) : '—') +
+        '<span class="cl-rent">+' + (a.rent / 1e9).toFixed(5) + ' ◎</span></span></label>';
     }
 
     /// Select-all is per group, and it toggles — so it is as easy to clear a
@@ -4126,11 +4164,41 @@
       paintBurnConfirm();
     }
 
+    /// Running total of what the current selection actually returns. Every
+    /// account carries its own rent from the scan, so this is the real figure
+    /// rather than a count multiplied by an assumed rent.
+    function paintTally(chosen) {
+      const bar = document.getElementById('cl-tally');
+      if (!chosen.length) { bar.hidden = true; return; }
+      bar.hidden = false;
+
+      const grossLamports = chosen.reduce(function (s, a) { return s + a.rent; }, 0);
+      const gross = grossLamports / 1e9;
+      const fee = gross * (clScan.feePct / 100);
+      const keep = gross - fee;
+      const price = Number(clScan.solUsd) || 0;
+
+      document.getElementById('cl-tally-sol').innerHTML =
+        keep.toFixed(4) + ' <span>SOL</span>';
+      document.getElementById('cl-tally-usd').textContent =
+        price ? '≈ $' + (keep * price).toFixed(2) : '';
+
+      const pts = chosen.length * (clScan.pointsPerBurn || 0);
+      const parts = [
+        chosen.length + ' account' + (chosen.length === 1 ? '' : 's') + ' selected',
+        gross.toFixed(4) + ' ◎ rent',
+        '− ' + fee.toFixed(4) + ' ◎ fee (' + clScan.feePct + '%)'
+      ];
+      if (pts) parts.push('+' + pts.toLocaleString() + ' Fox Points');
+      document.getElementById('cl-tally-break').textContent = parts.join('   ·   ');
+    }
+
     /// The confirm step spells out exactly what is about to be destroyed, in
     /// dollars where a price exists and by name where it does not.
     function paintBurnConfirm() {
       const wrap = document.getElementById('cl-confirm');
       const chosen = clHeldAccounts().filter(function (a) { return clSelected[a.account]; });
+      paintTally(chosen);
       if (!chosen.length) { wrap.hidden = true; return; }
       wrap.hidden = false;
 

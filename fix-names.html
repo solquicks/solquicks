@@ -1,0 +1,337 @@
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>Moon Rangers — Duplicate Name Fix</title>
+<link rel="icon" href="avatar.png"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"/>
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
+<style>
+  :root {
+    --bg:#16121F; --card:#201A31; --sunk:#1B1628; --ink:#F3EFFA; --soft:#C7BFDA;
+    --muted:#948BAC; --line:#322A47; --gold:#FFD98A; --orange:#FF9A3D; --ok:#5FC79B; --bad:#E8705F;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;padding:40px 20px 80px;
+    font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:14px;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-family:'Baloo 2',sans-serif;font-size:1.8rem;font-weight:800;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:14px}
+  .fix{border-left:3px solid var(--orange);padding-left:14px;margin:16px 0}
+  .fix h3{font-family:'Baloo 2',sans-serif;margin:0 0 6px;font-size:1.05rem}
+  .row{display:flex;justify-content:space-between;gap:14px;padding:5px 0}
+  .row b{color:var(--muted);font-weight:400;flex-shrink:0}
+  .row span{color:var(--gold);text-align:right;word-break:break-all}
+  .was{color:var(--bad);text-decoration:line-through}
+  .now{color:var(--ok);font-weight:700}
+  button{appearance:none;border:none;cursor:pointer;width:100%;background:var(--orange);color:#1B1628;
+    font-family:'Baloo 2',sans-serif;font-weight:800;font-size:1rem;border-radius:999px;padding:13px 20px;margin-top:12px}
+  button:disabled{background:#3A3252;color:var(--muted);cursor:default}
+  button.ghost{background:transparent;border:2px solid var(--line);color:var(--soft)}
+  .warn{background:#2E1C1A;border:1px solid var(--bad);border-radius:10px;padding:14px 16px;margin-bottom:14px;color:var(--soft)}
+  .warn b{color:var(--bad)}
+  .log{background:var(--sunk);border-radius:8px;padding:12px 14px;max-height:260px;overflow-y:auto;font-size:12px;white-space:pre-wrap}
+  .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
+</style>
+
+<div class="wrap">
+  <h1>Duplicate Name Fix</h1>
+  <p class="sub">Two Rangers currently share a name with a different Ranger.</p>
+
+  <div class="warn">
+    <b>This rewrites metadata on mainnet.</b> Only the <b>name</b> and the <b>uri</b>
+    change. Symbol, royalty, creators, collection and the artwork are read off the
+    account and re-sent exactly as they are. The two Rangers keeping their names are
+    not touched at all.
+  </div>
+
+  <div class="card">
+    <div class="fix">
+      <h3>Ranger #320 &rarr; Ranger #46</h3>
+      <div class="row"><b>Mint</b><span>GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz</span></div>
+      <div class="row"><b>Why</b><span>trait-swapped; the untouched <span class="was">#320</span> matches its design exactly</span></div>
+      <div class="row"><b>Name</b><span><span class="was">Ranger #320</span> &rarr; <span class="now">Ranger #46</span></span></div>
+      <div class="row"><b>#46 is</b><span>free — its own mint identity</span></div>
+    </div>
+    <div class="fix">
+      <h3>Ranger #64 &rarr; Ranger #205</h3>
+      <div class="row"><b>Mint</b><span>FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm</span></div>
+      <div class="row"><b>Why</b><span>trait-swapped; the untouched <span class="was">#64</span> matches its design exactly</span></div>
+      <div class="row"><b>Name</b><span><span class="was">Ranger #64</span> &rarr; <span class="now">Ranger #205</span></span></div>
+      <div class="row"><b>#205 is</b><span>free — its own mint identity</span></div>
+    </div>
+
+    <button id="connect">Connect the update authority</button>
+    <button id="check" class="ghost" disabled>Check what is on chain now</button>
+    <button id="apply" disabled>Apply both fixes</button>
+  </div>
+
+  <div class="card"><div class="log" id="log"><span class="dim">Waiting…</span></div></div>
+</div>
+
+<script>
+  // The public mainnet RPC returns 403 to browser requests, so this goes through
+  // the site's own proxy — which only accepts requests from solquicks.com.
+  const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
+  const TMETA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
+  const UPDATE_AUTHORITY = '31jpe6JUemS1YBSnjn8uR9vgfb2eXVAGwGyssMzz6HBU';
+  const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  const FIXES = [
+    { mint: 'GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz',
+      was: 'Ranger #320', name: 'Ranger #46',
+      uri: 'https://arweave.net/7ongffX03wfQVPOij7GeTqKljI49NMz7SrcR9QRHUNw' },
+    { mint: 'FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm',
+      was: 'Ranger #64', name: 'Ranger #205',
+      uri: 'https://arweave.net/JXERNwmXneqA7FndMJ3VB61pw_sWob076HA5cleJCiQ' }
+  ];
+
+  const w3 = () => window.solanaWeb3;
+  let provider = null, walletKey = null;
+
+  function log(m, c) {
+    const el = document.getElementById('log');
+    if (el.firstChild && el.firstChild.className === 'dim') el.textContent = '';
+    const d = document.createElement('div');
+    if (c) d.className = c;
+    d.textContent = m;
+    el.appendChild(d); el.scrollTop = el.scrollHeight;
+  }
+
+  function b58encode(bytes) {
+    const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const digits = [0];
+    for (let i = 0; i < input.length; i++) {
+      let carry = input[i];
+      for (let j = 0; j < digits.length; j++) {
+        carry += digits[j] << 8; digits[j] = carry % 58; carry = (carry / 58) | 0;
+      }
+      while (carry) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+    }
+    let out = '';
+    for (let i = 0; i < input.length && input[i] === 0; i++) out += '1';
+    for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]];
+    return out;
+  }
+  function signatureOf(v) {
+    if (typeof v === 'string') return v;
+    if (v && typeof v.signature === 'string') return v.signature;
+    return b58encode((v && v.signature) || v);
+  }
+
+  const str = (s) => {
+    const b = new TextEncoder().encode(s);
+    const out = new Uint8Array(4 + b.length);
+    new DataView(out.buffer).setUint32(0, b.length, true);
+    out.set(b, 4); return out;
+  };
+  const cat = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  };
+
+  // DataV2 replaces the whole struct, so every field not being changed is read
+  // off the account and re-sent byte for byte. Omitting one wipes it.
+  function parseMetadata(buf) {
+    let o = 0;
+    const key = buf[o]; o += 1;
+    const updateAuthority = buf.subarray(o, o + 32); o += 32;
+    const mint = buf.subarray(o, o + 32); o += 32;
+    const dv = new DataView(buf.buffer, buf.byteOffset);
+    const readStr = () => {
+      const len = dv.getUint32(o, true); o += 4;
+      const s = new TextDecoder().decode(buf.subarray(o, o + len)).replace(/\0+$/, '');
+      o += len; return s;
+    };
+    const name = readStr(), symbol = readStr(), uri = readStr();
+    const sellerFeeBasisPoints = dv.getUint16(o, true); o += 2;
+    const creators = [];
+    if (buf[o++]) {
+      const n = dv.getUint32(o, true); o += 4;
+      for (let i = 0; i < n; i++) {
+        creators.push({ address: buf.subarray(o, o + 32), verified: !!buf[o + 32], share: buf[o + 33] });
+        o += 34;
+      }
+    }
+    o += 1; // primary_sale_happened
+    o += 1; // is_mutable
+    if (buf[o++]) o += 1;                    // edition nonce
+    const hasTS = buf[o++]; if (hasTS) o += 1; // token standard
+    let collection = null;
+    if (buf[o++]) { collection = { verified: !!buf[o], key: buf.subarray(o + 1, o + 33) }; o += 33; }
+    let uses = null;
+    if (buf[o++]) { uses = buf.subarray(o, o + 17); o += 17; }
+    return { key, updateAuthority, mint, name, symbol, uri, sellerFeeBasisPoints, creators, collection, uses };
+  }
+
+  function updateIxData(meta, newUri, newName) {
+    const creatorBytes = meta.creators.length
+      ? cat(new Uint8Array([1]),
+          (() => { const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, meta.creators.length, true); return n; })(),
+          ...meta.creators.map((c) => cat(c.address, new Uint8Array([c.verified ? 1 : 0, c.share]))))
+      : new Uint8Array([0]);
+    const fee = new Uint8Array(2);
+    new DataView(fee.buffer).setUint16(0, meta.sellerFeeBasisPoints, true);
+    const collectionBytes = meta.collection
+      ? cat(new Uint8Array([1, meta.collection.verified ? 1 : 0]), meta.collection.key)
+      : new Uint8Array([0]);
+    const usesBytes = meta.uses ? cat(new Uint8Array([1]), meta.uses) : new Uint8Array([0]);
+    const dataV2 = cat(str(newName), str(meta.symbol), str(newUri), fee,
+                       creatorBytes, collectionBytes, usesBytes);
+    return cat(new Uint8Array([15]), new Uint8Array([1]), dataV2,
+               new Uint8Array([0]), new Uint8Array([0]), new Uint8Array([0]));
+  }
+
+  function metadataPda(mintStr) {
+    const { PublicKey } = w3();
+    return PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('metadata'), new PublicKey(TMETA).toBytes(), new PublicKey(mintStr).toBytes()],
+      new PublicKey(TMETA))[0];
+  }
+
+  // The proxy rejects web3.js's solana-client header in preflight.
+  function conn() {
+    return new (w3().Connection)(RPC, {
+      commitment: 'confirmed',
+      fetchMiddleware: function (url, options, next) {
+        if (options && options.headers) {
+          delete options.headers['solana-client'];
+          delete options.headers['Solana-Client'];
+        }
+        next(url, options);
+      }
+    });
+  }
+
+  async function confirmSig(c, sig) {
+    for (let i = 0; i < 45; i++) {
+      const st = await c.getSignatureStatuses([sig]);
+      const v = st && st.value && st.value[0];
+      if (v && v.err) throw new Error('failed on chain: ' + JSON.stringify(v.err));
+      if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) return;
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    throw new Error('not confirmed in time — check ' + sig);
+  }
+
+  function wallets() {
+    const found = [];
+    const register = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const w = arguments[i];
+        if (w && w.features && w.features['standard:connect'] &&
+            (w.chains || []).some((c) => String(c).indexOf('solana') === 0)) found.push({ kind: 'standard', name: w.name, w: w });
+      }
+    };
+    try {
+      window.addEventListener('wallet-standard:register-wallet', (e) => { try { e.detail({ register: register }); } catch (x) {} });
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
+    } catch (e) {}
+    const seen = {}; found.forEach((f) => { seen[f.name] = true; });
+    [{ name: 'Solflare', p: window.solflare }, { name: 'Backpack', p: window.backpack },
+     { name: 'Glow', p: window.glow }, { name: 'Solana Wallet', p: window.solana }]
+      .forEach((e) => { if (e.p && typeof e.p.connect === 'function' && !seen[e.name]) found.push({ kind: 'injected', name: e.name, w: e.p }); });
+    return found;
+  }
+
+  document.getElementById('connect').onclick = async function () {
+    const list = wallets();
+    if (!list.length) { log('No Solana wallet found in this browser.', 'bad'); return; }
+    const t = list[0];
+    try {
+      if (t.kind === 'standard') {
+        const res = await t.w.features['standard:connect'].connect();
+        walletKey = ((res && res.accounts && res.accounts[0]) || t.w.accounts[0]).address;
+      } else {
+        const res = await t.w.connect();
+        walletKey = ((res && res.publicKey) ? res.publicKey : t.w.publicKey).toString();
+      }
+      provider = t;
+      if (walletKey !== UPDATE_AUTHORITY) {
+        log('Connected ' + walletKey, 'dim');
+        log('That is not the update authority. Connect ' + UPDATE_AUTHORITY + ' instead.', 'bad');
+        return;
+      }
+      log('Connected the update authority.', 'ok');
+      document.getElementById('check').disabled = false;
+    } catch (e) { log('Connection cancelled.', 'dim'); }
+  };
+
+  document.getElementById('check').onclick = async function () {
+    const c = conn();
+    let ready = true;
+    for (const f of FIXES) {
+      try {
+        const info = await c.getAccountInfo(metadataPda(f.mint));
+        const meta = parseMetadata(new Uint8Array(info.data));
+        const authOk = b58encode(meta.updateAuthority) === UPDATE_AUTHORITY;
+        log(f.mint.slice(0, 12) + '…  name now ' + JSON.stringify(meta.name) +
+            '  creators ' + meta.creators.length +
+            '  collection ' + (meta.collection ? 'yes' : 'NO') +
+            '  royalty ' + meta.sellerFeeBasisPoints + 'bps');
+        if (meta.name !== f.was) { log('   expected ' + JSON.stringify(f.was) + ' — already changed? Stopping.', 'bad'); ready = false; }
+        if (!authOk) { log('   update authority does not match. Stopping.', 'bad'); ready = false; }
+        const j = await (await fetch(f.uri)).json();
+        if (j.name !== f.name) { log('   the new JSON does not say ' + f.name + '. Stopping.', 'bad'); ready = false; }
+        else log('   new JSON verified on Arweave: ' + JSON.stringify(j.name), 'ok');
+      } catch (e) { log('   could not read: ' + e.message, 'bad'); ready = false; }
+    }
+    document.getElementById('apply').disabled = !ready;
+    log(ready ? 'Checks passed. Ready to apply.' : 'Not safe to apply.', ready ? 'ok' : 'bad');
+  };
+
+  document.getElementById('apply').onclick = async function () {
+    const btn = document.getElementById('apply');
+    btn.disabled = true; btn.textContent = 'Check your wallet…';
+    const { PublicKey, Transaction, TransactionInstruction } = w3();
+    const c = conn();
+    try {
+      for (const f of FIXES) {
+        const pda = metadataPda(f.mint);
+        const info = await c.getAccountInfo(pda);
+        const meta = parseMetadata(new Uint8Array(info.data));
+        const ix = new TransactionInstruction({
+          programId: new PublicKey(TMETA),
+          keys: [
+            { pubkey: pda, isSigner: false, isWritable: true },
+            { pubkey: new PublicKey(walletKey), isSigner: true, isWritable: false }
+          ],
+          data: updateIxData(meta, f.uri, f.name)
+        });
+        const tx = new Transaction().add(ix);
+        tx.feePayer = new PublicKey(walletKey);
+        tx.recentBlockhash = (await c.getLatestBlockhash('confirmed')).blockhash;
+
+        const sim = await c.simulateTransaction(tx);
+        if (sim.value.err) throw new Error(f.name + ' simulation failed: ' + JSON.stringify(sim.value.err));
+        log(f.was + ' -> ' + f.name + ': simulated cleanly', 'ok');
+
+        let sig;
+        if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+          const r = await provider.w.signAndSendTransaction(tx);
+          sig = signatureOf(r.signature || r);
+        } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+          sig = await c.sendRawTransaction((await provider.w.signTransaction(tx)).serialize());
+        } else {
+          const feat = provider.w.features['solana:signAndSendTransaction'];
+          const out = await feat.signAndSendTransaction({
+            account: provider.w.accounts[0], chain: 'solana:mainnet',
+            transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+          });
+          sig = signatureOf(out[0].signature);
+        }
+        log('   sent ' + sig);
+        await confirmSig(c, sig);
+        log('   confirmed — now ' + f.name, 'ok');
+      }
+      log('');
+      log('Both fixed. No Ranger shares a name any more.', 'ok');
+      log('Wallets and marketplaces cache metadata; give them a few hours.', 'dim');
+      btn.textContent = 'Done';
+    } catch (e) {
+      log(e.message || 'Failed.', 'bad');
+      btn.disabled = false; btn.textContent = 'Apply both fixes';
+    }
+  };
+</script>

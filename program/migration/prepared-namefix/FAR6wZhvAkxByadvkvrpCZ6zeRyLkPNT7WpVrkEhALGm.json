@@ -1,0 +1,54 @@
+{
+  "name": "Ranger #205",
+  "symbol": "MNRNG",
+  "description": "Flight Class 1 - the first Rangers in Solana Space.",
+  "external_url": "",
+  "seller_fee_basis_points": 300,
+  "image": "https://arweave.net/cMRq_wEHfd8ZO-978cE4B7gBbg1wUcxJmjGs0q6Wx-g",
+  "attributes": [
+    {
+      "trait_type": "Background",
+      "value": "Soul"
+    },
+    {
+      "trait_type": "Fur",
+      "value": "Galaxy"
+    },
+    {
+      "trait_type": "Eyes",
+      "value": "Science Officer"
+    },
+    {
+      "trait_type": "Flight Jacket",
+      "value": "Froad"
+    },
+    {
+      "trait_type": "Mouth",
+      "value": "Stoic"
+    },
+    {
+      "trait_type": "Head",
+      "value": "Headband"
+    },
+    {
+      "trait_type": "Moon Gun",
+      "value": "Rifle"
+    },
+    {
+      "trait_type": "Rarity Rank",
+      "value": 862
+    }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://arweave.net/cMRq_wEHfd8ZO-978cE4B7gBbg1wUcxJmjGs0q6Wx-g",
+        "type": "image/png"
+      }
+    ]
+  },
+  "collection": {
+    "name": "Moon Rangers",
+    "family": "LaunchMyNFT"
+  }
+}
