@@ -343,7 +343,10 @@ const RATE_RULES = [
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
-  { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 }
+  { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
+  // Guessing a code is infeasible (32^10), so this is not the thing standing
+  // between an attacker and the points — it just stops anyone hammering it.
+  { match: ['/api/plushie/redeem'], name: 'plushie', by: 'ip', limit: 10, windowMs: 60000 }
 ];
 
 async function rateLimited(request, env, path, wallet) {
@@ -456,7 +459,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'onchain-ready-1';
+const BUILD = 'plushie-codes-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1816,6 +1819,45 @@ export default {
         return json(request, env, { ok: true, ref: ref, approved: !!ok });
       }
 
+      // ── admin: plushie codes ──
+      // One code per real order. Generated here rather than derived from the
+      // order number so that knowing someone's order number is not enough to
+      // claim their points.
+      if (path === '/api/admin/plushie/codes' && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const body = await request.json().catch(function () { return {}; });
+        const count = Math.min(Math.max(parseInt(body.count, 10) || 1, 1), 50);
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1
+        const made = [];
+        for (let i = 0; i < count; i++) {
+          const bytes = crypto.getRandomValues(new Uint8Array(10));
+          let code = 'FOX-';
+          for (let j = 0; j < 10; j++) {
+            if (j === 5) code += '-';
+            code += alphabet[bytes[j] % alphabet.length];
+          }
+          await env.DB.prepare(
+            'INSERT INTO plushie_codes (code, note, created_at) VALUES (?, ?, ?)'
+          ).bind(code, body.note || null, Date.now()).run();
+          made.push(code);
+        }
+        return json(request, env, { codes: made });
+      }
+
+      if (path === '/api/admin/plushie/codes' && request.method === 'GET') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const rows = await env.DB.prepare(
+          'SELECT code, note, created_at, redeemed_by, redeemed_at FROM plushie_codes ORDER BY created_at DESC LIMIT 200'
+        ).all();
+        return json(request, env, { codes: rows.results || [] });
+      }
+
       if (path === '/api/admin/bookings' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
         if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
@@ -2791,22 +2833,43 @@ export default {
 
       if (path === '/api/award' && request.method === 'POST') {
         const { type } = await request.json();
-        if (!['plushie', 'game', 'gacha'].includes(type)) {
+        // 'plushie' is deliberately not claimable here. It used to be, triggered
+        // by the Buy Now click — which awarded 500 points to anyone who clicked
+        // and never bought. It is now earned only by redeeming a code issued
+        // against a real order, at /api/plushie/redeem.
+        if (!['game', 'gacha'].includes(type)) {
           return json(request, env, { error: 'unknown award' }, 400);
-        }
-        // plushie is still click-triggered pending store.fun order verification;
-        // capped at once per day per wallet so it cannot be farmed in bulk
-        if (type === 'plushie') {
-          const since = Date.now() - DAY_MS;
-          const recent = await env.DB.prepare(
-            'SELECT COUNT(*) AS n FROM events WHERE wallet = ? AND type = ? AND ts > ?'
-          ).bind(wallet, 'plushie', since).first();
-          if (recent && recent.n > 0) {
-            return json(request, env, { awarded: 0, reason: 'already awarded today', player: await playerState(env, wallet) });
-          }
         }
         await addPoints(env, wallet, type, AWARDS[type]);
         return json(request, env, { awarded: AWARDS[type], player: await playerState(env, wallet) });
+      }
+
+      // Redeeming a plushie code. The code is the proof of purchase: it is
+      // issued by hand against a real store.fun order, and burned on first use,
+      // so a code cannot be shared around to farm points across wallets.
+      if (path === '/api/plushie/redeem' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const code = String(body.code || '').trim().toUpperCase();
+        if (!code) return json(request, env, { error: 'Enter the code from your order.' }, 400);
+
+        const row = await env.DB.prepare('SELECT * FROM plushie_codes WHERE code = ?').bind(code).first();
+        // Same message whether the code is unknown or already used: telling the
+        // difference apart would let someone probe for valid codes.
+        if (!row || row.redeemed_at) {
+          return json(request, env, { error: 'That code is not valid, or it has already been used.' }, 400);
+        }
+
+        // Claim it with a conditional write. Two requests racing the same code
+        // both see redeemed_at IS NULL above; only one can win here.
+        const claim = await env.DB.prepare(
+          'UPDATE plushie_codes SET redeemed_by = ?, redeemed_at = ? WHERE code = ? AND redeemed_at IS NULL'
+        ).bind(wallet, Date.now(), code).run();
+        if (!claim.meta || claim.meta.changes !== 1) {
+          return json(request, env, { error: 'That code is not valid, or it has already been used.' }, 400);
+        }
+
+        await addPoints(env, wallet, 'plushie', AWARDS.plushie);
+        return json(request, env, { awarded: AWARDS.plushie, player: await playerState(env, wallet) });
       }
 
       if (path === '/api/migrate' && request.method === 'POST') {

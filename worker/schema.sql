@@ -46,3 +46,15 @@ CREATE TABLE IF NOT EXISTS payments (
   purpose   TEXT NOT NULL,
   ts        INTEGER NOT NULL
 );
+
+-- Plushie points used to be granted for clicking "Buy Now", which awarded 500
+-- points to anyone who clicked and never bought. Points are now tied to a code
+-- issued per real store.fun order and redeemable exactly once.
+CREATE TABLE IF NOT EXISTS plushie_codes (
+  code        TEXT PRIMARY KEY,
+  note        TEXT,
+  created_at  INTEGER NOT NULL,
+  redeemed_by TEXT,
+  redeemed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_plushie_unredeemed ON plushie_codes(redeemed_at);
