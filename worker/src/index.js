@@ -6,7 +6,6 @@ const DAY_MS = 86400000;
 const STAKE_RATE_PER_DAY = 100;
 const SESSION_TTL_MS = 30 * DAY_MS;
 const NONCE_TTL_MS = 5 * 60 * 1000;
-const MAX_MIGRATE = 5000; // ceiling on one-time localStorage import
 const FLIP_MIN = 10;
 const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
 
@@ -288,7 +287,7 @@ async function saveStake(env, wallet, s) {
 }
 
 async function playerState(env, wallet) {
-  const p = await env.DB.prepare('SELECT points, last_visit, migrated FROM players WHERE wallet = ?').bind(wallet).first();
+  const p = await env.DB.prepare('SELECT points, last_visit FROM players WHERE wallet = ?').bind(wallet).first();
   const log = await env.DB.prepare('SELECT type, points, ts FROM events WHERE wallet = ? ORDER BY ts DESC LIMIT 50').bind(wallet).all();
   const s = await loadStake(env, wallet);
   const staked = await env.DB.prepare('SELECT mint FROM staked_nfts WHERE wallet = ?').bind(wallet).all();
@@ -301,7 +300,6 @@ async function playerState(env, wallet) {
     points: claimed,
     pending: pending,
     total: claimed + pending,
-    migrated: p ? !!p.migrated : false,
     lastVisit: p ? p.last_visit : null,
     dailyAvailable: !p || p.last_visit !== today,
     dailyAmount: AWARDS.visit,
@@ -323,7 +321,7 @@ async function playerState(env, wallet) {
 const RATE_RULES = [
   { match: ['/api/nonce', '/api/session'], name: 'auth', by: 'ip', limit: 10, windowMs: 60000 },
   { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
-  { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake', '/api/migrate'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/flip'], name: 'flip', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/mission', '/api/mission/claim'], name: 'mission', by: 'wallet', limit: 40, windowMs: 60000 },
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
@@ -459,7 +457,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'plushie-codes-1';
+const BUILD = 'no-migrate-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2870,16 +2868,6 @@ export default {
 
         await addPoints(env, wallet, 'plushie', AWARDS.plushie);
         return json(request, env, { awarded: AWARDS.plushie, player: await playerState(env, wallet) });
-      }
-
-      if (path === '/api/migrate' && request.method === 'POST') {
-        const { points } = await request.json();
-        const p = await env.DB.prepare('SELECT migrated FROM players WHERE wallet = ?').bind(wallet).first();
-        if (p && p.migrated) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
-        const amount = Math.max(0, Math.min(MAX_MIGRATE, Math.floor(Number(points) || 0)));
-        await env.DB.prepare('UPDATE players SET migrated = 1 WHERE wallet = ?').bind(wallet).run();
-        if (amount > 0) await addPoints(env, wallet, 'migrated', amount);
-        return json(request, env, { awarded: amount, player: await playerState(env, wallet) });
       }
 
       return json(request, env, { error: 'not found' }, 404);

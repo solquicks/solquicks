@@ -2957,13 +2957,13 @@
         this.server = s.player;
         this.saveToken(s.token, s.expires, wallet);
 
-        // one-time carry-over of anonymous points
-        if (!s.player.migrated) {
-          const local = this.load();
-          const r = await this.api('/api/migrate', { method: 'POST', body: { points: local.total || 0 } });
-          if (r && r.player) this.server = r.player;
-          try { localStorage.removeItem('foxpoints'); } catch (e) {}
-        }
+        // Points earned before signing in were only ever a browser-side tally,
+        // and the browser is the one reporting the number — there is no way to
+        // tell a real tally from an invented one. It used to be carried over on
+        // sign-in, which meant any new wallet could claim 5,000 points by
+        // asking. The local copy is now simply discarded; the server's balance
+        // is the only one that counts.
+        try { localStorage.removeItem('foxpoints'); } catch (e) {}
         this.render();
         renderLeaderboard();
         if (typeof loadRangers === 'function') loadRangers();
