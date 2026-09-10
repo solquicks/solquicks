@@ -1,0 +1,347 @@
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex, nofollow"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.workers.dev;"/>
+<title>Moon Stake — Mainnet Setup</title>
+<link rel="icon" href="avatar.png"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"/>
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
+<style>
+  :root {
+    --bg: #16121F; --card: #201A31; --sunk: #1B1628;
+    --ink: #F3EFFA; --soft: #C7BFDA; --muted: #948BAC; --line: #322A47;
+    --gold: #FFD98A; --orange: #FF9A3D; --ok: #5FC79B; --bad: #E8705F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); margin: 0; padding: 40px 20px 80px;
+    font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.6;
+  }
+  .wrap { max-width: 700px; margin: 0 auto; }
+  h1 { font-family: 'Baloo 2', sans-serif; font-size: 1.8rem; font-weight: 800; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 26px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: none; }
+  .row b { color: var(--muted); font-weight: 400; flex-shrink: 0; }
+  .row span { color: var(--gold); text-align: right; word-break: break-all; }
+  button {
+    appearance: none; border: none; cursor: pointer; width: 100%;
+    background: var(--orange); color: #1B1628;
+    font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1rem;
+    border-radius: 999px; padding: 13px 20px; margin-top: 12px;
+  }
+  button:disabled { background: #3A3252; color: var(--muted); cursor: default; }
+  button.ghost { background: transparent; border: 2px solid var(--line); color: var(--soft); }
+  .warn { background: #2E1C1A; border: 1px solid var(--bad); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; color: var(--soft); }
+  .warn b { color: var(--bad); }
+  .log { background: var(--sunk); border-radius: 8px; padding: 12px 14px; max-height: 260px; overflow-y: auto; font-size: 12px; white-space: pre-wrap; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .dim { color: var(--muted); }
+  input {
+    width: 100%; background: var(--sunk); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--ink); font-family: inherit; font-size: 13px; padding: 9px 12px; margin-top: 6px;
+  }
+  label { display: block; color: var(--muted); font-size: 12px; margin-top: 14px; }
+</style>
+
+<div class="wrap">
+  <h1>Moon Stake — Mainnet Setup</h1>
+  <p class="sub">One-time initialisation of the escrow vault's config account.</p>
+
+  <div class="warn">
+    <b>This writes to mainnet, once.</b> The wallet you connect becomes the vault
+    <b>admin</b> — it can pause staking, change the fee and move the treasury. It can never
+    take custody of a Ranger. Connect the hardware wallet you intend to keep, not a browser
+    key. Admin can be handed over later, but only to a key that signs for itself.
+  </div>
+
+  <div class="card">
+    <div class="row"><b>Program</b><span id="prog">–</span></div>
+    <div class="row"><b>Config account</b><span id="cfg">–</span></div>
+    <div class="row"><b>Program deployed?</b><span id="deployed">not checked</span></div>
+    <div class="row"><b>Already initialised?</b><span id="exists">not checked</span></div>
+    <div class="row"><b>Admin (you)</b><span id="admin">not connected</span></div>
+    <div class="row"><b>Your balance</b><span id="bal">–</span></div>
+    <div class="row"><b>Cost</b><span id="cost">~0.0016 SOL rent + fees</span></div>
+
+    <label for="treasury">Treasury — where stake fees are paid</label>
+    <input id="treasury" value="uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc"/>
+    <label for="collection">Moon Rangers collection</label>
+    <input id="collection" value="5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"/>
+    <label for="fee">Stake fee in SOL, charged per Ranger</label>
+    <input id="fee" value="0.01"/>
+
+    <button id="connect">Connect wallet</button>
+    <button id="check" class="ghost" disabled>Run the pre-flight checks</button>
+    <button id="init" disabled>Initialise on mainnet</button>
+  </div>
+
+  <div class="card"><div class="log" id="log"><span class="dim">Waiting…</span></div></div>
+</div>
+
+<script>
+  const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
+  const PROGRAM = 'DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5';
+  const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  const w3 = () => window.solanaWeb3;
+  let provider = null, walletKey = null, configPda = null;
+
+  function log(msg, cls) {
+    const el = document.getElementById('log');
+    if (el.firstChild && el.firstChild.className === 'dim') el.textContent = '';
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  }
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+
+  // The RPC proxy rejects web3.js's solana-client header in preflight, and has
+  // no WebSocket — so confirmation is polled rather than subscribed.
+  function conn() {
+    const { Connection } = w3();
+    return new Connection(RPC, {
+      commitment: 'confirmed',
+      fetchMiddleware: function (url, options, next) {
+        if (options && options.headers) {
+          delete options.headers['solana-client'];
+          delete options.headers['Solana-Client'];
+        }
+        next(url, options);
+      }
+    });
+  }
+
+  function b58encode(bytes) {
+    const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const digits = [0];
+    for (let i = 0; i < input.length; i++) {
+      let carry = input[i];
+      for (let j = 0; j < digits.length; j++) {
+        carry += digits[j] << 8;
+        digits[j] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      while (carry) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+    }
+    let out = '';
+    for (let i = 0; i < input.length && input[i] === 0; i++) out += '1';
+    for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]];
+    return out;
+  }
+
+  /// Wallets return a signature as raw bytes, or occasionally already encoded.
+  function signatureOf(value) {
+    if (typeof value === 'string') return value;
+    if (value && typeof value.signature === 'string') return value.signature;
+    return b58encode((value && value.signature) || value);
+  }
+
+  async function confirmSignature(connection, signature) {
+    for (let i = 0; i < 45; i++) {
+      const st = await connection.getSignatureStatuses([signature]);
+      const v = st && st.value && st.value[0];
+      if (v && v.err) throw new Error('The transaction failed on chain: ' + JSON.stringify(v.err));
+      if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) return;
+      await new Promise(function (r) { setTimeout(r, 1200); });
+    }
+    throw new Error('Not confirmed in time. Check ' + signature + ' before retrying.');
+  }
+
+  function discoverWallets() {
+    const found = [];
+    const register = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const w = arguments[i];
+        if (w && w.features && w.features['standard:connect'] &&
+            (w.chains || []).some(function (c) { return String(c).indexOf('solana') === 0; })) {
+          found.push({ kind: 'standard', name: w.name, w: w });
+        }
+      }
+    };
+    try {
+      window.addEventListener('wallet-standard:register-wallet', function (e) {
+        try { e.detail({ register: register }); } catch (err) {}
+      });
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
+    } catch (e) {}
+
+    const seen = {};
+    found.forEach(function (f) { seen[f.name] = true; });
+    [
+      { name: 'Solflare', p: window.solflare },
+      { name: 'Backpack', p: window.backpack },
+      { name: 'Glow', p: window.glow },
+      { name: 'Solana Wallet', p: window.solana }
+    ].forEach(function (entry) {
+      if (entry.p && typeof entry.p.connect === 'function' && !seen[entry.name]) {
+        seen[entry.name] = true;
+        found.push({ kind: 'injected', name: entry.name, w: entry.p });
+      }
+    });
+    return found;
+  }
+
+  (function () {
+    const { PublicKey } = w3();
+    configPda = PublicKey.findProgramAddressSync([new TextEncoder().encode('config')], new PublicKey(PROGRAM))[0];
+    set('prog', PROGRAM);
+    set('cfg', configPda.toBase58());
+  })();
+
+  document.getElementById('connect').onclick = async function () {
+    const list = discoverWallets();
+    if (!list.length) { log('No Solana wallet found in this browser.', 'bad'); return; }
+    const target = list[0];
+    try {
+      if (target.kind === 'standard') {
+        const res = await target.w.features['standard:connect'].connect();
+        const acct = (res && res.accounts && res.accounts[0]) || target.w.accounts[0];
+        if (!acct) throw new Error('no account');
+        walletKey = acct.address;
+      } else {
+        const res = await target.w.connect();
+        const key = (res && res.publicKey ? res.publicKey : target.w.publicKey);
+        if (!key) throw new Error('no account');
+        walletKey = key.toString();
+      }
+      provider = target;
+      set('admin', walletKey);
+      log('Connected ' + target.name + '. This wallet will become the vault admin.', 'ok');
+      document.getElementById('check').disabled = false;
+    } catch (e) {
+      log('Connection cancelled or failed: ' + (e.message || e), 'dim');
+    }
+  };
+
+  document.getElementById('check').onclick = async function () {
+    const { PublicKey } = w3();
+    const c = conn();
+    let ready = true;
+    try {
+      const prog = await c.getAccountInfo(new PublicKey(PROGRAM));
+      if (!prog || !prog.executable) {
+        set('deployed', 'NO');
+        log('The program is not deployed at this address yet. Deploy it first.', 'bad');
+        ready = false;
+      } else {
+        set('deployed', 'yes');
+        log('Program is deployed and executable.', 'ok');
+      }
+
+      const cfg = await c.getAccountInfo(configPda);
+      if (cfg) {
+        set('exists', 'YES — already set up');
+        log('The config account already exists. Initialising again would fail; nothing to do here.', 'bad');
+        ready = false;
+      } else {
+        set('exists', 'no');
+        log('Config account does not exist yet.', 'ok');
+      }
+
+      const lamports = await c.getBalance(new PublicKey(walletKey));
+      set('bal', (lamports / 1e9).toFixed(4) + ' SOL');
+      if (lamports < 5000000) {
+        log('This wallet has very little SOL. Fund it before initialising.', 'bad');
+        ready = false;
+      }
+
+      document.getElementById('init').disabled = !ready;
+      if (ready) log('Pre-flight checks passed. Ready to initialise.', 'ok');
+    } catch (e) {
+      log('Could not read the chain: ' + (e.message || e), 'bad');
+    }
+  };
+
+  document.getElementById('init').onclick = async function () {
+    const btn = document.getElementById('init');
+    const { PublicKey, Transaction, TransactionInstruction, SystemProgram } = w3();
+    const treasury = document.getElementById('treasury').value.trim();
+    const collection = document.getElementById('collection').value.trim();
+    const feeSol = parseFloat(document.getElementById('fee').value);
+
+    let treasuryKey, collectionKey;
+    try {
+      treasuryKey = new PublicKey(treasury);
+      collectionKey = new PublicKey(collection);
+    } catch (e) { log('Treasury or collection is not a valid address.', 'bad'); return; }
+    if (!(feeSol >= 0)) { log('Fee must be zero or more.', 'bad'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Check your wallet…';
+    try {
+      // Anchor's instruction discriminator: sha256("global:<name>")[0..8],
+      // then the args in declaration order — collection, then fee_lamports.
+      const hash = new Uint8Array(await crypto.subtle.digest(
+        'SHA-256', new TextEncoder().encode('global:initialize')));
+      const data = new Uint8Array(48);
+      data.set(hash.slice(0, 8), 0);
+      data.set(collectionKey.toBytes(), 8);
+      new DataView(data.buffer).setBigUint64(40, BigInt(Math.round(feeSol * 1e9)), true);
+
+      const ix = new TransactionInstruction({
+        programId: new PublicKey(PROGRAM),
+        keys: [
+          { pubkey: new PublicKey(walletKey), isSigner: true, isWritable: true },
+          { pubkey: treasuryKey, isSigner: false, isWritable: false },
+          { pubkey: configPda, isSigner: false, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
+        ],
+        data: data
+      });
+
+      const c = conn();
+      const tx = new Transaction().add(ix);
+      tx.feePayer = new PublicKey(walletKey);
+      tx.recentBlockhash = (await c.getLatestBlockhash('confirmed')).blockhash;
+
+      // Prove it will work before asking anyone to sign a one-shot mainnet write.
+      const sim = await c.simulateTransaction(tx);
+      if (sim.value.err) {
+        throw new Error('Simulation failed, nothing was sent: ' + JSON.stringify(sim.value.err) +
+          (sim.value.logs ? '\n' + sim.value.logs.slice(-6).join('\n') : ''));
+      }
+      log('Simulated cleanly — sending for signature.', 'ok');
+
+      let signature;
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        signature = signatureOf(res.signature || res);
+      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        signature = await c.sendRawTransaction(signed.serialize());
+      } else if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: provider.w.accounts[0],
+          chain: 'solana:mainnet',
+          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        signature = signatureOf(out[0].signature);
+      } else {
+        throw new Error('This wallet cannot send transactions.');
+      }
+
+      log('Sent: ' + signature);
+      await confirmSignature(c, signature);
+
+      log('');
+      log('Vault initialised on mainnet.', 'ok');
+      log('  admin      ' + walletKey, 'dim');
+      log('  treasury   ' + treasury, 'dim');
+      log('  collection ' + collection, 'dim');
+      log('  fee        ' + feeSol + ' SOL per Ranger', 'dim');
+      log('');
+      log('Next: set STAKING_ONCHAIN = true in the worker so off-chain staking stops.', 'dim');
+      btn.textContent = 'Done';
+      set('exists', 'YES — set up just now');
+    } catch (e) {
+      log(e.message || 'Initialisation failed.', 'bad');
+      btn.disabled = false;
+      btn.textContent = 'Initialise on mainnet';
+    }
+  };
+</script>

@@ -31,6 +31,15 @@ pub mod moon_stake {
 
     /// One-time setup. `admin` can pause staking and trigger emergency returns,
     /// but can never take custody of an NFT.
+    ///
+    /// Deliberately permissionless, and there is a window because of it: the
+    /// program ID is public, so between deploy and this call anyone could run
+    /// it and install themselves as admin. Pinning the key here would close the
+    /// window but would also make every admin path untestable, since the tests
+    /// cannot sign as a hardware wallet. The window is instead closed
+    /// operationally — initialise immediately after deploying and check
+    /// `config.admin` before doing anything else (see program/MAINNET.md). No
+    /// NFT can be at risk during it, because none can be staked until this runs.
     pub fn initialize(
         ctx: Context<Initialize>,
         collection: Pubkey,
@@ -54,6 +63,22 @@ pub mod moon_stake {
 
     pub fn set_fee(ctx: Context<AdminOnly>, fee_lamports: u64) -> Result<()> {
         ctx.accounts.config.fee_lamports = fee_lamports;
+        Ok(())
+    }
+
+    /// Hand admin to another key. Same reasoning as `set_treasury`: without it
+    /// the admin is fixed at initialization forever, so a compromised admin key
+    /// could never be rotated and a mistake at setup would be permanent.
+    ///
+    /// Deliberately a two-step handover — the new admin must sign as well, so a
+    /// typo cannot strand the config with an authority nobody controls.
+    pub fn set_admin(ctx: Context<SetAdmin>) -> Result<()> {
+        let previous = ctx.accounts.config.admin;
+        ctx.accounts.config.admin = ctx.accounts.new_admin.key();
+        emit!(AdminChanged {
+            previous,
+            current: ctx.accounts.config.admin,
+        });
         Ok(())
     }
 
@@ -306,6 +331,21 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
+pub struct SetAdmin<'info> {
+    pub admin: Signer<'info>,
+    /// The incoming admin signs too, which proves the key exists and is
+    /// controlled before authority moves to it.
+    pub new_admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"config"],
+        bump = config.bump,
+        has_one = admin @ StakeError::NotAdmin
+    )]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
 pub struct AdminOnly<'info> {
     pub admin: Signer<'info>,
     #[account(
@@ -491,6 +531,12 @@ pub struct Unstaked {
     pub nft_mint: Pubkey,
     pub staked_at: i64,
     pub unstaked_at: i64,
+}
+
+#[event]
+pub struct AdminChanged {
+    pub previous: Pubkey,
+    pub current: Pubkey,
 }
 
 #[event]

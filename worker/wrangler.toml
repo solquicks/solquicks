@@ -11,6 +11,12 @@ MOON_RANGERS_COLLECTION = "5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"
 # be transferred or repointed, and money must go somewhere fixed.
 TREASURY_WALLET = "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc"
 
+# Flip to "true" at the mainnet cutover. Off-chain staking is a database row and
+# the escrow vault is a real account; if both accept new positions the two
+# records drift apart. This makes /api/stake refuse new positions while leaving
+# unstake open, so anyone mid-position can still get out.
+STAKING_ONCHAIN = "false"
+
 # health check every 30 minutes; alerts only when the state changes
 [triggers]
 crons = ["*/30 * * * *"]

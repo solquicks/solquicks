@@ -8,7 +8,8 @@ deliberately small so it can be read end to end in one sitting.
 vault, they withdraw it later. Points are awarded off-chain and are **not** in
 this program — it only custodies NFTs.
 
-**Status:** deployed to devnet, never touched a real Ranger. 16 tests passing.
+**Status:** deployed to devnet, never touched a real Ranger. 27 tests passing.
+Mainnet deploy is pending this review.
 
 ---
 
@@ -16,7 +17,7 @@ this program — it only custodies NFTs.
 
 `programs/moon-stake/src/lib.rs` — ~490 lines including comments.
 
-Four instructions matter:
+Five instructions matter:
 
 | Instruction | Who can call it | What it does |
 |---|---|---|
@@ -24,6 +25,7 @@ Four instructions matter:
 | `unstake` | the recorded depositor only | returns the NFT, closes the vault and record |
 | `emergency_return` | admin only | returns the NFT **to the recorded depositor** |
 | `set_treasury` / `set_fee` / `set_paused` | admin only | config |
+| `set_admin` | current **and** incoming admin | hands over admin; both must sign |
 
 ---
 
@@ -57,6 +59,11 @@ These are the claims the design rests on. If any is false, that's the finding.
 6. **Fee handling.** Fees must go only to `config.treasury`. Can a caller
    redirect them, or stake without paying?
 
+7. **Admin handover cannot strand the config.** `set_admin` requires the
+   incoming admin to sign as well, so authority can only move to a key that
+   demonstrably exists and is controlled. Can anyone move admin without the
+   current admin, or set it to a key that never signed?
+
 ---
 
 ## Running it
@@ -86,6 +93,15 @@ could tell me.
 - **Upgrade authority is retained** so bugs can be patched. Centralised on
   purpose while the operator and holders are a small group; moves to a multisig
   before opening publicly.
+- **`initialize` is permissionless**, so there is a front-run window between
+  deploying and initialising. Pinning the admin key in the program would close
+  it, but it would also make every admin path untestable — the tests load the
+  real compiled `.so` and cannot sign as a hardware wallet, and a feature flag
+  would mean shipping a binary different from the tested one. Closed
+  operationally instead: initialise immediately after deploy and verify
+  `config.admin`. No NFT can be at risk during the window, since nothing can be
+  staked until the config exists. **If you see a cheaper way to close this
+  without splitting the binary, I want to hear it.**
 - **No fuzzing yet** — planned, `read_collection` is the target.
 - Points, accrual and the leaderboard are all off-chain by design.
 

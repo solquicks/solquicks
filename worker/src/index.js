@@ -456,7 +456,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'cleanup-rows-1';
+const BUILD = 'onchain-ready-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2691,6 +2691,16 @@ export default {
         await env.DB.prepare('UPDATE players SET last_visit = ? WHERE wallet = ?').bind(today, wallet).run();
         await addPoints(env, wallet, 'visit', AWARDS.visit);
         return json(request, env, { awarded: AWARDS.visit, player: await playerState(env, wallet) });
+      }
+
+      // Once the escrow program is live on mainnet, off-chain staking must stop
+      // accepting new positions or the two records diverge. Existing stakers can
+      // still read and unstake; they simply cannot add more.
+      if (path === '/api/stake' && request.method === 'POST' && env.STAKING_ONCHAIN === 'true') {
+        return json(request, env, {
+          error: 'Staking has moved on-chain. Unstake here, then stake again to lock your Ranger in the vault.',
+          onchain: true
+        }, 409);
       }
 
       // which Rangers this wallet holds, and which are already staked

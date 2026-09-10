@@ -11,3 +11,6 @@ program/migration/uploader.json
 program/migration/prepared/
 program/migration/node_modules/
 program/migration/upload-state.json
+
+# generated at cutover from live D1 data, never committed
+program/migration/settle.sql

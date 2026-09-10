@@ -841,3 +841,105 @@ fn non_admin_cannot_rotate_the_treasury() {
         "a stranger must not be able to redirect fees to themselves"
     );
 }
+
+/// The admin can pause staking and move the treasury, so being unable to rotate
+/// that key would make a compromise permanent. These cover the handover.
+#[test]
+fn admin_can_be_handed_over_and_the_old_one_loses_access() {
+    let mut w = setup(0);
+    let admin = w.admin.insecure_clone();
+    let successor = Keypair::new();
+    w.svm.airdrop(&successor.pubkey(), 10_000_000_000).unwrap();
+
+    let ix = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::SetAdmin {
+                admin: to_anchor(&admin.pubkey()),
+                new_admin: to_anchor(&successor.pubkey()),
+                config: to_anchor(&w.config),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetAdmin {}.data(),
+    };
+    let msg = Message::new(&[ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin, &successor], msg, w.svm.latest_blockhash());
+    w.svm.send_transaction(tx).expect("handover");
+
+    // the old admin must no longer be able to pause
+    let pause = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::AdminOnly {
+                admin: to_anchor(&admin.pubkey()),
+                config: to_anchor(&w.config),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetPaused { paused: true }.data(),
+    };
+    let msg = Message::new(&[pause], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], msg, w.svm.latest_blockhash());
+    assert!(
+        w.svm.send_transaction(tx).is_err(),
+        "the previous admin must lose control"
+    );
+}
+
+/// A one-sided handover could strand the config with an authority nobody holds,
+/// so the incoming admin has to sign as well.
+#[test]
+fn handover_requires_the_new_admin_to_sign() {
+    let mut w = setup(0);
+    let admin = w.admin.insecure_clone();
+    let successor = Keypair::new();
+
+    let ix = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::SetAdmin {
+                admin: to_anchor(&admin.pubkey()),
+                new_admin: to_anchor(&successor.pubkey()),
+                config: to_anchor(&w.config),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetAdmin {}.data(),
+    };
+    // Built the way an attacker would: the message still names the new admin as
+    // a signer, but only the current admin actually signs it.
+    let msg = Message::new(&[ix], Some(&admin.pubkey()));
+    let mut tx = Transaction::new_unsigned(msg);
+    tx.partial_sign(&[&admin], w.svm.latest_blockhash());
+    assert!(
+        w.svm.send_transaction(tx).is_err(),
+        "a handover without the incoming admin's signature must fail"
+    );
+}
+
+#[test]
+fn a_stranger_cannot_seize_admin() {
+    let mut w = setup(0);
+    let mallory = Keypair::new();
+    w.svm.airdrop(&mallory.pubkey(), 10_000_000_000).unwrap();
+
+    let ix = Instruction {
+        program_id: pid(),
+        accounts: metas(
+            moon_stake::accounts::SetAdmin {
+                admin: to_anchor(&mallory.pubkey()),
+                new_admin: to_anchor(&mallory.pubkey()),
+                config: to_anchor(&w.config),
+            }
+            .to_account_metas(None),
+        ),
+        data: moon_stake::instruction::SetAdmin {}.data(),
+    };
+    let msg = Message::new(&[ix], Some(&mallory.pubkey()));
+    let tx = Transaction::new(&[&mallory], msg, w.svm.latest_blockhash());
+    assert!(
+        w.svm.send_transaction(tx).is_err(),
+        "only the admin may hand over"
+    );
+}
