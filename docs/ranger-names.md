@@ -45,19 +45,22 @@ incorrectly.
 
 ## What IS broken
 
-### Two Rangers share a name with another Ranger
+### ~~Two Rangers share a name with another Ranger~~ — fixed 2026-09-10
 
-| Name | Swapped | Untouched original |
+| Was | Mint | Now |
 |---|---|---|
-| Ranger #320 | `GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz` | `FTaH9mctScxj2z9Nuekjdmi1GnjMKuiv4w8sB76buEtC` |
-| Ranger #64 | `FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm` | `8m2sfbFDHFnya6mDrSQxk8vVurNJ6K1qp4GozNMYfA68` |
+| Ranger #320 | `GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz` | **Ranger #46** |
+| Ranger #64 | `FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm` | **Ranger #205** |
 
-Live on chain, in both the metadata account and the JSON. The swap store handed
-out names that were already taken.
+The swap store had handed out names that were already taken. In both pairs the
+Ranger it never touched matches its generator design exactly — zero traits
+apart — so that one is the real #320 / #64 and kept its name untouched. The
+swapped one took back its own pre-swap identity, which was still free.
 
-This one is fixable: each swapped Ranger's pre-swap identity is still free
-(`#46` and `#205` respectively), so renaming the swapped one resolves the
-collision without touching the Ranger that never did anything wrong.
+Applied through `fix-names.html`, signed by the update authority. Verified after
+the fact by re-reading all 219 metadata accounts: **217 distinct names, zero
+duplicates**, #320 and #64 each on exactly one mint, and creators, royalty and
+the verified collection intact on both.
 
 ### Two Rangers have no name at all
 
@@ -103,10 +106,6 @@ For the two blanks, in order of how much they respect the evidence:
 4. **Leave them blank** until something better turns up. Nothing is broken by
    waiting: both display their art and traits fine, and staking, points and the
    site treat them like any other Ranger.
-
-For the duplicates, renaming the swapped one to its free pre-swap number is the
-low-risk fix — but it changes an identity two owners may have been living with
-for two years, so it is worth telling them first.
 
 **No name should be invented.** Two of these NFTs already lost their identity to
 a tool that wrote a name it had no right to; guessing would repeat that.

@@ -62,12 +62,12 @@ the choice is to restore their pre-swap identities (#290 and #236, both free) or
 leave them blank. Nothing is broken by waiting — both display art and traits
 fine.
 
-**5. Two Rangers share a name with another Ranger — fixable.**
-`Ranger #320` and `Ranger #64` each sit on two different mints, live on chain.
-The swap store handed out names that were already taken. Each swapped Ranger's
-pre-swap number is still free (#46 and #205), so renaming the swapped one fixes
-the collision without touching the Ranger that was never swapped. Worth telling
-those owners first, since it changes an identity they have had for two years.
+**5. ~~Two Rangers share a name with another Ranger.~~ Fixed 2026-09-10.**
+`GGTjnPNLjj…` is now Ranger #46 and `FAR6wZhvAk…` is now Ranger #205, each
+taking back its own pre-swap identity. Re-read all 219 metadata accounts
+afterwards: 217 distinct names, zero duplicates, creators and verified
+collection intact. Worth a Discord note to those two owners — their Ranger's
+number changed.
 
 **Correction worth keeping:** the other 24 swapped Rangers whose names disagree
 with their mint transaction are **correct**, not corrupt — their traits match
@@ -134,9 +134,9 @@ costs nothing.
 Done today: all of P0, the plushie leak, and `/api/migrate`. Both known ways to
 mint points without earning them are closed.
 
-Open, in the order I'd take them: **the duplicate names** (fixable now, needs a
-word with two owners), **the two blank names** (needs the owners or the swap-store
-operator — not a code problem), then the swap fees and the Book The Fox wording. The mainnet
+Open, in the order I'd take them: **the two blank names** (needs the owners or
+the swap-store operator — not a code problem), then the swap fees and the Book
+The Fox wording. The mainnet
 deploy sits blocked on ~1.8 SOL and nothing about it expires.
 
 One consequence worth deciding on: points earned before signing in now vanish
