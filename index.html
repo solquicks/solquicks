@@ -2571,16 +2571,6 @@
       if (FoxPoints.token && FoxPoints.server) {
         const r = await FoxPoints.api('/api/visit', { method: 'POST' });
         if (r && r.player) FoxPoints.server = r.player;
-      } else {
-        // not signed in: a local tally that migrates on first sign-in
-        const state = FoxPoints.load();
-        const today = new Date().toISOString().slice(0, 10);
-        if (state.lastVisit !== today) {
-          state.lastVisit = today;
-          state.total += FOX_EVENTS.visit.pts;
-          state.log.unshift({ e: 'visit', p: FOX_EVENTS.visit.pts, t: Date.now() });
-          FoxPoints.save(state);
-        }
       }
       FoxPoints.render();
       renderLeaderboard();
@@ -2590,13 +2580,18 @@
     function renderDailyClaim() {
       const btn = document.getElementById('daily-claim');
       if (!btn) return;
-      const today = new Date().toISOString().slice(0, 10);
-      const available = FoxPoints.server
-        ? FoxPoints.server.dailyAvailable !== false
-        : FoxPoints.load().lastVisit !== today;
       const amount = (FoxPoints.server && FoxPoints.server.dailyAmount) || FOX_EVENTS.visit.pts;
-
       btn.hidden = false;
+
+      // Signed out there is nowhere to put the points, so the button says so
+      // rather than offering a claim that quietly does nothing.
+      if (!FoxPoints.server) {
+        btn.disabled = true;
+        btn.textContent = 'Connect a wallet to claim';
+        return;
+      }
+
+      const available = FoxPoints.server.dailyAvailable !== false;
       btn.disabled = !available;
       btn.textContent = available
         ? 'Claim ' + amount + ' daily points'
@@ -2778,9 +2773,11 @@
     }
 
     // ── FOX POINTS ──
-    // Signed-in players are tracked server-side (Cloudflare Worker + D1) so a
-    // balance can't be edited in devtools and follows the wallet across devices.
-    // Anonymous visitors accumulate locally and migrate that total on first sign-in.
+    // Points are tracked server-side (Cloudflare Worker + D1) so a balance
+    // can't be edited in devtools and follows the wallet across devices.
+    // Signed-out visitors earn nothing: a browser-side tally could never be
+    // carried over without trusting the browser's own number for it, and the
+    // site should not show a total it has no way to honour.
     const POINTS_API = 'https://solquicks-points.solquicks-45c.workers.dev';
 
     const FOX_EVENTS = {
@@ -2818,21 +2815,14 @@
         this.token = null; this.server = null;
       },
 
-      // local fallback for visitors who haven't signed in
-      load() {
-        try { return JSON.parse(localStorage.getItem('foxpoints')) || { total: 0, log: [], lastVisit: '' }; }
-        catch (e) { return { total: 0, log: [], lastVisit: '' }; }
-      },
-      save(state) { try { localStorage.setItem('foxpoints', JSON.stringify(state)); } catch (e) {} },
-
       // points still accruing from staking count toward the displayed total,
       // so a staked Ranger visibly moves the number without needing a claim
       total() {
-        if (!this.server) return this.load().total;
+        if (!this.server) return 0;
         return (this.server.total !== undefined) ? this.server.total : this.server.points;
       },
       pending() { return this.server ? (this.server.pending || 0) : 0; },
-      logEntries() { return this.server ? this.server.log : this.load().log; },
+      logEntries() { return this.server ? this.server.log : []; },
 
       async api(path, opts) {
         opts = opts || {};
@@ -2871,23 +2861,10 @@
           }
           this.render();
           renderLeaderboard();
-          return;
         }
-        // anonymous: keep a local tally to migrate later
-        const cfg = FOX_EVENTS[event];
-        if (!cfg || !cfg.pts) return;
-        const state = this.load();
-        if (event === 'visit') {
-          const today = new Date().toISOString().slice(0, 10);
-          if (state.lastVisit === today) return;
-          state.lastVisit = today;
-        }
-        state.total += cfg.pts;
-        state.log.unshift({ e: event, p: cfg.pts, t: Date.now() });
-        if (state.log.length > 50) state.log.length = 50;
-        this.save(state);
-        this.render();
-        renderLeaderboard();
+        // Signed out: nothing is awarded. The action still runs — the game is
+        // playable, the wheel spins — it just doesn't pay until there is a
+        // wallet to pay it to.
       },
 
       render() {
@@ -2903,7 +2880,7 @@
           } else {
             noteEl.innerHTML = this.server
               ? 'Saved to your wallet — these follow you to any device.'
-              : 'Saved on this device only. <strong>Connect a wallet</strong> to keep them for good.';
+              : '<strong>Connect a wallet</strong> to start earning Fox Points.';
           }
         }
 
@@ -2914,7 +2891,9 @@
         if (!logEl) return;
         const log = this.logEntries();
         if (!log || log.length === 0) {
-          logEl.innerHTML = '<div class="lb-log-empty">No points yet — go do something foxy 🦊</div>';
+          logEl.innerHTML = this.server
+            ? '<div class="lb-log-empty">No points yet — go do something foxy 🦊</div>'
+            : '<div class="lb-log-empty">Connect a wallet to start earning 🦊</div>';
           return;
         }
         logEl.innerHTML = log.map(function (item) {
@@ -2957,18 +2936,17 @@
         this.server = s.player;
         this.saveToken(s.token, s.expires, wallet);
 
-        // Points earned before signing in were only ever a browser-side tally,
-        // and the browser is the one reporting the number — there is no way to
-        // tell a real tally from an invented one. It used to be carried over on
-        // sign-in, which meant any new wallet could claim 5,000 points by
-        // asking. The local copy is now simply discarded; the server's balance
-        // is the only one that counts.
-        try { localStorage.removeItem('foxpoints'); } catch (e) {}
         this.render();
         renderLeaderboard();
         if (typeof loadRangers === 'function') loadRangers();
       }
     };
+
+    // Retired: points used to accrue in localStorage for signed-out visitors and
+    // were carried over on sign-in, which meant the browser reported its own
+    // balance. Clear the leftover key so an old total can't linger in anyone's
+    // storage. Safe to delete this line once it has been live for a while.
+    try { localStorage.removeItem('foxpoints'); } catch (e) {}
 
     // restore a saved session on load
     (function () {
@@ -5872,19 +5850,15 @@
       });
 
       // Only ever add a row for the viewer if the server list does not already
-      // contain them — otherwise a connected wallet showed up twice, once from
-      // the server and once from the local fallback.
+      // contain them — otherwise a connected wallet showed up twice.
       const alreadyListed = rows.some(function (r) { return r.me; });
-      if (!alreadyListed) {
-        const localTotal = FoxPoints.total();
-        if (FoxPoints.server || localTotal > 0 || rows.length === 0) {
-          rows.push({
-            name: mine ? shortWallet(mine) : 'You',
-            wallet: mine || '',
-            points: localTotal,
-            me: true
-          });
-        }
+      if (!alreadyListed && (FoxPoints.server || rows.length === 0)) {
+        rows.push({
+          name: mine ? shortWallet(mine) : 'You',
+          wallet: mine || '',
+          points: FoxPoints.total(),
+          me: true
+        });
       }
 
       rows.sort(function (a, b) { return b.points - a.points; });
