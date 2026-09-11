@@ -457,7 +457,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'cleanup-tally-1';
+const BUILD = 'copy-pass-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1249,12 +1249,14 @@ function tzOffsetMinutes(ts) {
 const BOOKING_TYPES = [
   {
     id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
-    blurb: 'I host and drive the room. You bring the guests; I bring the energy.',
+    blurb: 'I host the Space, schedule the guests, drive the conversation and bring the foxy energy.',
     includes: [
-      'You bring the guests',
-      'I schedule the topics and question agenda',
-      'High foxy energy throughout',
-      'I promote your CTAs on the mic'
+      'Schedule compatible guests',
+      'Schedule the agenda for topics of conversation and questions',
+      'High foxy energy throughout the Space',
+      'Promote your CTAs during the Space',
+      'Assist with marketing efforts for the Space',
+      'Post-Space stats provided'
     ]
   },
   {

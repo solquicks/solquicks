@@ -1465,8 +1465,19 @@
     /* checkout */
     .bk-flow { background: var(--card); border: var(--line); border-radius: var(--radius); box-shadow: var(--pop); padding: 18px; text-align: left; }
     .bk-step { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
-    .bk-back { background: none; border: none; cursor: pointer; color: var(--muted); font-family: inherit; font-size: 0.82rem; font-weight: 700; padding: 0; margin-bottom: 10px; }
-    .bk-back:hover { color: var(--ink); }
+    .bk-back {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--cream); border: var(--line); border-radius: 999px;
+      box-shadow: 2px 3px 0 rgba(46, 36, 64, 0.16);
+      cursor: pointer; color: var(--ink); font-family: inherit;
+      font-size: 0.84rem; font-weight: 800; padding: 7px 14px; margin-bottom: 12px;
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+    .bk-back:hover { background: var(--orange-soft); transform: translate(-1px, -1px); }
+    .bk-back:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(46, 36, 64, 0.2); }
+    .bk-back-row { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+    .bk-back-row .bk-back { margin-bottom: 0; padding: 6px 12px; font-size: 0.8rem; }
+    .bk-back-foot { margin: 16px 0 0; }
 
     .bk-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 7px; max-height: 260px; overflow-y: auto; padding: 2px; }
     .bk-slot {
@@ -5026,6 +5037,7 @@
       window._pay = { d: d, kind: kind, onPaid: onPaid, title: title };
       payCurrency = 'usdc';
       paintPayment();
+      bkScrollTo('bk-flow');
       startPayPolling(d.ref, kind, onPaid);
     }
 
@@ -5177,6 +5189,7 @@
       const flow = document.getElementById('bk-flow');
       flow.hidden = false;
       flow.innerHTML = '<div class="bk-flow">Loading rates…</div>';
+      bkScrollTo('bk-flow');
 
       try {
         const res = await fetch(POINTS_API + '/api/banner/rates');
@@ -5346,10 +5359,10 @@
       const d = bkData;
       const adCard = '<div class="bk-ad">' +
         '<div class="bk-top"><div class="bk-name">Advertising space</div>' +
-        '<div class="bk-price">$250<span style="font-size:0.7rem"> /week</span></div></div>' +
-        '<div class="bk-meta">Top of every page · yours alone</div>' +
-        '<div class="bk-blurb">A banner above the fold on every page, for a week or a month. ' +
-        'No rotation — while it runs, it is the only ad on the site.</div>' +
+        '<div class="bk-price"><span style="font-size:0.7rem">from </span>$250<span style="font-size:0.7rem"> /week</span></div></div>' +
+        '<div class="bk-meta">Top of every tab · one advertiser at a time</div>' +
+        '<div class="bk-blurb">Your banner at the top of solquicks.com, exclusive for 1, 2 or 4 weeks. ' +
+        'Nobody else shares the spot.</div>' +
         '<button class="bk-go" onclick="startAdBooking()">Book the space</button></div>';
 
       list.innerHTML = adCard + d.types.map(function (t) {
@@ -5379,11 +5392,21 @@
         (d.holder ? ' <strong>You hold a Ranger, so 15% is already off every price below.</strong>' : '') + '</p>';
     }
 
+    /// The flow replaces the rate card in place, but the card the visitor
+    /// clicked may have been far down the page — leaving them mid-way through a
+    /// long list with the back button scrolled out of sight. Bring each step's
+    /// top, and its back button, into view.
+    function bkScrollTo(id) {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function backToRateCard() {
       stopPayPolling();
       document.getElementById('bk-flow').hidden = true;
       document.getElementById('bk-list').hidden = false;
       bkPick = { type: null, startsAt: null };
+      bkScrollTo('bk-list');
     }
 
     async function startBooking(typeId) {
@@ -5405,6 +5428,10 @@
         } catch (e) {
           document.getElementById('bk-slots').textContent = 'Could not load available times.';
         }
+        // Only once the times are in. Scrolling while this still read "Loading…"
+        // let the browser's scroll anchoring hold the view on whatever sat below,
+        // so the list rendering underneath pushed the back button off the top.
+        bkScrollTo('bk-flow');
       } else {
         renderBookingForm();
       }
@@ -5433,7 +5460,8 @@
               (s.rush ? '<em>rush +50%</em>' : '') + '</button>';
           }).join('') + '</div>';
       }).join('') +
-      '<p class="bk-hint" style="margin-top:10px">Times shown in your own timezone.</p>';
+      '<p class="bk-hint" style="margin-top:10px">Times shown in your own timezone.</p>' +
+      '<div class="bk-back-foot"><button class="bk-back" onclick="backToRateCard()">← All services</button></div>';
     }
 
     function pickSlot(ts, el) {
@@ -5452,11 +5480,12 @@
             { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })
         : null;
 
-      flow.innerHTML = '<div class="bk-flow">' +
-        '<button class="bk-back" onclick="' + (t.mode === 'slot'
-          ? 'startBooking(\'' + t.id + '\')'
-          : 'backToRateCard()') + '">← ' +
-        (t.mode === 'slot' ? 'Pick another time' : 'All services') + '</button>' +
+      flow.innerHTML = '<div class="bk-flow"><div class="bk-back-row">' +
+        (t.mode === 'slot'
+          ? '<button class="bk-back" onclick="startBooking(\'' + t.id + '\')">← Change time</button>'
+          : '') +
+        '<button class="bk-back" onclick="backToRateCard()">' + (t.mode === 'slot' ? 'All services' : '← All services') +
+        '</button></div>' +
         '<div class="bk-step">' + escapeHtml(t.name) + (when ? ' · ' + escapeHtml(when) : '') + '</div>' +
         '<div class="bk-field"><label for="bk-name">Your name or project</label>' +
         '<input id="bk-name" autocomplete="organization"></div>' +
@@ -5475,6 +5504,7 @@
         '<br><strong>Refunds.</strong> ' + escapeHtml(bkData.policy.refunds) +
         (isEnquiry ? '' : '<br><strong>Price.</strong> ' + escapeHtml(bkData.policy.currency)) +
         '</p></div>';
+      bkScrollTo('bk-flow');
     }
 
     async function submitBooking() {
