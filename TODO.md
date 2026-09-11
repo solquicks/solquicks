@@ -138,6 +138,14 @@ gets tightened whichever way the travel answer goes.
 
 ---
 
+**Store stock is typed in by hand.** "93 available" and "7 / 100" on the Store
+tab matched store.fun exactly on 2026-09-11, but they are static text — the
+first sale makes them wrong. Update them in `index.html` after a sale, or build a
+live read from store.fun later (its page renders client-side, so that means
+finding the API it calls, not scraping HTML).
+
+---
+
 ## P4 — features, once the above is clean
 
 **9. The 0.1 SOL collectible mint.**

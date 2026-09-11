@@ -1770,6 +1770,9 @@
       font-weight: 800;
       letter-spacing: 0.1em;
       margin-top: 46px;
+      /* the floating back-to-top button sits over the bottom-right corner;
+         this lets the footer and anything above it scroll clear of it */
+      padding-bottom: 72px;
     }
     .footer a {
       color: var(--orange-deep);
@@ -1966,7 +1969,7 @@
         </a>
         <a href="https://discord.gg/Zt7WDvcaxA" class="link-card" target="_blank" rel="noopener noreferrer">
           <div class="link-icon" style="background:#5865F2;border:1px solid #4752c4"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.033.055a19.91 19.91 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></div>
-          <div class="link-info"><div class="link-name">Discord</div><div class="link-handle">solquicks</div></div>
+          <div class="link-info"><div class="link-name">Discord</div><div class="link-handle">Moon Rangers</div></div>
           <svg class="link-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
         <a href="https://github.com/solquicks" class="link-card" target="_blank" rel="noopener noreferrer">
@@ -2017,21 +2020,21 @@
         </div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">🧸</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Buy a quicks Plushie</div><div class="lb-earn-sub">Extremely foxy, extremely rewarding</div></div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Buy a quicks Plushie</div><div class="lb-earn-sub">Redeem the code that comes with your order</div></div>
           <div class="lb-earn-pts">+500</div>
         </div>
         <div class="lb-earn-row">
           <div class="lb-earn-icon">🌕</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Stake your Moon Rangers</div><div class="lb-earn-sub">Every day, for each Ranger you hold</div></div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Stake your Moon Rangers</div><div class="lb-earn-sub">Every day, for each Ranger you stake</div></div>
           <div class="lb-earn-pts">+100 ea</div>
         </div>
         <div class="lb-earn-row">
-          <div class="lb-earn-icon">♻</div>
+          <div class="lb-earn-icon">♻️</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Clean up your wallet</div><div class="lb-earn-sub">2 per account closed · 5 per burn · 250 a day</div></div>
           <div class="lb-earn-pts">+2 ea</div>
         </div>
         <div class="lb-earn-row">
-          <div class="lb-earn-icon">⇅</div>
+          <div class="lb-earn-icon">💱</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Swap tokens</div><div class="lb-earn-sub">1 point per dollar swapped · $5 minimum · 500 a day</div></div>
           <div class="lb-earn-pts">+1 / $</div>
         </div>
@@ -2061,7 +2064,7 @@
 
       <div class="lb-chain-note">
         <span>⚡</span>
-        <span><strong>Global leaderboard powered by MagicBlock is coming online.</strong> Points live on this device for now — once the on-chain leaderboard launches, you'll link a wallet and your points carry over.</span>
+        <span><strong>Points are saved to your wallet.</strong> They follow you to any device and can't be edited from the browser — connect the same wallet anywhere and they're there.</span>
       </div>
     </div>
 
@@ -2095,7 +2098,7 @@
           <form id="plushie-redeem" class="plushie-redeem" autocomplete="off">
             <label for="plushie-code">Already bought one? Redeem the code from your order for 500 Fox Points.</label>
             <div class="plushie-row">
-              <input id="plushie-code" type="text" placeholder="FOX-XXXXX-XXXXX" spellcheck="false"/>
+              <input id="plushie-code" type="text" placeholder="Your code" spellcheck="false"/>
               <button type="submit">Redeem</button>
             </div>
             <div id="plushie-note" class="plushie-note"></div>
@@ -2349,14 +2352,14 @@
           <div class="an-panel">
             <div class="an-sub">Look up a wallet</div>
             <div class="an-look">
-              <input id="an-addr" placeholder="Paste a Solana address" spellcheck="false" autocomplete="off">
+              <input id="an-addr" placeholder="Wallet address" spellcheck="false" autocomplete="off">
               <button onclick="lookupWallet()">Check</button>
             </div>
             <div class="an-result" id="an-result"></div>
           </div>
         </div>
 
-        <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Point accrual runs off-chain while the on-chain program is in build.</p>
+        <p class="moon-note" id="moon-note">Ownership is verified live against the Moon Rangers collection on Solana. Points are tracked off-chain until the on-chain staking vault goes live.</p>
       <p class="moon-note" id="moon-devnet" hidden style="color:#FFD98A">⚠︎ DEVNET MODE — staking runs against the test network. Real Rangers are untouched.</p>
       </div>
     </div>
@@ -2900,24 +2903,6 @@
         if (typeof loadRangers === 'function') loadRangers();
         if (typeof loadMission === 'function') loadMission();
         if (typeof loadSwapPoints === 'function') loadSwapPoints().then(flushSwapPoints);
-      },
-
-      // called for client-side actions; server decides the actual award
-      async award(event) {
-        if (this.server && this.token) {
-          if (event === 'visit') {
-            const r = await this.api('/api/visit', { method: 'POST' });
-            if (r && r.player) this.server = r.player;
-          } else if (['game', 'gacha'].includes(event)) {
-            const r = await this.api('/api/award', { method: 'POST', body: { type: event } });
-            if (r && r.player) this.server = r.player;
-          }
-          this.render();
-          renderLeaderboard();
-        }
-        // Signed out: nothing is awarded. The action still runs — the game is
-        // playable, the wheel spins — it just doesn't pay until there is a
-        // wallet to pay it to.
       },
 
       render() {
@@ -5532,9 +5517,12 @@
         const h = a.holders;
         const wallets = h.whales + h.mid + h.small;
         const pctOf = function (n) { return wallets ? (n / wallets) * 100 : 0; };
-        document.getElementById('an-seg-w').style.width = pctOf(h.whales) + '%';
-        document.getElementById('an-seg-m').style.width = pctOf(h.mid) + '%';
-        document.getElementById('an-seg-s').style.width = pctOf(h.small) + '%';
+        [['an-seg-w', h.whales], ['an-seg-m', h.mid], ['an-seg-s', h.small]].forEach(function (seg) {
+          const el = document.getElementById(seg[0]);
+          el.style.width = pctOf(seg[1]) + '%';
+          // wide enough to clear the bar's rounded end, so a group of one still shows
+          el.style.minWidth = seg[1] > 0 ? '10px' : '0';
+        });
         document.getElementById('an-legend').innerHTML =
           leg('#F0821E', h.whales, '10+ Rangers') +
           leg('#FFD98A', h.mid, '3–9') +
@@ -5559,7 +5547,7 @@
       const p = a.participation || {};
       document.getElementById('an-part-sub').textContent =
         p.shareOfHolders !== null && p.shareOfHolders !== undefined
-          ? 'Taking part — ' + p.shareOfHolders + '% of holders have Rangers locked'
+          ? 'Taking part — ' + p.shareOfHolders + '% of holders have Rangers staked'
           : 'Taking part';
       const list = document.getElementById('an-stakers');
       list.innerHTML = (p.top || []).length === 0
@@ -5692,7 +5680,7 @@
       const bits = [];
       bits.push('<strong>' + s.rangers + '</strong> Ranger' + (s.rangers === 1 ? '' : 's') + ' locked');
       if (s.streak > 0) bits.push('<strong>' + s.streak + '</strong> quarter streak');
-      if (r.field && r.field.rangers) bits.push('<strong>' + r.field.rangers + '</strong> Rangers locked site-wide');
+      if (r.field && r.field.rangers) bits.push('<strong>' + r.field.rangers + '</strong> Rangers staked site-wide');
       // One entry per Ranger per day, so spell the arithmetic out rather than
       // leaving a big number to be read as a duration.
       const sum = s.rangers > 0
@@ -5767,7 +5755,7 @@
       if (!Wallet.pubkey) {
         card.hidden = true;
         if (connectBtn) connectBtn.hidden = false;
-        if (sub) sub.innerHTML = 'Connect your wallet and stake your Moon Rangers — <strong>100 Fox Points a day, for every Ranger you hold</strong>.';
+        if (sub) sub.innerHTML = 'Connect your wallet and stake your Moon Rangers — <strong>100 Fox Points a day, for every Ranger you stake</strong>.';
         return;
       }
 
@@ -5903,7 +5891,8 @@
         return '<div class="lb-table-row' + (r.me ? ' me' : '') + '">' +
           '<div class="lb-rank">' + (medals[i] || '#' + (i + 1)) + '</div>' +
           '<div class="lb-who"><div class="lb-who-name">' + escapeHtml(r.name) + (r.me ? ' \u2190 you' : '') + '</div>' +
-          (r.wallet ? '<div class="lb-who-wallet">' + escapeHtml(shortWallet(r.wallet)) + '</div>' : '') +
+          (r.wallet && r.name !== shortWallet(r.wallet)
+            ? '<div class="lb-who-wallet">' + escapeHtml(shortWallet(r.wallet)) + '</div>' : '') +
           '</div><div class="lb-score">' + r.points.toLocaleString() + '</div></div>';
       }).join('');
 

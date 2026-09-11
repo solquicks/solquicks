@@ -9,7 +9,11 @@ const NONCE_TTL_MS = 5 * 60 * 1000;
 const FLIP_MIN = 10;
 const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
 
-const AWARDS = { visit: 10, plushie: 500, game: 25, gacha: 50 };
+// Only what can really be earned. The mini-game and gacha are listed on the site
+// as coming soon, and used to be claimable through a generic /api/award that
+// checked nothing — 50 points a request, 30 a minute, for features that did not
+// exist. Each gets its own verified route when it is actually built.
+const AWARDS = { visit: 10, plushie: 500 };
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function b58decode(s) {
@@ -321,7 +325,7 @@ async function playerState(env, wallet) {
 const RATE_RULES = [
   { match: ['/api/nonce', '/api/session'], name: 'auth', by: 'ip', limit: 10, windowMs: 60000 },
   { match: ['/api/rangers', '/api/stake', '/api/img'], name: 'chain', by: 'wallet', limit: 20, windowMs: 60000 },
-  { match: ['/api/visit', '/api/award', '/api/claim', '/api/unstake'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/visit', '/api/claim', '/api/unstake'], name: 'write', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/flip'], name: 'flip', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/mission', '/api/mission/claim'], name: 'mission', by: 'wallet', limit: 40, windowMs: 60000 },
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
@@ -457,7 +461,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'usdc-only-1';
+const BUILD = 'site-pass-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2832,19 +2836,6 @@ export default {
         await saveStake(env, wallet, { staked: s.staked, since: s.staked ? Date.now() : 0, count: s.count, banked: 0 });
         await addPoints(env, wallet, 'stake', pending);
         return json(request, env, { awarded: pending, player: await playerState(env, wallet) });
-      }
-
-      if (path === '/api/award' && request.method === 'POST') {
-        const { type } = await request.json();
-        // 'plushie' is deliberately not claimable here. It used to be, triggered
-        // by the Buy Now click — which awarded 500 points to anyone who clicked
-        // and never bought. It is now earned only by redeeming a code issued
-        // against a real order, at /api/plushie/redeem.
-        if (!['game', 'gacha'].includes(type)) {
-          return json(request, env, { error: 'unknown award' }, 400);
-        }
-        await addPoints(env, wallet, type, AWARDS[type]);
-        return json(request, env, { awarded: AWARDS[type], player: await playerState(env, wallet) });
       }
 
       // Redeeming a plushie code. The code is the proof of purchase: it is
