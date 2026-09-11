@@ -252,6 +252,13 @@
       font-size: 1rem; line-height: 1.3; width: 20px; flex-shrink: 0;
       text-align: center; color: var(--orange-deep);
     }
+    /* ♻ has no dependable text form — Apple devices swap in the colour emoji — so
+       the cleanup icon is drawn, in currentColor, to sit with the text glyphs */
+    .nav-svg {
+      width: 1em; height: 1em; vertical-align: -0.14em;
+      fill: none; stroke: currentColor; stroke-width: 2.3;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
     .nav-item-name { display: block; font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.95rem; line-height: 1.25; }
     .nav-item-note { display: block; font-size: 0.76rem; color: var(--muted); line-height: 1.4; margin-top: 1px; }
     .nav-item.active .nav-item-note { color: var(--ink-soft); }
@@ -1845,7 +1852,7 @@
           <span class="nav-item-note">Book the Fox - hosting, speaking, advertisements</span></span>
         </button>
         <button class="nav-item" role="menuitem" data-tab="cleanup" onclick="switchTab('cleanup',this)">
-          <span class="nav-item-icon" aria-hidden="true">♻</span>
+          <span class="nav-item-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/></svg></span>
           <span><span class="nav-item-name">Cleanup</span>
           <span class="nav-item-note">Reclaim rent from dead token accounts</span></span>
         </button>

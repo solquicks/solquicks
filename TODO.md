@@ -136,9 +136,6 @@ thing an organiser will ask. The options were:
 The copy also says "in person" and "flat fee" three times on one card, so it
 gets tightened whichever way the travel answer goes.
 
-Small optional one from the same pass: the Cleanup menu icon (♻) renders as a
-full-colour emoji while every other menu icon is a flat line glyph.
-
 ---
 
 ## P4 — features, once the above is clean
