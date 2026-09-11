@@ -457,7 +457,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'copy-pass-1';
+const BUILD = 'usdc-only-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -919,6 +919,12 @@ const SWAP_FEE_BPS = 20;
 
 // Fees can only be collected in a token that is one side of the swap, so the
 // account is chosen per quote. A pair touching neither simply pays no fee.
+// Dollar stablecoins, valued at $1 wherever fees are totted up.
+const DOLLAR_MINTS = [
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo'  // PYUSD
+];
+
 const SWAP_FEE_ACCOUNTS = {
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn',
   'So11111111111111111111111111111111111111112': 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
@@ -1183,7 +1189,7 @@ async function inspectPayment(env, signature) {
 
 /// One gate for both currencies. `wallet` null means the caller already proved
 /// which invoice this is with a Solana Pay reference.
-async function verifyInvoice(env, wallet, signature, minLamports, minUsdc, purpose) {
+async function verifyInvoice(env, wallet, signature, minUsdc, purpose) {
   if (!env.TREASURY_WALLET) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
 
@@ -1196,17 +1202,18 @@ async function verifyInvoice(env, wallet, signature, minLamports, minUsdc, purpo
     return { ok: false, error: 'payment was not sent by your wallet' };
   }
 
-  let currency = null;
-  let amount = 0;
-  if (minUsdc && p.usdc >= minUsdc) { currency = 'usdc'; amount = p.usdc; }
-  else if (minLamports && p.sol >= minLamports) { currency = 'sol'; amount = p.sol; }
-  else {
-    return { ok: false, error: p.usdc > 0 || p.sol > 0 ? 'payment was too small' : 'payment did not go to the right wallet' };
+  // USDC only. SOL is deliberately not accepted, even if someone sends the
+  // right value by hand — bookings are priced and settled in dollars.
+  if (!(p.usdc >= minUsdc)) {
+    if (p.usdc === 0 && p.sol > 0) {
+      return { ok: false, error: 'this was paid in SOL — bookings are USDC only. Get in touch with your reference for a refund' };
+    }
+    return { ok: false, error: p.usdc > 0 ? 'payment was too small' : 'payment did not go to the right wallet' };
   }
 
   await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
-    .bind(signature, wallet || p.payer, currency === 'sol' ? amount : 0, purpose + ':' + currency, Date.now()).run();
-  return { ok: true, currency: currency, amount: amount, payer: p.payer };
+    .bind(signature, wallet || p.payer, 0, purpose + ':usdc', Date.now()).run();
+  return { ok: true, currency: 'usdc', amount: p.usdc, payer: p.payer };
 }
 
 // ── BOOK THE FOX ────────────────────────────────────────────────────────────
@@ -1260,28 +1267,34 @@ const BOOKING_TYPES = [
     ]
   },
   {
-    id: 'podcast', name: 'Podcast — I host for you', mode: 'slot', minutes: 60, price: 350,
-    blurb: 'I host the podcast on your behalf, from agenda to finished edit.',
+    id: 'podcast', name: 'Hosted Podcast', mode: 'slot', minutes: 60, price: 350,
+    // edited afterwards, so it is recorded rather than live
+    format: 'recorded',
+    blurb: 'I host your podcast, build the agenda, drive the conversation and deliver the finished edit.',
     includes: [
-      'I write the agenda of topics and questions',
-      'I host the full session',
-      'Post-production edit of the long-form video included'
+      'Schedule the agenda for topics of conversation and questions',
+      'Host the full episode',
+      'Post-production edit of the long-form video'
     ]
   },
   {
-    id: 'stream', name: 'Stream — I host for you', mode: 'slot', minutes: 60, price: 300,
-    blurb: 'Same as the podcast, live, with the stream visuals built for you.',
+    id: 'stream', name: 'Hosted Stream', mode: 'slot', minutes: 60, price: 300,
+    blurb: 'I host your stream live, build the agenda, drive the conversation and set up the visuals.',
     includes: [
-      'I write the agenda of topics and questions',
-      'I host the full stream',
-      'Visual templates for the stream included',
-      'No long-form edit — this one goes out live'
+      'Schedule the agenda for topics of conversation and questions',
+      'Host the full stream',
+      'Visual templates for the stream',
+      'Goes out live — no post-production edit'
     ]
   },
   {
     id: 'custom', name: 'Custom content', mode: 'async', minutes: 0, price: 250,
-    blurb: 'A content drop made for you, posted from my account.',
-    includes: ['1× video', '1× post', '3× reposts from my account']
+    blurb: 'A content drop made for your project and posted from my account.',
+    includes: [
+      'Create 1× video for your project',
+      'Write and publish 1× post',
+      'Repost your content 3× from my account'
+    ]
   },
   {
     id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1000,
@@ -1300,9 +1313,9 @@ const BOOKING_POLICY = {
   cancellation: 'Cancel more than 48 hours ahead for a full refund. Inside 48 hours ' +
     'the booking is non-refundable, because the slot is gone. If I have to cancel, you ' +
     'get everything back and first pick of a new date.',
-  refunds: 'Refunds are sent back to the wallet that paid, by hand, within 3 business days.',
-  currency: 'Prices are in USD and charged in SOL at the rate quoted when you book. ' +
-    'That quote holds for ' + HOLD_MINUTES + ' minutes.'
+  refunds: 'Refunds are sent back to the wallet that paid within 3 business days.',
+  currency: 'Prices are in USD and paid in USDC. Your slot is held for ' +
+    HOLD_MINUTES + ' minutes while you pay.'
 };
 
 function bookingType(id) {
@@ -2100,7 +2113,9 @@ export default {
             const d = await res.json();
             const ui = d && d.result && d.result.value && Number(d.result.value.uiAmount);
             if (!ui) continue;
-            const isUsd = mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+            // PYUSD is a dollar too. It was priced at SOL's rate, which reported
+            // $31 of earnings when the real figure was under a dollar.
+            const isUsd = DOLLAR_MINTS.indexOf(mint) >= 0;
             const price = isUsd ? 1 : (await solUsd(env)) || 0;
             usd += ui * price;
             parts.push({ mint: mint, amount: ui });
@@ -2120,7 +2135,6 @@ export default {
           rates: BANNER_RATES,
           nextFree: await bannerNextFree(env),
           taken: !!live,
-          solUsd: await solUsd(env),
           payTo: env.TREASURY_WALLET || null,
           rules: 'Your creative is reviewed before it runs — no adult content, ' +
             'no unaudited token launches, nothing that impersonates anyone. If I ' +
@@ -2142,12 +2156,8 @@ export default {
         const contact = String(body.contact || '').trim().slice(0, 200);
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
-        const price = await solUsd(env);
-        if (price === null) return json(request, env, { error: 'cannot price in SOL just now — try again shortly' }, 503);
-
         const starts = await bannerNextFree(env);
         const ends = starts + rate.weeks * 7 * 86400000;
-        const lamports = Math.round((rate.price / price) * 1e9);
         const ref = bookingRef().replace('FOX-', 'AD-');
         const reference = newReference();
         const now = Date.now();
@@ -2158,13 +2168,13 @@ export default {
           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ?)"
         ).bind(
           ref, await getSession(request, env).catch(function () { return null; }),
-          rate.weeks, starts, ends, rate.price, price, lamports,
+          rate.weeks, starts, ends, rate.price, null, null,
           now + HOLD_MINUTES * 60000, name, contact, now, reference
         ).run();
 
         return json(request, env, {
           ref: ref, reference: reference, weeks: rate.weeks, startsAt: starts, endsAt: ends,
-          totalUsd: rate.price, solUsd: price, lamports: lamports,
+          totalUsd: rate.price,
           usdc: usdcUnits(rate.price), usdcMint: USDC_MINT,
           payTo: env.TREASURY_WALLET || null,
           holdUntil: now + HOLD_MINUTES * 60000
@@ -2193,7 +2203,7 @@ export default {
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
         const v = await verifyInvoice(env, payer, signature,
-          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'banner:' + ref);
+          usdcUnits(b.total_usd), 'banner:' + ref);
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         await env.DB.prepare(
@@ -2244,7 +2254,7 @@ export default {
         if (!sig) return json(request, env, { status: 'waiting' });
 
         const v = await verifyInvoice(env, null, sig,
-          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'booking:' + b.ref);
+          usdcUnits(b.total_usd), 'booking:' + b.ref);
         if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
 
         await env.DB.prepare(
@@ -2266,7 +2276,7 @@ export default {
         if (!sig) return json(request, env, { status: 'waiting' });
 
         const v = await verifyInvoice(env, null, sig,
-          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'banner:' + b.ref);
+          usdcUnits(b.total_usd), 'banner:' + b.ref);
         if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
 
         await env.DB.prepare(
@@ -2281,7 +2291,6 @@ export default {
       if (path === '/api/booking/types' && request.method === 'GET') {
         const wallet = await getSession(request, env).catch(function () { return null; });
         const holder = wallet ? await isRangerHolder(env, wallet) : false;
-        const price = await solUsd(env);
         return json(request, env, {
           types: BOOKING_TYPES,
           policy: BOOKING_POLICY,
@@ -2289,7 +2298,6 @@ export default {
           rushPct: RUSH_PCT,
           holderDiscountPct: HOLDER_DISCOUNT_PCT,
           holder: holder,
-          solUsd: price,
           payTo: env.TREASURY_WALLET || null
         });
       }
@@ -2328,13 +2336,8 @@ export default {
         const wallet = await getSession(request, env).catch(function () { return null; });
         const holder = wallet ? await isRangerHolder(env, wallet) : false;
         const q = quoteFor(type, startsAt, holder);
-        const price = await solUsd(env);
-        // Enquiries are not paid up front, so they do not need a rate at all.
-        if (price === null && type.mode !== 'enquiry') {
-          return json(request, env, { error: 'cannot price in SOL just now — try again shortly' }, 503);
-        }
-        const lamports = type.mode === 'enquiry' ? null
-          : Math.round((q.total / price) * 1e9);
+        // Paid in USDC, so no exchange rate is needed — and a SOL price feed
+        // being down can no longer refuse someone paying in dollars.
         const usdc = type.mode === 'enquiry' ? null : usdcUnits(q.total);
 
         const ref = bookingRef();
@@ -2346,7 +2349,7 @@ export default {
           'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
           ref, wallet, type.id, type.mode, startsAt, type.minutes,
-          q.base, q.rushPct, q.discountPct, q.total, price, lamports,
+          q.base, q.rushPct, q.discountPct, q.total, null, null,
           type.mode === 'enquiry' ? 'enquiry' : 'held',
           type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
           name, contact, brief, now, reference
@@ -2360,8 +2363,6 @@ export default {
           startsAt: startsAt,
           minutes: type.minutes,
           quote: q,
-          solUsd: price,
-          lamports: lamports,
           usdc: usdc,
           usdcMint: USDC_MINT,
           payTo: env.TREASURY_WALLET || null,
@@ -2394,7 +2395,7 @@ export default {
         // 1% tolerance on SOL, which can tick between quote and signature.
         // USDC is a dollar, so it is expected exactly.
         const v = await verifyInvoice(env, payer, signature,
-          Math.floor(b.lamports * 0.99), usdcUnits(b.total_usd), 'booking:' + ref);
+          usdcUnits(b.total_usd), 'booking:' + ref);
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         await env.DB.prepare(

@@ -1146,14 +1146,6 @@
     .lb-who-wallet { color: var(--muted); font-size: 0.72rem; font-weight: 700; font-family: monospace; }
     .lb-score { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--orange-deep); flex-shrink: 0; }
 
-    .pay-tabs { display: flex; gap: 6px; background: var(--cream); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
-    .pay-tab {
-      flex: 1; appearance: none; border: none; cursor: pointer; background: transparent;
-      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.85rem;
-      color: var(--muted); border-radius: 999px; padding: 7px 12px;
-    }
-    .pay-tab.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(46,36,64,0.14); }
-    .pay-tab:hover:not(.on) { color: var(--ink-soft); }
 
     /* ── CLEANUP ── */
     .cl-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 16px; }
@@ -1355,6 +1347,9 @@
 
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
+    /* without this a grid column grows to fit its widest unbreakable content —
+       the 44-character address — and runs off the card on small phones */
+    .pay-grid > * { min-width: 0; }
     @media (max-width: 460px) { .pay-grid { grid-template-columns: 1fr; justify-items: center; text-align: center; } }
     .pay-qr {
       width: 148px; height: 148px; background: #fff;
@@ -1383,7 +1378,9 @@
       display: block; width: 100%; box-sizing: border-box; margin-top: 10px;
       background: var(--cream); border: 2px solid #E7DFD2; border-radius: 10px;
       padding: 8px 12px; font-family: monospace; font-size: 0.7rem; color: var(--ink-soft);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      /* wrapped rather than truncated: a payment address that cannot be read in
+         full cannot be checked */
+      word-break: break-all; line-height: 1.45;
     }
     .pay-or { text-align: center; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 10px; }
 
@@ -3755,54 +3752,6 @@
       renderStaking();
     }
 
-    /// Booking payments are real money on mainnet, so they get their own send
-    /// path — `sendChainTx` is pinned to devnet for staking and must stay that way.
-    async function sendSol(to, lamports, reference) {
-      const { Connection, PublicKey, Transaction, SystemProgram } = w3();
-      const provider = Wallet.active;
-      if (!provider) throw new Error('Connect a wallet first.');
-
-      const connection = rpc();
-      const from = new PublicKey(Wallet.pubkey);
-      const ix = SystemProgram.transfer({
-        fromPubkey: from,
-        toPubkey: new PublicKey(to),
-        lamports: Math.round(lamports)
-      });
-      // Solana Pay reference: a throwaway key on the instruction so the payment
-      // can be found on chain later, even if this browser never reports back.
-      if (reference) {
-        ix.keys.push({ pubkey: new PublicKey(reference), isSigner: false, isWritable: false });
-      }
-      const tx = new Transaction().add(ix);
-      tx.feePayer = from;
-      const latest = await connection.getLatestBlockhash('confirmed');
-      tx.recentBlockhash = latest.blockhash;
-
-      let signature;
-      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
-        const res = await provider.w.signAndSendTransaction(tx);
-        signature = signatureOf(res.signature || res);
-      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
-        const signed = await provider.w.signTransaction(tx);
-        signature = await connection.sendRawTransaction(signed.serialize());
-      } else if (provider.kind === 'standard') {
-        const feat = provider.w.features['solana:signAndSendTransaction'];
-        if (!feat) throw new Error('This wallet cannot send transactions.');
-        const out = await feat.signAndSendTransaction({
-          account: provider.w.accounts[0],
-          chain: 'solana:mainnet',
-          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
-        });
-        signature = signatureOf(out[0].signature);
-      } else {
-        throw new Error('This wallet cannot send transactions.');
-      }
-
-      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
-      return signature;
-    }
-
     // ── USDC ──
     const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
     const USDC_DECIMALS = 6;
@@ -3817,9 +3766,12 @@
       )[0];
     }
 
-    /// Sends USDC. TransferChecked rather than Transfer: it carries the mint and
-    /// decimals, so a wrong-token or wrong-scale transfer fails on chain instead
-    /// of quietly moving the wrong amount.
+    /// Sends USDC — the only currency bookings are paid in. Booking payments are
+    /// real money on mainnet, so they get their own send path: `sendChainTx` is
+    /// pinned to devnet for staking and must stay that way.
+    /// TransferChecked rather than Transfer: it carries the mint and decimals, so
+    /// a wrong-token or wrong-scale transfer fails on chain instead of quietly
+    /// moving the wrong amount.
     async function sendUsdc(to, units, reference) {
       const { Connection, PublicKey, Transaction, TransactionInstruction } = w3();
       const provider = Wallet.active;
@@ -4989,19 +4941,13 @@
     // touched this site. Either way the reference is what identifies it.
     var payPoll = null;
 
-    var payCurrency = 'usdc';
-
     function solanaPayUrl(d, label, message) {
       const base = 'solana:' + d.payTo;
       const common = '&reference=' + d.reference +
         '&label=' + encodeURIComponent(label) +
         '&message=' + encodeURIComponent(message);
-      if (payCurrency === 'usdc') {
-        return base + '?amount=' + (d.usdc / Math.pow(10, 6)) +
-          '&spl-token=' + USDC_MINT + common;
-      }
-      const sol = (d.lamports / 1e9).toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
-      return base + '?amount=' + sol + common;
+      return base + '?amount=' + (d.usdc / Math.pow(10, 6)) +
+        '&spl-token=' + USDC_MINT + common;
     }
 
     function loadQrLib() {
@@ -5035,23 +4981,20 @@
     /// kind: 'booking' | 'ad'. onPaid runs once the chain confirms.
     function renderPayment(d, kind, title, onPaid) {
       window._pay = { d: d, kind: kind, onPaid: onPaid, title: title };
-      payCurrency = 'usdc';
       paintPayment();
       bkScrollTo('bk-flow');
       startPayPolling(d.ref, kind, onPaid);
     }
 
-    /// Repainted on a currency switch. The invoice, reference and polling all
-    /// stay put — only how you settle it changes.
+    /// Bookings and the ad slot are paid in USDC only. Priced in dollars, so a
+    /// dollar stablecoin means the invoice is exactly what lands — no exchange
+    /// rate to quote, hold or drift.
     function paintPayment() {
       const ctx = window._pay;
       const d = ctx.d;
       const flow = document.getElementById('bk-flow');
       const usd = Number(d.totalUsd !== undefined ? d.totalUsd : (d.quote && d.quote.total));
-      const isUsdc = payCurrency === 'usdc';
-      const amount = isUsdc
-        ? (d.usdc / Math.pow(10, 6)).toFixed(2) + ' USDC'
-        : (d.lamports / 1e9).toFixed(4) + ' ◎';
+      const amount = (d.usdc / Math.pow(10, 6)).toFixed(2) + ' USDC';
       const url = solanaPayUrl(d, 'solquicks', ctx.title);
       ctx.url = url;
 
@@ -5074,18 +5017,12 @@
         '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
         '<div class="bk-step">Pay · reference ' + escapeHtml(d.ref) + '</div>' +
         breakdown +
-        '<div class="pay-tabs">' +
-          '<button class="pay-tab' + (isUsdc ? ' on' : '') + '" onclick="setPayCurrency(\'usdc\')">USDC</button>' +
-          '<button class="pay-tab' + (isUsdc ? '' : ' on') + '" onclick="setPayCurrency(\'sol\')">SOL</button>' +
-        '</div>' +
         '<div class="pay-grid">' +
           '<div class="pay-qr loading" id="pay-qr">Making QR…</div>' +
           '<div><div class="pay-amount">' + amount + '</div>' +
           '<div class="pay-usd">$' + usd.toFixed(2) + ' · ' + escapeHtml(ctx.title) + '</div>' +
-          '<div class="pay-note">' + (isUsdc
-            ? 'A dollar is a dollar — what the invoice says is what you send.'
-            : 'Priced at the SOL rate quoted when you booked. Held for 20 minutes.') +
-          ' Scan with any Solana wallet, or pay in this browser.</div>' +
+          '<div class="pay-note">Paid in USDC — what the invoice says is what you send. ' +
+          'Scan with any Solana wallet, or pay in this browser.</div>' +
           '<div class="pay-link">' + escapeHtml(d.payTo) + '</div></div>' +
         '</div>' +
         '<div class="pay-status" id="pay-status"><span class="pay-dot"></span><span id="pay-status-text">Waiting for payment…</span></div>' +
@@ -5097,12 +5034,6 @@
         '</div>';
 
       drawQr(document.getElementById('pay-qr'), url);
-    }
-
-    function setPayCurrency(c) {
-      if (payCurrency === c) return;
-      payCurrency = c;
-      paintPayment();
     }
 
     function startPayPolling(ref, kind, onPaid) {
@@ -5153,9 +5084,7 @@
       btn.disabled = true;
       btn.textContent = 'Check your wallet…';
       try {
-        const sig = payCurrency === 'usdc'
-          ? await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference)
-          : await sendSol(ctx.d.payTo, ctx.d.lamports, ctx.d.reference);
+        const sig = await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference);
         btn.textContent = 'Confirming…';
         const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm' : '/api/booking/confirm';
         const res = await fetch(POINTS_API + endpoint, {
@@ -5370,7 +5299,7 @@
           : t.mode === 'async' ? 'Order this' : 'Pick a time';
         const meta = t.mode === 'enquiry' ? 'In person · flat fee'
           : t.mode === 'async' ? 'No calendar needed · made for you'
-          : t.minutes + ' minutes · live';
+          : t.minutes + ' minutes · ' + (t.format || 'live');
         const yours = d.holder ? t.price * (1 - d.holderDiscountPct / 100) : t.price;
         const priceHtml = d.holder
           ? '<span class="bk-was">$' + t.price.toLocaleString() + '</span> $' +
