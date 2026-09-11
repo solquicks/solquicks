@@ -117,9 +117,27 @@ real order and burned on first use — see `docs/plushie-codes.md`. Verified end
 to end against the live worker: the old exploit now returns `unknown award`, a
 used code cannot be redeemed twice or by a second wallet.
 
-**8. Book The Fox descriptions.**
-You said you'd circle back to these. Send me the wording you want and I'll
-update them.
+**8. Book The Fox copy — done except MC / speaking. ← COME BACK TO THIS**
+
+Reviewed one by one on 2026-09-11 and shipped: advertising space, Hosted X
+Space, Hosted Podcast (now labelled "recorded"), Hosted Stream and Custom
+content. Bookings and the ad slot are now paid in USDC only.
+
+**Still open — MC or speaking ($1,000, in person).** Parked at your request. The
+card never says whether travel is part of the $1,000, and that is the first
+thing an organiser will ask. The options were:
+
+- organiser covers travel and accommodation (the usual arrangement for
+  flat-fee speaking — a $1,000 fee that has to cover a flight and a hotel can
+  leave very little)
+- travel included in the fee (simplest, but best only for local events)
+- travel agreed per event (open, but stated plainly)
+
+The copy also says "in person" and "flat fee" three times on one card, so it
+gets tightened whichever way the travel answer goes.
+
+Small optional one from the same pass: the Cleanup menu icon (♻) renders as a
+full-colour emoji while every other menu icon is a flat line glyph.
 
 ---
 
@@ -154,8 +172,9 @@ costs nothing.
 Done today: all of P0, the plushie leak, and `/api/migrate`. Both known ways to
 mint points without earning them are closed.
 
-Open, in the order I'd take them: **the two blank names** (needs the owners or
-the swap-store operator — not a code problem), then the Book The Fox wording.
+Open, in the order I'd take them: **MC / speaking copy** (parked — needs your
+travel decision, item 8), **the two blank names** (needs the owners or the
+swap-store operator — not a code problem).
 The swap fees are deliberately parked until they outgrow the rent. The mainnet
 deploy sits blocked on ~1.8 SOL and nothing about it expires.
 
