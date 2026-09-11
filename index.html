@@ -5131,10 +5131,10 @@
 
       flow.innerHTML = '<div class="bk-flow">' +
         '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
-        '<div class="bk-step">Advertising space · top of every page</div>' +
+        '<div class="bk-step">Advertising space · top of every tab</div>' +
         (d.taken ? '<p class="bk-hint">The slot is running someone else\'s campaign right now. ' +
           'Yours would start when theirs ends.</p>' : '') +
-        '<p class="bk-blurb">A 3:1 banner above the fold, on every page of the site. ' +
+        '<p class="bk-blurb">A 3:1 banner above the fold, on every tab of the site. ' +
           'Yours alone for the whole run — no rotation.</p>' +
         '<div class="bk-weeks">' + d.rates.map(function (r) {
           const perWeek = r.price / r.weeks;
@@ -5624,7 +5624,7 @@
         }
         out.innerHTML = 'Holds <strong>' + r.holds + '</strong> Ranger' + (r.holds === 1 ? '' : 's') +
           ' · ranked <strong>#' + r.rank + '</strong> of ' + r.ofHolders + ' holders' +
-          (r.staked ? ' · <strong>' + r.staked + '</strong> locked' : ' · none locked');
+          (r.staked ? ' · <strong>' + r.staked + '</strong> staked' : ' · none staked');
       } catch (e) {
         out.textContent = 'Could not reach the collection data just now.';
       }
