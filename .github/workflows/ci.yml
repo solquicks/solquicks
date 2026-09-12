@@ -158,6 +158,13 @@ jobs:
         working-directory: worker
         run: node test/draw.test.mjs
 
+      # Booking prices, the rush surcharge and the holder discount — plus the
+      # check that the breakdown shown on the payment screen adds up to the
+      # amount the wallet is actually asked for.
+      - name: Booking quote maths
+        working-directory: worker
+        run: node test/booking-quote.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest
