@@ -348,15 +348,38 @@ const RATE_RULES = [
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
   // Guessing a code is infeasible (32^10), so this is not the thing standing
   // between an attacker and the points — it just stops anyone hammering it.
-  { match: ['/api/plushie/redeem'], name: 'plushie', by: 'ip', limit: 10, windowMs: 60000 }
+  { match: ['/api/plushie/redeem'], name: 'plushie', by: 'ip', limit: 10, windowMs: 60000 },
+  // The admin surface can settle missions, approve creative and export the whole
+  // database. It had no limit at all, so a token could be guessed at unlimited
+  // speed. Matched by the synthetic path 'admin:*' below, not by exact route.
+  { match: ['admin:*'], name: 'admin', by: 'ip', limit: 5, windowMs: 60000 },
+  // A global ceiling on wallet scans. Per-IP limits do nothing against a proxy
+  // pool, and each scan costs real Helius credits — if those run out, holder
+  // analytics and the Ranger grid stop working for everyone.
+  { match: ['scan:global'], name: 'scanbudget', by: 'global', limit: 600, windowMs: 3600000 }
 ];
+
+/// Compares without leaking where two strings first differ. A plain !== returns
+/// as soon as it finds a mismatch, which in principle times differently for a
+/// token that shares a prefix with the real one.
+function tokenMatches(header, secret) {
+  if (!secret) return false;
+  const given = String(header || '');
+  const want = 'Bearer ' + secret;
+  if (given.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= given.charCodeAt(i) ^ want.charCodeAt(i);
+  return diff === 0;
+}
 
 async function rateLimited(request, env, path, wallet) {
   const rule = RATE_RULES.find(function (r) { return r.match.indexOf(path) >= 0; });
   if (!rule) return false;
 
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const who = (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
+  const who = rule.by === 'global'
+    ? 'all'
+    : (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
   const now = Date.now();
   const window = Math.floor(now / rule.windowMs);
   const key = rule.name + ':' + who + ':' + window;
@@ -461,7 +484,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'site-pass-1';
+const BUILD = 'p1-hardening-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1569,6 +1592,12 @@ export default {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
       }
 
+      // Every admin route, throttled before the token is even looked at, so the
+      // secret cannot be guessed at speed.
+      if (path.startsWith('/api/admin/')) {
+        if (await rateLimited(request, env, 'admin:*', null)) return tooMany(request, env);
+      }
+
       // ── public: Ranger artwork ──
       // IPFS gateways serve a 403 challenge to browser User-Agents, so the
       // image has to be fetched server-side. Deliberately keyed by MINT, not
@@ -1668,7 +1697,7 @@ export default {
       // ── admin: mission configuration and settlement ──
       if (path.startsWith('/api/admin/mission') && request.method === 'POST') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const body = await request.json().catch(function () { return {}; });
@@ -1814,7 +1843,7 @@ export default {
 
       if (path === '/api/admin/banner' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const rows = await env.DB.prepare(
@@ -1825,7 +1854,7 @@ export default {
 
       if (path === '/api/admin/banner/approve' && request.method === 'POST') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const body = await request.json().catch(function () { return {}; });
@@ -1844,7 +1873,7 @@ export default {
       // claim their points.
       if (path === '/api/admin/plushie/codes' && request.method === 'POST') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const body = await request.json().catch(function () { return {}; });
@@ -1868,7 +1897,7 @@ export default {
 
       if (path === '/api/admin/plushie/codes' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const rows = await env.DB.prepare(
@@ -1879,7 +1908,7 @@ export default {
 
       if (path === '/api/admin/bookings' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const rows = await env.DB.prepare(
@@ -1894,7 +1923,7 @@ export default {
       // holding a copy outside the account entirely.
       if (path === '/api/admin/export' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
-        if (!env.ADMIN_TOKEN || auth !== 'Bearer ' + env.ADMIN_TOKEN) {
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const dump = {};
@@ -2014,12 +2043,44 @@ export default {
         return json(request, env, { prices: prices });
       }
 
+      // Each scan costs several Helius calls, and the route is public because
+      // the feature is worth trying before connecting anything. Two guards keep
+      // that from becoming a way to burn the credit balance: a short cache, so
+      // re-scanning the same wallet is free, and a global hourly ceiling, which
+      // a rotating proxy pool cannot sidestep the way it sidesteps a per-IP
+      // limit. Running out of credits would break holder analytics and the
+      // Ranger grid for everyone, so the ceiling fails closed with a clear
+      // message rather than quietly draining.
       if (path === '/api/cleanup/scan' && request.method === 'GET') {
         const who = url.searchParams.get('wallet');
         if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
         if (!env.HELIUS_API_KEY) return json(request, env, { error: 'unavailable' }, 503);
+
+        const cache = caches.default;
+        const cacheKey = new Request(
+          new URL('/api/cleanup/scan?v=' + BUILD + '&wallet=' + who, url.origin).toString(),
+          request
+        );
+        // Rebuild the response from the cached body so the CORS header is always
+        // computed for this caller. Replaying a stored response would hand back
+        // whichever origin populated the cache - a miss from a foreign origin
+        // would then be served, header-less, to the real site.
+        const hit = await cache.match(cacheKey);
+        if (hit) return json(request, env, await hit.json());
+
+        if (await rateLimited(request, env, 'scan:global', null)) {
+          return json(request, env, {
+            error: 'wallet scanning is busy right now — try again in a few minutes'
+          }, 503);
+        }
+
         try {
-          return json(request, env, await scanWallet(env, who));
+          const result = await scanWallet(env, who);
+          const res = json(request, env, result);
+          const cached = new Response(res.body, res);
+          cached.headers.set('Cache-Control', 'public, max-age=60');
+          ctx.waitUntil(cache.put(cacheKey, cached.clone()));
+          return cached;
         } catch (e) {
           await logError(env, 'cleanup.scan', (e && e.message) || e);
           return json(request, env, { error: 'could not read that wallet just now' }, 502);
@@ -2870,7 +2931,10 @@ export default {
     } catch (err) {
       const message = String((err && err.message) || err);
       ctx.waitUntil(logError(env, path, message));
-      return json(request, env, { error: 'server error', detail: message }, 500);
+      // The detail is logged above, not returned. It used to be sent to the
+      // caller, which handed an attacker table names, upstream providers and
+      // which code path failed — the reconnaissance step before a real attempt.
+      return json(request, env, { error: 'server error' }, 500);
     }
   }
 };
