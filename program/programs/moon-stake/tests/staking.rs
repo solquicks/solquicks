@@ -219,6 +219,10 @@ fn ata(owner: &Address, mint: &Address) -> Address {
     .0
 }
 
+fn vault_pda(mint: &Address) -> Address {
+    Address::find_program_address(&[b"vault", mint.as_ref()], &pid()).0
+}
+
 fn stake_record(mint: &Address) -> Address {
     Address::find_program_address(&[b"stake", mint.as_ref()], &pid()).0
 }
@@ -251,10 +255,9 @@ fn stake_ix(
                 nft_mint: to_anchor(mint),
                 owner_token: to_anchor(owner_token),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, mint)),
+                vault_token: to_anchor(&vault_pda(mint)),
                 metadata: to_anchor(metadata),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
-                associated_token_program: to_anchor(&ATA_PROGRAM_ID),
                 system_program: anchor_lang::system_program::ID,
             }
             .to_account_metas(None),
@@ -272,7 +275,7 @@ fn unstake_ix(w: &World, owner: &Address, mint: &Address, owner_token: &Address)
                 owner: to_anchor(owner),
                 config: to_anchor(&w.config),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, mint)),
+                vault_token: to_anchor(&vault_pda(mint)),
                 owner_token: to_anchor(owner_token),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
             }
@@ -301,7 +304,7 @@ fn stake_and_unstake_round_trip() {
     let ix = stake_ix(&w, &owner.pubkey(), &mint, &owner_token, &metadata);
     send(&mut w.svm, &[ix], &owner, &[]).expect("staking a real Ranger should work");
 
-    let vault = ata(&stake_record(&mint), &mint);
+    let vault = vault_pda(&mint);
     assert_eq!(
         token_amount(&w.svm, &vault),
         1,
@@ -351,7 +354,7 @@ fn a_stranger_cannot_unstake_your_ranger() {
                 owner: to_anchor(&thief.pubkey()),
                 config: to_anchor(&w.config),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, &mint)),
+                vault_token: to_anchor(&vault_pda(&mint)),
                 owner_token: to_anchor(&owner_token),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
             }
@@ -366,7 +369,7 @@ fn a_stranger_cannot_unstake_your_ranger() {
         "thief should be rejected as NotOwner, got: {err}"
     );
     assert_eq!(
-        token_amount(&w.svm, &ata(&record, &mint)),
+        token_amount(&w.svm, &vault_pda(&mint)),
         1,
         "Ranger must stay in the vault"
     );
@@ -601,7 +604,7 @@ fn admin_cannot_steal_via_emergency_return() {
                 config: to_anchor(&w.config),
                 owner: to_anchor(&w.admin.pubkey()),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, &mint)),
+                vault_token: to_anchor(&vault_pda(&mint)),
                 owner_token: to_anchor(&admin_token),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
             }
@@ -621,7 +624,7 @@ fn admin_cannot_steal_via_emergency_return() {
         "admin must receive nothing"
     );
     assert_eq!(
-        token_amount(&w.svm, &ata(&record, &mint)),
+        token_amount(&w.svm, &vault_pda(&mint)),
         1,
         "Ranger stays in the vault"
     );
@@ -646,7 +649,7 @@ fn emergency_return_sends_the_ranger_home() {
                 config: to_anchor(&w.config),
                 owner: to_anchor(&owner.pubkey()),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, &mint)),
+                vault_token: to_anchor(&vault_pda(&mint)),
                 owner_token: to_anchor(&owner_token),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
             }
@@ -684,7 +687,7 @@ fn non_admin_cannot_call_emergency_return() {
                 config: to_anchor(&w.config),
                 owner: to_anchor(&owner.pubkey()),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, &mint)),
+                vault_token: to_anchor(&vault_pda(&mint)),
                 owner_token: to_anchor(&owner_token),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
             }
@@ -747,10 +750,9 @@ fn fee_cannot_be_diverted_to_another_wallet() {
                 nft_mint: to_anchor(&mint),
                 owner_token: to_anchor(&owner_token),
                 stake_record: to_anchor(&record),
-                vault_token: to_anchor(&ata(&record, &mint)),
+                vault_token: to_anchor(&vault_pda(&mint)),
                 metadata: to_anchor(&metadata),
                 token_program: to_anchor(&TOKEN_PROGRAM_ID),
-                associated_token_program: to_anchor(&ATA_PROGRAM_ID),
                 system_program: anchor_lang::system_program::ID,
             }
             .to_account_metas(None),
@@ -941,5 +943,59 @@ fn a_stranger_cannot_seize_admin() {
     assert!(
         w.svm.send_transaction(tx).is_err(),
         "only the admin may hand over"
+    );
+}
+
+/// Regression test for the audit finding of 2026-09-12. The vault used to be an
+/// associated token account, and anyone can create an ATA for any owner —
+/// including a PDA that does not exist yet. A stranger could therefore occupy
+/// the vault address for roughly the price of rent, after which that Ranger
+/// could never be staked, by anyone, permanently. Proven exploitable before the
+/// fix; the vault is now a PDA only this program can create.
+#[test]
+fn a_stranger_cannot_occupy_the_vault_address() {
+    let mut w = setup(0);
+    let owner = Keypair::new();
+    w.svm.airdrop(&owner.pubkey(), 10_000_000_000).unwrap();
+    let mallory = Keypair::new();
+    w.svm.airdrop(&mallory.pubkey(), 10_000_000_000).unwrap();
+
+    let (mint, owner_token, metadata) =
+        mint_ranger(&mut w.svm, &owner.pubkey(), Some((true, w.collection)));
+
+    // Mallory tries to create an account at the vault address before the owner
+    // stakes. Against an associated token account this worked and blocked that
+    // Ranger for good; the vault is now a PDA of this program, so the ATA
+    // program cannot create it — the address is not one it can sign for.
+    let record = stake_record(&mint);
+    let vault = vault_pda(&mint);
+    let create_ata = Instruction {
+        program_id: ATA_PROGRAM_ID,
+        accounts: vec![
+            solana_instruction::AccountMeta::new(mallory.pubkey(), true),
+            solana_instruction::AccountMeta::new(vault, false),
+            solana_instruction::AccountMeta::new_readonly(record, false),
+            solana_instruction::AccountMeta::new_readonly(mint, false),
+            solana_instruction::AccountMeta::new_readonly(
+                Address::from_str_const("11111111111111111111111111111111"),
+                false,
+            ),
+            solana_instruction::AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        ],
+        data: vec![0],
+    };
+    let squatted = send(&mut w.svm, &[create_ata], &mallory, &[]).is_ok();
+    assert!(
+        !squatted,
+        "a stranger must not be able to occupy the vault address"
+    );
+
+    // and the owner can still stake
+    let ix = stake_ix(&w, &owner.pubkey(), &mint, &owner_token, &metadata);
+    send(&mut w.svm, &[ix], &owner, &[]).expect("staking must still work");
+    assert_eq!(
+        token_amount(&w.svm, &vault),
+        1,
+        "the Ranger is in the vault"
     );
 }

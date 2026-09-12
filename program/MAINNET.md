@@ -52,7 +52,15 @@ Current balances (checked 2026-09-09): deployer
       installed as of 2026-09-09. A verifiable build lets anyone confirm the
       deployed bytes match this source; without it "trust me" is the only
       answer available. Skippable, but say so publicly if skipped.
-- [ ] `cargo test --package moon-stake` — 27 passing.
+- [ ] `cargo test --package moon-stake` — 28 passing (38 across the workspace).
+- [ ] **Redeploy devnet first.** The 2026-09-12 audit moved the escrow vault from
+      an associated token account to a program PDA, which changes the `stake`
+      account list. The devnet program is still the old build, so the
+      `?devnet=1` path will fail until it is upgraded. Test there before mainnet.
+- [ ] **Close the orphaned devnet program.** `AbiL2mVBQgPbCujUuZFbdWXkHVAycriKjmQw16RiTKLG`
+      is an earlier build still deployed and still upgradeable on devnet. Nothing
+      points at it now, but anyone holding the old account list can still stake
+      into it. `solana program close` it and reclaim the rent.
 - [ ] `cargo clippy --all-targets -- -D warnings` clean.
 - [ ] Program keypair backed up somewhere that is not this laptop.
 - [ ] Deployer funded with ~1.8 SOL.

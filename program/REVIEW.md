@@ -8,7 +8,7 @@ deliberately small so it can be read end to end in one sitting.
 vault, they withdraw it later. Points are awarded off-chain and are **not** in
 this program — it only custodies NFTs.
 
-**Status:** deployed to devnet, never touched a real Ranger. 27 tests passing.
+**Status:** deployed to devnet, never touched a real Ranger. 28 tests passing.
 Mainnet deploy is pending this review.
 
 ---
@@ -59,7 +59,16 @@ These are the claims the design rests on. If any is false, that's the finding.
 6. **Fee handling.** Fees must go only to `config.treasury`. Can a caller
    redirect them, or stake without paying?
 
-7. **Admin handover cannot strand the config.** `set_admin` requires the
+7. **The vault address cannot be occupied by a stranger.** It used to be an
+   associated token account, and anyone can create an ATA for any owner —
+   including a PDA that does not exist yet. A stranger could take the address for
+   the price of rent and that Ranger could then never be staked, permanently, by
+   anyone. Found and fixed on 2026-09-12: the vault is now a PDA of this program,
+   which only this program can create. Regression test:
+   `a_stranger_cannot_occupy_the_vault_address`. Is there any other account in
+   `stake` whose address someone else could create first?
+
+8. **Admin handover cannot strand the config.** `set_admin` requires the
    incoming admin to sign as well, so authority can only move to a key that
    demonstrably exists and is controlled. Can anyone move admin without the
    current admin, or set it to a key that never signed?

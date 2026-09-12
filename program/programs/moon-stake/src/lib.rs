@@ -15,9 +15,8 @@
 //!   Metaplex metadata rather than trusting the client.
 
 use anchor_lang::prelude::*;
-use anchor_spl::{
-    associated_token::AssociatedToken,
-    token::{close_account, transfer, CloseAccount, Mint, Token, TokenAccount, Transfer},
+use anchor_spl::token::{
+    close_account, transfer, CloseAccount, Mint, Token, TokenAccount, Transfer,
 };
 
 declare_id!("DSWFRcF4Ky9Nw7RQUUa2M9nnXD4kRrbYGjegF7dyJ9B5");
@@ -405,11 +404,19 @@ pub struct Stake<'info> {
     )]
     pub stake_record: Account<'info, StakeRecord>,
 
+    /// The vault is a PDA of THIS program, not an associated token account.
+    /// An ATA address can be created by anyone, for any owner, including a PDA
+    /// that does not exist yet — so a stranger could create the vault address
+    /// first and `init` would then fail with IllegalOwner, permanently blocking
+    /// that Ranger from ever being staked, for the price of rent. Only this
+    /// program can create an account at its own PDA.
     #[account(
         init,
         payer = owner,
-        associated_token::mint = nft_mint,
-        associated_token::authority = stake_record
+        seeds = [b"vault", nft_mint.key().as_ref()],
+        bump,
+        token::mint = nft_mint,
+        token::authority = stake_record
     )]
     pub vault_token: Account<'info, TokenAccount>,
 
@@ -417,7 +424,6 @@ pub struct Stake<'info> {
     pub metadata: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
