@@ -12,8 +12,8 @@
   "type": "commonjs",
   "dependencies": {
     "@ardrive/turbo-sdk": "^1.43.0",
-    "@irys/upload": "^0.0.15",
-    "@irys/upload-solana": "^0.1.8",
-    "bs58": "^6.0.0"
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3"
   }
 }

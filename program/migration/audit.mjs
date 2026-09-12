@@ -1,7 +1,7 @@
 // Full post-migration audit. The update replaced the entire data struct, so
 // the real question is not "did the uri change" but "did anything else".
 import fs from 'node:fs';
-import pkg from '/Users/solquicks/Developer/solquicks.com/program/scripts/node_modules/@solana/web3.js/lib/index.cjs.js';
+import pkg from '@solana/web3.js';
 const { Connection, PublicKey } = pkg;
 import { TMETA, parseMetadata } from './meta-ix.mjs';
 

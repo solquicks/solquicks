@@ -1,7 +1,7 @@
 // Proves the encoding before any UI exists: parse a real Ranger, rebuild the
 // instruction with only the uri changed, and SIMULATE it on mainnet.
 import fs from 'node:fs';
-import pkg from '/Users/solquicks/Developer/solquicks.com/program/scripts/node_modules/@solana/web3.js/lib/index.cjs.js';
+import pkg from '@solana/web3.js';
 const { Connection, PublicKey, Transaction, TransactionInstruction } = pkg;
 import { TMETA, parseMetadata, updateUriIxData } from './meta-ix.mjs';
 
