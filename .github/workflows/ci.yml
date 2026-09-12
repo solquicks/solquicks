@@ -53,7 +53,12 @@ jobs:
             fail=1
           fi
 
-          if git ls-files -z | xargs -0 grep -lE '(sk_live_|ghp_|github_pat_|xox[bp]-|AKIA[0-9A-Z]{16})' 2>/dev/null; then
+          # Each prefix below has a bracket inserted before its underscore. That
+          # is invisible to the regex engine but means this line does not
+          # contain the literal prefixes it searches for, so the scanner no
+          # longer flags its own source. It did exactly that the first time it
+          # ran, and then again on the comment explaining the fix.
+          if git ls-files -z | xargs -0 grep -lE '(sk[_]live_|ghp[_]|github[_]pat_|xox[bp]-|AKIA[0-9A-Z]{16})' 2>/dev/null; then
             echo "::error::What looks like a provider API key is committed."
             fail=1
           fi
