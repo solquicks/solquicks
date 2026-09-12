@@ -1,0 +1,212 @@
+name: CI
+
+# Everything here already existed as checks somebody had to remember to run.
+# This is what makes them run on their own, and gives the branch protection on
+# main something real to gate on.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: nothing here writes to the repo.
+permissions:
+  contents: read
+
+# A newer push makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Match the toolchain the program is actually developed against.
+  SOLANA_VERSION: v3.1.10
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to a commit, not a tag. A tag can be moved to point
+      # at different code; a commit SHA cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Deliberately not a third-party scanning action: this runs on every push
+      # and a scanner is exactly the kind of dependency worth not having. The
+      # patterns below are the ones that would actually hurt this project.
+      - name: Look for key material in tracked files
+        run: |
+          set -euo pipefail
+          fail=0
+
+          # A Solana keypair is 64 comma-separated bytes. One was committed to
+          # this repo before, so this is the highest-value check here.
+          if git ls-files -z | xargs -0 grep -lE '\[[[:space:]]*([0-9]{1,3}[[:space:]]*,[[:space:]]*){60,}[0-9]{1,3}[[:space:]]*\]' 2>/dev/null | grep -v node_modules; then
+            echo "::error::A file looks like it contains a Solana keypair."
+            fail=1
+          fi
+
+          if git ls-files -z | xargs -0 grep -lE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' 2>/dev/null; then
+            echo "::error::A private key block is committed."
+            fail=1
+          fi
+
+          if git ls-files -z | xargs -0 grep -lE '(sk_live_|ghp_|github_pat_|xox[bp]-|AKIA[0-9A-Z]{16})' 2>/dev/null; then
+            echo "::error::What looks like a provider API key is committed."
+            fail=1
+          fi
+
+          # Secrets belong in wrangler secrets and gitignored files, never here.
+          if git ls-files | grep -qE '(^|/)(uploader\.json|\.env$|.*-keypair\.json)$'; then
+            echo "::error::A secret-bearing filename is tracked by git."
+            fail=1
+          fi
+
+          if [ "$fail" -eq 0 ]; then echo "No key material found in tracked files."; fi
+          exit $fail
+
+  program:
+    name: Solana program
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache cargo and the Solana toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.local/share/solana
+            program/target
+          key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}-${{ hashFiles('program/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}-
+
+      # Pinned to an exact release rather than "stable", so a toolchain change
+      # is a commit here and not a surprise on a Tuesday.
+      - name: Install the Solana toolchain
+        run: |
+          set -euo pipefail
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Versions
+        working-directory: program
+        run: |
+          solana --version
+          cargo --version
+
+      - name: Formatting
+        working-directory: program
+        run: cargo fmt --all --check
+
+      # The lints that matter for on-chain code. A panic in a program is a
+      # failed transaction at best; unchecked arithmetic is worse.
+      - name: Clippy, with the on-chain lints
+        working-directory: program
+        run: |
+          cargo clippy --all-targets -- \
+            -W clippy::all \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic \
+            -W clippy::arithmetic_side_effects
+
+      # LiteSVM loads the built .so, so the tests cannot run without this.
+      - name: Build
+        working-directory: program
+        run: cargo build-sbf
+
+      - name: Tests
+        working-directory: program
+        run: cargo test --all
+
+      - name: Audit dependencies
+        working-directory: program
+        continue-on-error: true # advisories in the Solana tree are not ours to fix
+        run: |
+          cargo install cargo-audit --locked --quiet || true
+          cargo audit
+
+  worker:
+    name: Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Worker parses
+        run: node --check worker/src/index.js
+
+      # Runs the shipped verifyInvoice against nine payment shapes: exact,
+      # overpaid and short USDC, SOL, wrong wallet, nothing received, not yet on
+      # chain, and a replayed signature. No network, no dependencies.
+      - name: Payment verification tests
+        working-directory: worker
+        run: node test/verify-invoice.test.mjs
+
+      - name: Draw assertions
+        working-directory: worker
+        run: node test/draw.test.mjs
+
+  site:
+    name: Site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # index.html is one file with a large inline script. A syntax error in it
+      # takes the whole site down, and nothing else here would catch it.
+      - name: Inline script parses
+        run: |
+          node -e '
+            const fs = require("fs");
+            const vm = require("vm");
+            const html = fs.readFileSync("index.html", "utf8");
+            const blocks = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+            let n = 0, skipped = 0;
+            for (const [, attrs, code] of blocks) {
+              if (/\ssrc=/.test(attrs)) continue;                 // loaded, not inline
+              const type = (attrs.match(/type="([^"]*)"/) || [])[1];
+              // application/ld+json is structured data, not JavaScript
+              if (type && !/^(text\/javascript|module)$/.test(type)) { skipped++; continue; }
+              if (!code.trim()) continue;
+              new vm.Script(code, { filename: "index.html inline #" + (++n) });
+            }
+            if (!n) { console.error("No inline JavaScript found — did the page change shape?"); process.exit(1); }
+            console.log(n + " inline script block(s) parse, " + skipped + " non-JS block(s) skipped");
+          '
+
+      # The CDN scripts run on pages where people sign transactions. Losing the
+      # integrity attribute would be silent and serious.
+      - name: CDN scripts are pinned with integrity hashes
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in index.html stake-init.html fix-names.html; do
+            [ -f "$f" ] || continue
+            while IFS= read -r line; do
+              case "$line" in
+                *integrity=*) ;;
+                *) echo "::error file=$f::A cdn.jsdelivr.net script has no integrity attribute"; fail=1 ;;
+              esac
+            done < <(grep -o '<script src="https://cdn\.jsdelivr\.net[^>]*>' "$f" || true)
+          done
+          [ "$fail" -eq 0 ] && echo "Every CDN script carries an integrity hash."
+          exit $fail
+
+      # These break on anyone else's machine, including a fresh clone.
+      - name: No machine-specific paths
+        run: |
+          if git grep -n "/Users/" -- '*.html' '*.mjs' '*.js' ':!*node_modules*' ':!*.lock'; then
+            echo "::error::An absolute path from one developer's laptop is committed."
+            exit 1
+          fi
+          echo "No absolute local paths."
