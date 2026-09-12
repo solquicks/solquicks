@@ -161,10 +161,36 @@ Not urgent, but it's the last open input on the missions design.
 
 ---
 
+## Testing and CI — added 2026-09-12
+
+**12. CI on every push and pull request.** `.github/workflows/ci.yml`, four jobs
+gated by branch protection on `main`: secret scan, worker, site, Solana program.
+Actions are pinned to commit SHAs rather than tags.
+
+**13. Booking quote maths.** `worker/test/booking-quote.test.mjs`, 45
+assertions, no dependencies and no network. It lifts `quoteFor`, `usdcUnits`
+and the rush and discount constants out of the shipped worker source rather
+than copying them, so a change to the pricing fails the test.
+
+Two things it found that are worth remembering:
+
+- The breakdown on the payment screen is built from its own expressions in
+  `index.html`, not from the worker's total. They have to be changed together,
+  and now a test says so.
+- The cent rounding in `quoteFor` is currently a no-op — none of the five
+  prices produce a fraction of a cent — so deleting it broke nothing. It is
+  tested against hypothetical prices that would expose it. **If a price is ever
+  set to something like $199 or $49.99, that rounding starts doing real work.**
+
+Still untested: `/api/book` end to end (hold, expiry, double-booking), and the
+site itself has no browser test.
+
+---
+
 ## Blocked
 
 **11. moon-stake mainnet.**
-Needs ~1.8 SOL for program rent. Everything else is ready: 27 tests passing,
+Needs ~1.8 SOL for program rent. Everything else is ready: 28 tests passing,
 `stake-init.html` verified against the chain, `settle-stakers.mjs` dry-run
 clean, runbook in `program/MAINNET.md`. Nothing expires — pick it up when the
 SOL is there. Tony's review of `program/REVIEW.md` can happen meanwhile and
