@@ -165,11 +165,11 @@ jobs:
         working-directory: worker
         run: node test/booking-quote.test.mjs
 
-      # The real worker's booking routes against a real SQLite database built
-      # from schema.sql, with a fake clock and a fake chain: holds, expiry,
-      # double-booking, both ways of paying, and replayed payments. Needs
-      # node:sqlite, so Node 22.13 or later.
-      - name: Booking API, end to end
+      # The real worker's booking and ad-slot checkouts against a real SQLite
+      # database built from schema.sql, with a fake clock and a fake chain:
+      # holds, expiry, double-booking, both ways of paying, late and replayed
+      # payments, and the scheduled sweep. Needs node:sqlite, so Node 22.13+.
+      - name: Booking and ad checkouts, end to end
         working-directory: worker
         run: node test/booking-api.test.mjs
 

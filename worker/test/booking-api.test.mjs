@@ -1,4 +1,4 @@
-// The booking API, end to end, against the worker that actually ships.
+// The booking and ad-slot checkouts, end to end, against the worker that ships.
 //
 // Nothing here is re-implemented. The real worker module is imported and its
 // real fetch handler is called with real Requests. Behind it:
@@ -623,6 +623,191 @@ section('payments switched off');
   const c = await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(60)), body: { ref: h.body.ref, signature: pay({ from: wallet(60), usdc: 200e6 }) } });
   eq('with no treasury configured, nothing can be confirmed', c.status, 503);
   eq('and the booking is not marked paid', row(env, h.body.ref).status, 'held');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The ad slot. One exclusive banner, sold in runs of whole weeks; each new run
+// starts when the last held or paid one ends.
+
+const DAY = 24 * HOUR, WEEK = 7 * DAY;
+const adRow = (env, ref) => env._db.prepare('SELECT * FROM banner_bookings WHERE ref = ?').get(ref);
+const adRates = async (env) => (await call(env, 'GET', '/api/banner/rates')).body;
+const adHold = (env, weeks, opts = {}) =>
+  call(env, 'POST', '/api/banner/hold', { token: opts.token, body: { weeks, name: opts.name || 'Test Sponsor', contact: '@sponsor' } });
+const liveRuns = (env) => env._db.prepare(
+  "SELECT ref, starts_at, ends_at FROM banner_bookings WHERE status IN ('held','paid') ORDER BY starts_at").all();
+const runsOverlap = (runs) => runs.some((a, i) => runs.some((b, j) => i < j && a.starts_at < b.ends_at && b.starts_at < a.ends_at));
+
+section('ad slot — holding a run');
+{
+  const env = freshEnv();
+  eq('with nothing booked, the next run starts in a day', (await adRates(env)).nextFree - clock, DAY);
+  eq('an unoffered length is refused', (await adHold(env, 3)).status, 400);
+  eq('a hold with no contact is refused', (await call(env, 'POST', '/api/banner/hold', { body: { weeks: 1, name: 'x' } })).status, 400);
+
+  const a = await adHold(env, 1);
+  eq('a one-week run is held', a.status, 200);
+  ok('reference looks like AD-XXXXXX', /^AD-[A-HJ-NP-Z2-9]{6}$/.test(a.body.ref), a.body.ref);
+  eq('it starts in a day', a.body.startsAt - clock, DAY);
+  eq('and lasts a week', a.body.endsAt - a.body.startsAt, WEEK);
+  eq('for 250 USDC', a.body.usdc, 250e6);
+  eq('held for 20 minutes by the server\'s clock', a.body.holdUntil - a.body.serverNow, 20 * MIN);
+
+  eq('the next run now starts when that one ends', (await adRates(env)).nextFree, a.body.endsAt);
+  const b = await adHold(env, 2);
+  eq('a second advertiser is queued straight after', b.body.startsAt, a.body.endsAt);
+  eq('for 450 USDC', b.body.usdc, 450e6);
+}
+
+section('ad slot — an abandoned hold gives its run back');
+{
+  const env = freshEnv();
+  const a = await adHold(env, 4);
+  eq('a four-week hold pushes the next run out four weeks', (await adRates(env)).nextFree, a.body.endsAt);
+
+  advance(21 * MIN);
+  await adRates(env); // any request sweeps
+  eq('after 20 minutes unpaid it expires', adRow(env, a.body.ref).status, 'expired');
+  eq('and the next run is back to starting in a day', (await adRates(env)).nextFree - clock, DAY);
+  const b = await adHold(env, 1);
+  eq('so the next advertiser is not pushed back a month', b.body.startsAt - clock, DAY);
+}
+
+section('ad slot — paying by connected wallet');
+{
+  const env = freshEnv();
+  const buyer = wallet(70);
+  const tok = signIn(env, buyer);
+  const a = await adHold(env, 1, { token: tok });
+  const confirm = (signature, ref = a.body.ref) => call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref, signature } });
+  const creative = (ref) => call(env, 'POST', '/api/banner/creative', {
+    body: { ref, sponsor: 'Sponsor', headline: 'Headline', url: 'https://example.com' } });
+
+  eq('creative cannot be sent before paying', (await creative(a.body.ref)).status, 409);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: 249.99e6 }))).status, 402);
+  eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9 }))).status, 402);
+  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: 250e6 }))).status, 402);
+  eq('none of that marked it paid', adRow(env, a.body.ref).status, 'held');
+
+  const good = pay({ from: buyer, usdc: 250e6 });
+  const c = await confirm(good);
+  eq('the exact amount is accepted', c.status, 200);
+  eq('and asks for the creative', c.body.needsCreative, true);
+  eq('run is paid', adRow(env, a.body.ref).status, 'paid');
+  eq('confirming twice is harmless', (await confirm(good)).body.alreadyPaid, true);
+  eq('payment recorded once', payments(env), 1);
+
+  const b = await adHold(env, 1, { token: tok });
+  eq('the same payment cannot buy a second run', (await confirm(good, b.body.ref)).status, 402);
+
+  const cr = await creative(a.body.ref);
+  eq('creative is accepted once paid', cr.status, 200);
+  eq('and waits for approval', adRow(env, a.body.ref).approved, 0);
+  eq('it does not go live unapproved', (await call(env, 'GET', '/api/banner/live')).body.slot, null);
+}
+
+section('ad slot — paying by QR');
+{
+  const env = freshEnv();
+  const a = await adHold(env, 2);
+  const watch = () => call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref);
+  eq('before paying it is waiting', (await watch()).body.status, 'waiting');
+  pay({ from: wallet(72), usdc: 400e6, reference: a.body.reference });
+  const short = await watch();
+  eq('a short payment leaves it waiting', short.body.status, 'waiting');
+  ok('with a reason', !!short.body.note);
+  pay({ from: wallet(73), usdc: 450e6, reference: a.body.reference });
+  eq('the full payment is found by reference', (await watch()).body.status, 'paid');
+  eq('the paying wallet is recorded', adRow(env, a.body.ref).wallet, wallet(73));
+  eq('watching again stays paid', (await watch()).body.status, 'paid');
+  eq('and records nothing new', payments(env), 1);
+}
+
+section('ad slot — money nobody was watching for');
+{
+  const env = freshEnv();
+  const a = await adHold(env, 1);
+  advance(1 * MIN);
+  pay({ from: wallet(74), usdc: 250e6, reference: a.body.reference });
+  advance(20 * MIN); // tab closed
+  await adRates(env);
+  eq('with nobody watching, the hold expires on schedule', adRow(env, a.body.ref).status, 'expired');
+
+  const before = chain.alerts.length;
+  await runScheduled(env);
+  eq('the scheduled sweep finds the payment', adRow(env, a.body.ref).status, 'paid');
+  ok('you are told the ad slot was booked, late but honoured',
+    chain.alerts.slice(before).some((m) => m.includes('Ad slot booked') && m.includes(a.body.ref) && m.includes('still free')));
+  eq('its run is reserved again', (await adRates(env)).nextFree, a.body.endsAt);
+  eq('a returning page shows it paid', (await call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref)).body.status, 'paid');
+}
+
+section('ad slot — late payment after the run was taken');
+{
+  const env = freshEnv({ ADMIN_TOKEN: 'admin-test' });
+  const a = await adHold(env, 1);
+  advance(21 * MIN);
+  await adRates(env);
+  const b = await adHold(env, 1, { name: 'Second Sponsor' });
+  ok('once expired, an overlapping run is offered to the next advertiser',
+    b.body.startsAt < a.body.endsAt && a.body.startsAt < b.body.endsAt);
+
+  pay({ from: wallet(75), usdc: 250e6, reference: a.body.reference });
+  const before = chain.alerts.length;
+  eq('the late payment is marked for refund', (await call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref)).body.status, 'refund');
+  eq('the advertiser who took the run keeps it', adRow(env, b.body.ref).status, 'held');
+  eq('the money is recorded', payments(env), 1);
+  ok('you are told to refund it', chain.alerts.slice(before).some((m) => m.includes('Refund needed') && m.includes(a.body.ref)));
+  const creative = await call(env, 'POST', '/api/banner/creative', {
+    body: { ref: a.body.ref, sponsor: 'S', headline: 'H', url: 'https://example.com' } });
+  eq('a refunded run cannot submit creative', creative.status, 409);
+  const admin = await call(env, 'GET', '/api/admin/banner', { token: 'admin-test' });
+  ok('the refund shows in the admin list', (admin.body.bookings || []).some((x) => x.ref === a.body.ref && x.status === 'refund'));
+
+  // and by wallet, when the run is still free
+  const buyer = wallet(76);
+  const tok = signIn(env, buyer);
+  const c = await adHold(env, 1, { token: tok });
+  advance(21 * MIN);
+  await adRates(env);
+  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: 250e6 }) } });
+  eq('a late wallet payment for a run still free is accepted', cc.status, 200);
+  eq('and asks for the creative', cc.body.needsCreative, true);
+}
+
+section('ad slot — advertisers arriving at the same moment');
+{
+  const env = freshEnv();
+  const two = await Promise.all([adHold(env, 1, { name: 'A' }), adHold(env, 1, { name: 'B' })]);
+  eq('two at once are both placed', two.map((r) => r.status).join(), '200,200');
+  ok('on different runs', two[0].body.startsAt !== two[1].body.startsAt,
+    two.map((r) => new Date(r.body.startsAt).toISOString()).join(' and '));
+  eq('that do not overlap', runsOverlap(liveRuns(env)), false);
+
+  const five = await Promise.all([1, 2, 4, 1, 2].map((w, i) => adHold(env, w, { name: 'P' + i })));
+  const placed = five.filter((r) => r.status === 200);
+  ok('several at once: at least one is placed, and the rest are placed or told to retry',
+    placed.length >= 1 && five.every((r) => r.status === 200 || r.status === 409), five.map((r) => r.status).join());
+  eq('no two runs ever overlap', runsOverlap(liveRuns(env)), false);
+  eq('every accepted hold is really held', placed.every((r) => adRow(env, r.body.ref).status === 'held'), true);
+}
+
+section('ad slot — the page and the wallet noticing one payment at once');
+{
+  const env = freshEnv();
+  const buyer = wallet(77);
+  const tok = signIn(env, buyer);
+  const a = await adHold(env, 1, { token: tok });
+  const sig = pay({ from: buyer, usdc: 250e6, reference: a.body.reference });
+  const door = env.DB.pauseBefore(/^UPDATE banner_bookings SET status = 'paid'/);
+  const confirming = call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: a.body.ref, signature: sig } });
+  await door.reached;
+  const w = await call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref);
+  eq('mid-confirm, the page keeps waiting', w.body.status, 'waiting');
+  ok('with no error shown', !w.body.note, w.body.note);
+  door.release();
+  eq('the confirm completes', (await confirming).status, 200);
+  eq('run paid, payment recorded once', adRow(env, a.body.ref).status + ' ' + payments(env), 'paid 1');
 }
 
 ok('no request tried to reach anything but the Solana RPC', chain.unexpected.length === 0, chain.unexpected.join(', '));

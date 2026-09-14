@@ -220,10 +220,18 @@ all succeeded; with it, one.
 The page and the wallet noticing one payment at the same moment no longer show
 the customer an error either.
 
-**Still open — the ad slot has the same lost-payment bug.** `/api/banner/confirm`
-refuses an expired hold the same way bookings used to, and nothing reconciles
-banner payments. The page changes (countdown, no paying after the hold) already
-cover ads and remove the commonest way into it, but the server side is not done.
+**D. ~~The ad slot had the same bugs, and one worse.~~ Fixed 2026-09-14.** Ads now
+settle through the same code as bookings, so every fix above applies to them.
+The worse one: **nothing ever expired an abandoned ad hold**, and each new run
+starts when the last held or paid one ends — so a single abandoned four-week
+checkout would have pushed every later advertiser back 29 days, permanently,
+and each further one would stack. No ad had been booked yet, so nothing was
+affected. Two advertisers arriving together were also sold the identical run;
+the second is now placed on the next free run instead.
+
+Known and left alone: when a hold expires, a later advertiser who was queued
+behind it keeps their start date, so the banner can sit empty for the expired
+run. A product choice, not a bug.
 
 Still untested: the site itself has no browser test.
 

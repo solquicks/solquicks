@@ -484,7 +484,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'booking-settle-1';
+const BUILD = 'checkout-settle-2';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1493,61 +1493,89 @@ function publicBooking(b) {
   };
 }
 
-// A booking occupies its hour while held or paid. Written once so the calendar,
-// the hold and settlement cannot disagree about what "taken" means. Used inside
-// a query where the candidate hour is bound as (?start, ?end).
+// What "taken" means, written once so the calendar, a hold and settlement
+// cannot disagree. Each is a subquery bound as (?end, ?start) for the time a
+// candidate would occupy. A booking holds its hour, and an ad campaign its run,
+// while held or paid.
 const OVERLAPS_LIVE_BOOKING =
   "SELECT 1 FROM bookings o WHERE o.status IN ('held','paid','confirmed') " +
   'AND o.starts_at IS NOT NULL AND o.starts_at < ? AND o.starts_at + COALESCE(o.minutes, 60) * 60000 > ?';
+const OVERLAPS_LIVE_BANNER =
+  "SELECT 1 FROM banner_bookings o WHERE o.status IN ('held','paid') AND o.starts_at < ? AND o.ends_at > ?";
 
 // How far back the scheduled sweep looks for payments nobody was watching for.
 const RECONCILE_HOURS = 48;
 
-/// Settles money found for a booking — from the page polling, the wallet
-/// confirming, or the scheduled sweep. The payment is recorded first, so it can
-/// never go missing whatever happens to the booking.
+// Bookings and ad campaigns are paid for and settled identically. They differ
+// only in where they are stored, what time they occupy, and what you are told.
+const CHECKOUTS = {
+  booking: {
+    table: 'bookings',
+    purpose: 'booking:',
+    overlap: OVERLAPS_LIVE_BOOKING,
+    endOf: function (b) { return b.starts_at ? b.starts_at + (b.minutes || 60) * 60000 : null; },
+    bookedAlert: function (b) {
+      return '📅 New booking ' + b.ref + ' — ' + b.type_id + ' — $' + b.total_usd +
+        (b.starts_at ? ' on ' + new Date(b.starts_at).toISOString() : '') + '\n' + b.name + ' · ' + b.contact;
+    }
+  },
+  banner: {
+    table: 'banner_bookings',
+    purpose: 'banner:',
+    overlap: OVERLAPS_LIVE_BANNER,
+    endOf: function (b) { return b.ends_at; },
+    bookedAlert: function (b) {
+      return '🪧 Ad slot booked ' + b.ref + ' — ' + b.weeks + ' week(s), $' + b.total_usd +
+        ' from ' + new Date(b.starts_at).toISOString().slice(0, 10) +
+        '\n' + b.name + ' · ' + b.contact + '\nAwaiting creative, then your approval.';
+    }
+  }
+};
+
+/// Settles money found for a booking or an ad campaign — from the page polling,
+/// the wallet confirming, or the scheduled sweep. The payment is recorded first,
+/// so it can never go missing whatever happens to the booking.
 ///
-/// A hold that expired before the money was noticed is honoured if its hour is
+/// A hold that expired before the money was noticed is honoured if its time is
 /// still ahead and nobody else has taken it. Otherwise it is marked `refund`
 /// and flagged, because the customer paid and did not get what they paid for.
-async function settleBooking(env, b, signature, wallet) {
-  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), 'booking:' + b.ref);
+async function settlePayment(env, kind, b, signature, wallet) {
+  const purpose = kind.purpose + b.ref;
+  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose);
   if (!v.ok) {
     // a concurrent request may have settled this exact payment a moment ago
-    const cur = await env.DB.prepare('SELECT status, signature FROM bookings WHERE ref = ?').bind(b.ref).first();
+    const cur = await env.DB.prepare('SELECT status, signature FROM ' + kind.table + ' WHERE ref = ?').bind(b.ref).first();
     if (cur && (cur.status === 'paid' || cur.status === 'refund') && cur.signature === signature) {
       return { status: cur.status };
     }
     // ...or be part-way through doing so: the payment is recorded against this
     // booking but the booking is not updated yet. That is not a failure.
     const rec = await env.DB.prepare('SELECT purpose FROM payments WHERE signature = ?').bind(signature).first();
-    if (rec && rec.purpose === 'booking:' + b.ref + ':usdc') return { status: 'settling' };
+    if (rec && rec.purpose === purpose + ':usdc') return { status: 'settling' };
     return { status: 'unpaid', error: v.error };
   }
 
   const now = Date.now();
   const late = b.status !== 'held';
-  const end = b.starts_at ? b.starts_at + (b.minutes || 60) * 60000 : null;
   const honoured = await env.DB.prepare(
-    "UPDATE bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) " +
+    'UPDATE ' + kind.table + " SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) " +
     "WHERE ref = ? AND (status = 'held' OR (status = 'expired' AND " +
-    '(starts_at IS NULL OR (starts_at > ? AND NOT EXISTS (' + OVERLAPS_LIVE_BOOKING + ')))))'
-  ).bind(signature, now, v.payer, b.ref, now, end, b.starts_at).run();
+    '(starts_at IS NULL OR (starts_at > ? AND NOT EXISTS (' + kind.overlap + ')))))'
+  ).bind(signature, now, v.payer, b.ref, now, kind.endOf(b), b.starts_at).run();
 
   if (honoured.meta.changes === 1) {
-    await alert(env, '📅 New booking ' + b.ref + ' — ' + b.type_id + ' — $' + b.total_usd +
-      (b.starts_at ? ' on ' + new Date(b.starts_at).toISOString() : '') + '\n' + b.name + ' · ' + b.contact +
+    await alert(env, kind.bookedAlert(b) +
       (late ? '\nPaid after its hold ended — the time was still free, so it is booked.' : ''));
     return { status: 'paid', late: late };
   }
 
   const refunded = await env.DB.prepare(
-    "UPDATE bookings SET status = 'refund', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) " +
+    'UPDATE ' + kind.table + " SET status = 'refund', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) " +
     "WHERE ref = ? AND status = 'expired'"
   ).bind(signature, now, v.payer, b.ref).run();
   if (refunded.meta.changes !== 1) {
-    const cur = await env.DB.prepare('SELECT status FROM bookings WHERE ref = ?').bind(b.ref).first();
-    await alert(env, '⚠️ Payment recorded for ' + b.ref + ' but the booking was already ' +
+    const cur = await env.DB.prepare('SELECT status FROM ' + kind.table + ' WHERE ref = ?').bind(b.ref).first();
+    await alert(env, '⚠️ Payment recorded for ' + b.ref + ' but it was already ' +
       (cur ? cur.status : 'gone') + ' — check whether a refund is owed. signature ' + signature);
     return { status: cur ? cur.status : 'unpaid' };
   }
@@ -1560,16 +1588,43 @@ async function settleBooking(env, b, signature, wallet) {
 /// The payment page only watches while it is open. This finds payments made
 /// after it closed — or after it stopped looking — so "the payment is still
 /// found" is true. Runs from the scheduled handler.
-async function reconcileBookings(env) {
+async function reconcilePayments(env) {
   if (!env.TREASURY_WALLET || !env.HELIUS_API_KEY) return;
-  const rows = await env.DB.prepare(
-    "SELECT * FROM bookings WHERE status IN ('held','expired') AND reference IS NOT NULL " +
-    'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
-  ).bind(Date.now() - RECONCILE_HOURS * 3600000).all();
-  for (const b of rows.results || []) {
-    const sig = await findPaymentByReference(env, b.reference);
-    if (sig) await settleBooking(env, b, sig, null);
+  for (const kind of [CHECKOUTS.booking, CHECKOUTS.banner]) {
+    const rows = await env.DB.prepare(
+      'SELECT * FROM ' + kind.table + " WHERE status IN ('held','expired') AND reference IS NOT NULL " +
+      'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
+    ).bind(Date.now() - RECONCILE_HOURS * 3600000).all();
+    for (const b of rows.results || []) {
+      const sig = await findPaymentByReference(env, b.reference);
+      if (sig) await settlePayment(env, kind, b, sig, null);
+    }
   }
+}
+
+/// Answers the payment page's poll. The payer may never have touched this site,
+/// so the chain is checked by the booking's reference.
+async function watchPayment(request, env, kind, ref) {
+  const b = await env.DB.prepare('SELECT * FROM ' + kind.table + ' WHERE ref = ?').bind(ref).first();
+  if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+  if (b.status === 'paid' || b.status === 'refund') {
+    return json(request, env, { status: b.status, signature: b.signature });
+  }
+  // an expired hold is still looked at for a while: the money may have left
+  // the customer's wallet just as the hold ran out
+  const recent = b.created_at > Date.now() - RECONCILE_HOURS * 3600000;
+  if (b.status !== 'held' && !(b.status === 'expired' && recent)) {
+    return json(request, env, { status: b.status });
+  }
+  const unpaid = b.status === 'held' ? 'waiting' : 'expired';
+
+  const sig = await findPaymentByReference(env, b.reference);
+  if (!sig) return json(request, env, { status: unpaid });
+
+  const s = await settlePayment(env, kind, b, sig, null);
+  if (s.status === 'unpaid') return json(request, env, { status: unpaid, note: s.error });
+  if (s.status === 'settling') return json(request, env, { status: unpaid });
+  return json(request, env, { status: s.status, signature: sig });
 }
 
 function bookingRef() {
@@ -1621,8 +1676,8 @@ export default {
     // analytics first: a failure here is logged, never fatal, and must not
     // stop the health check from running
     ctx.waitUntil(refreshAnalytics(env).catch(function () {}));
-    ctx.waitUntil(reconcileBookings(env).catch(function (e) {
-      return logError(env, 'reconcileBookings', e && e.message);
+    ctx.waitUntil(reconcilePayments(env).catch(function (e) {
+      return logError(env, 'reconcilePayments', e && e.message);
     }));
 
     const h = await healthCheck(env);
@@ -1656,9 +1711,15 @@ export default {
 
     try {
       ctx.waitUntil(sweepExpired(env));
-      // an abandoned checkout must not hold a slot hostage
+      // An abandoned checkout must not hold a slot hostage. For the ad slot this
+      // matters even more: the next campaign starts when the last held or paid
+      // one ends, so one abandoned four-week hold would push every later
+      // advertiser back four weeks, for good.
       ctx.waitUntil(env.DB.prepare(
         "UPDATE bookings SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
+      ).bind(Date.now()).run().catch(function () {}));
+      ctx.waitUntil(env.DB.prepare(
+        "UPDATE banner_bookings SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
       ).bind(Date.now()).run().catch(function () {}));
 
 
@@ -1937,7 +1998,7 @@ export default {
           return json(request, env, { error: 'not authorised' }, 401);
         }
         const rows = await env.DB.prepare(
-          "SELECT * FROM banner_bookings WHERE status = 'paid' ORDER BY starts_at ASC"
+          "SELECT * FROM banner_bookings WHERE status IN ('paid','refund') ORDER BY starts_at ASC"
         ).all();
         return json(request, env, { bookings: rows.results || [] });
       }
@@ -2311,21 +2372,30 @@ export default {
         const contact = String(body.contact || '').trim().slice(0, 200);
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
-        const starts = await bannerNextFree(env);
-        const ends = starts + rate.weeks * 7 * 86400000;
+        const wallet = await getSession(request, env).catch(function () { return null; });
         const ref = bookingRef().replace('FOX-', 'AD-');
         const reference = newReference();
         const now = Date.now();
 
-        await env.DB.prepare(
-          'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
-          'lamports, status, hold_until, name, contact, created_at, reference) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ?)"
-        ).bind(
-          ref, await getSession(request, env).catch(function () { return null; }),
-          rate.weeks, starts, ends, rate.price, null, null,
-          now + HOLD_MINUTES * 60000, name, contact, now, reference
-        ).run();
+        // Two advertisers arriving together would both be handed the same next
+        // free date. The insert re-checks for an overlapping run inside one
+        // statement, so only one lands on it; the other is moved to the next
+        // free run rather than refused.
+        let starts = 0, ends = 0, placed = false;
+        for (let attempt = 0; attempt < 3 && !placed; attempt++) {
+          starts = await bannerNextFree(env);
+          ends = starts + rate.weeks * 7 * 86400000;
+          const r = await env.DB.prepare(
+            'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
+            'lamports, status, hold_until, name, contact, created_at, reference) ' +
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ? WHERE NOT EXISTS (" + OVERLAPS_LIVE_BANNER + ')'
+          ).bind(
+            ref, wallet, rate.weeks, starts, ends, rate.price, null, null,
+            now + HOLD_MINUTES * 60000, name, contact, now, reference, ends, starts
+          ).run();
+          placed = r.meta.changes === 1;
+        }
+        if (!placed) return json(request, env, { error: 'the slot is being booked right now — try again in a moment' }, 409);
 
         return json(request, env, {
           ref: ref, reference: reference, weeks: rate.weeks, startsAt: starts, endsAt: ends,
@@ -2346,9 +2416,10 @@ export default {
         const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
         if (b.status === 'paid') return json(request, env, { ok: true, alreadyPaid: true, ref: ref });
-        if (b.status !== 'held') return json(request, env, { error: 'that booking is not awaiting payment' }, 409);
-        if (b.hold_until && Date.now() > b.hold_until) {
-          return json(request, env, { error: 'the hold expired — please book again' }, 410);
+        // called only after the customer signed, so an expired hold is settled
+        // rather than refused — see /api/booking/confirm
+        if (b.status !== 'held' && b.status !== 'expired') {
+          return json(request, env, { error: 'that booking is not awaiting payment' }, 409);
         }
         if (!env.TREASURY_WALLET) {
           await logError(env, 'banner.confirm', 'TREASURY_WALLET unset — refusing to confirm');
@@ -2358,16 +2429,16 @@ export default {
         const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
-        const v = await verifyInvoice(env, payer, signature,
-          usdcUnits(b.total_usd), 'banner:' + ref);
-        if (!v.ok) return json(request, env, { error: v.error }, 402);
-
-        await env.DB.prepare(
-          "UPDATE banner_bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
-        ).bind(signature, Date.now(), payer, ref).run();
-        await alert(env, '🪧 Ad slot booked ' + ref + ' — ' + b.weeks + ' week(s), $' + b.total_usd +
-          '\n' + b.name + ' · ' + b.contact + '\nAwaiting creative, then your approval.');
-
+        const s = await settlePayment(env, CHECKOUTS.banner, b, signature, payer);
+        if (s.status === 'unpaid') return json(request, env, { error: s.error }, 402);
+        if (s.status === 'settling') return json(request, env, { pending: true }, 202);
+        if (s.status === 'refund') {
+          return json(request, env, {
+            error: 'your payment arrived after the hold ended, and that run had been taken. ' +
+              'It is recorded against ' + ref + ' and will be refunded.',
+            refund: true, ref: ref
+          }, 409);
+        }
         return json(request, env, { ok: true, ref: ref, needsCreative: true });
       }
 
@@ -2400,49 +2471,11 @@ export default {
 
       // Poll after showing a QR: the payer may never have touched this site.
       if (path === '/api/booking/watch' && request.method === 'GET') {
-        const ref = String(url.searchParams.get('ref') || '').trim();
-        const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
-        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
-        if (b.status === 'paid' || b.status === 'refund') {
-          return json(request, env, { status: b.status, signature: b.signature });
-        }
-        // an expired hold is still looked at for a while: the money may have
-        // left the customer's wallet just as the hold ran out
-        const recent = b.created_at > Date.now() - RECONCILE_HOURS * 3600000;
-        if (b.status !== 'held' && !(b.status === 'expired' && recent)) {
-          return json(request, env, { status: b.status });
-        }
-        const unpaid = b.status === 'held' ? 'waiting' : 'expired';
-
-        const sig = await findPaymentByReference(env, b.reference);
-        if (!sig) return json(request, env, { status: unpaid });
-
-        const s = await settleBooking(env, b, sig, null);
-        if (s.status === 'unpaid') return json(request, env, { status: unpaid, note: s.error });
-        if (s.status === 'settling') return json(request, env, { status: unpaid });
-        return json(request, env, { status: s.status, signature: sig });
+        return watchPayment(request, env, CHECKOUTS.booking, String(url.searchParams.get('ref') || '').trim());
       }
 
       if (path === '/api/banner/watch' && request.method === 'GET') {
-        const ref = String(url.searchParams.get('ref') || '').trim();
-        const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
-        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
-        if (b.status === 'paid') return json(request, env, { status: 'paid', signature: b.signature });
-        if (b.status !== 'held') return json(request, env, { status: b.status });
-
-        const sig = await findPaymentByReference(env, b.reference);
-        if (!sig) return json(request, env, { status: 'waiting' });
-
-        const v = await verifyInvoice(env, null, sig,
-          usdcUnits(b.total_usd), 'banner:' + b.ref);
-        if (!v.ok) return json(request, env, { status: 'waiting', note: v.error });
-
-        await env.DB.prepare(
-          "UPDATE banner_bookings SET status = 'paid', signature = ?, paid_at = ?, wallet = COALESCE(wallet, ?) WHERE ref = ?"
-        ).bind(sig, Date.now(), v.payer, b.ref).run();
-        await alert(env, '🪧 Ad slot booked ' + b.ref + ' — ' + b.weeks + ' week(s), $' + b.total_usd +
-          '\n' + b.name + ' · ' + b.contact + '\nAwaiting creative, then your approval.');
-        return json(request, env, { status: 'paid', signature: sig });
+        return watchPayment(request, env, CHECKOUTS.banner, String(url.searchParams.get('ref') || '').trim());
       }
 
       // ── public: the rate card ──
@@ -2564,7 +2597,7 @@ export default {
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
         // USDC only, expected in full; verifyInvoice refuses SOL outright.
-        const s = await settleBooking(env, b, signature, payer);
+        const s = await settlePayment(env, CHECKOUTS.booking, b, signature, payer);
         if (s.status === 'unpaid') return json(request, env, { error: s.error }, 402);
         if (s.status === 'settling') return json(request, env, { pending: true }, 202);
 
