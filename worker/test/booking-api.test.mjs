@@ -673,6 +673,41 @@ section('ad slot — an abandoned hold gives its run back');
   eq('so the next advertiser is not pushed back a month', b.body.startsAt - clock, DAY);
 }
 
+section('ad slot — new advertisers fill the gap an abandoned hold leaves');
+{
+  const env = freshEnv();
+  const a = await adHold(env, 4, { name: 'Abandons' });
+  const b = await adHold(env, 1, { name: 'Queued' });
+  eq('an advertiser queues behind a four-week hold', b.body.startsAt, a.body.endsAt);
+  pay({ from: wallet(78), usdc: 250e6, reference: b.body.reference });
+  eq('and pays, so their run is theirs', (await call(env, 'GET', '/api/banner/watch?ref=' + b.body.ref)).body.status, 'paid');
+
+  advance(21 * MIN);
+  await adRates(env);
+  eq('the four-week hold is abandoned and expires', adRow(env, a.body.ref).status, 'expired');
+
+  const soon = clock + DAY;
+  const rates = await adRates(env);
+  const startFor = (w) => rates.rates.find((r) => r.weeks === w).startsAt;
+  eq('a one-week run is now offered from tomorrow, inside the gap', startFor(1), soon);
+  eq('so is a two-week run', startFor(2), soon);
+  // the gap is 21 minutes short of four weeks, because this advertiser is booking 21 minutes later
+  eq('a four-week run does not fit the gap, so it goes after the queued one', startFor(4), b.body.endsAt);
+  eq('the headline date is the one-week date', rates.nextFree, soon);
+
+  const c = await adHold(env, 1, { name: 'Fills first' });
+  eq('the next one-week advertiser starts tomorrow, not after the queue', c.body.startsAt, soon);
+  const d = await adHold(env, 2, { name: 'Fills second' });
+  eq('a two-week advertiser takes the rest of the gap straight after', d.body.startsAt, c.body.endsAt);
+  const e = await adHold(env, 1, { name: 'Too late for the gap' });
+  eq('what is left is under a week, so the next one queues at the end', e.body.startsAt, b.body.endsAt);
+
+  eq('the advertiser already queued keeps the dates they were given', adRow(env, b.body.ref).starts_at, b.body.startsAt);
+  eq('no two runs overlap', runsOverlap(liveRuns(env)), false);
+  const empty = liveRuns(env).reduce((gapMs, r, i, all) => gapMs + (i ? Math.max(0, r.starts_at - all[i - 1].ends_at) : 0), 0);
+  ok('the banner is left empty for less than a week in total', empty < WEEK, (empty / DAY).toFixed(2) + ' days');
+}
+
 section('ad slot — paying by connected wallet');
 {
   const env = freshEnv();

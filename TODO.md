@@ -229,9 +229,14 @@ and each further one would stack. No ad had been booked yet, so nothing was
 affected. Two advertisers arriving together were also sold the identical run;
 the second is now placed on the next free run instead.
 
-Known and left alone: when a hold expires, a later advertiser who was queued
-behind it keeps their start date, so the banner can sit empty for the expired
-run. A product choice, not a bug.
+**E. ~~The banner sat empty where an abandoned hold dropped out.~~ Fixed 2026-09-14.**
+A new run now takes the earliest start, at least a day out, where it fits —
+not "after the last run". Each length gets its own date on the form, because a
+shorter run can fit a gap a longer one cannot. Advertisers already queued are
+never moved: those are dates they were given. One limit is inherent: a gap is
+always a little shorter than the run that left it (anyone booking later starts
+later), so it is filled by shorter runs, and a sliver under a week can stay
+empty.
 
 Still untested: the site itself has no browser test.
 

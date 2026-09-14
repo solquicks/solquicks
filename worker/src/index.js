@@ -484,7 +484,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'checkout-settle-2';
+const BUILD = 'banner-gapfill-3';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1651,13 +1651,39 @@ function bannerRate(weeks) {
   return BANNER_RATES.find(function (r) { return r.weeks === Number(weeks); }) || null;
 }
 
-/// The slot is exclusive, so a new campaign starts when the last one ends.
-async function bannerNextFree(env) {
-  const row = await env.DB.prepare(
-    "SELECT MAX(ends_at) AS last FROM banner_bookings WHERE status IN ('held','paid') AND ends_at > ?"
-  ).bind(Date.now()).first();
-  const soonest = Date.now() + 86400000;
-  return row && row.last && row.last > soonest ? row.last : soonest;
+const BANNER_LEAD_MS = 86400000; // a day, so creative can be reviewed before it runs
+const WEEK_MS = 7 * 86400000;
+
+/// The earliest start, at least a day out, where a run of `weeks` fits without
+/// overlapping a held or paid run. It used to be "when the last run ends",
+/// which left the banner empty wherever an abandoned hold dropped out of the
+/// queue. A run can only start at the lead-time boundary or where another run
+/// ends, so those are the only starts worth trying.
+///
+/// A gap left by an expired hold is always a little shorter than the run that
+/// left it — anyone booking later also starts later — so it is filled by a
+/// shorter run, not a same-length one. Queued runs are never moved earlier:
+/// those are dates people have already been given.
+function earliestBannerStart(runs, soonest, weeks) {
+  const len = weeks * WEEK_MS;
+  const starts = [soonest].concat(runs.map(function (r) { return r.ends_at; })
+    .filter(function (e) { return e > soonest; })).sort(function (a, b) { return a - b; });
+  for (const s of starts) {
+    if (!runs.some(function (r) { return s < r.ends_at && s + len > r.starts_at; })) return s;
+  }
+  return starts[starts.length - 1]; // not reached: nothing overlaps after the last run ends
+}
+
+async function bannerRuns(env, soonest) {
+  const rows = await env.DB.prepare(
+    "SELECT starts_at, ends_at FROM banner_bookings WHERE status IN ('held','paid') AND ends_at > ?"
+  ).bind(soonest).all();
+  return rows.results || [];
+}
+
+async function bannerNextFree(env, weeks) {
+  const soonest = Date.now() + BANNER_LEAD_MS;
+  return earliestBannerStart(await bannerRuns(env, soonest), soonest, weeks);
 }
 
 async function bannerLive(env) {
@@ -2347,9 +2373,15 @@ export default {
       // ── public: the advertising slot ──
       if (path === '/api/banner/rates' && request.method === 'GET') {
         const live = await bannerLive(env);
+        const soonest = Date.now() + BANNER_LEAD_MS;
+        const runs = await bannerRuns(env, soonest);
+        // a shorter run may fit a gap a longer one cannot, so each has its own date
+        const rates = BANNER_RATES.map(function (r) {
+          return { weeks: r.weeks, price: r.price, startsAt: earliestBannerStart(runs, soonest, r.weeks) };
+        });
         return json(request, env, {
-          rates: BANNER_RATES,
-          nextFree: await bannerNextFree(env),
+          rates: rates,
+          nextFree: rates[0].startsAt,
           taken: !!live,
           payTo: env.TREASURY_WALLET || null,
           rules: 'Your creative is reviewed before it runs — no adult content, ' +
@@ -2383,8 +2415,8 @@ export default {
         // free run rather than refused.
         let starts = 0, ends = 0, placed = false;
         for (let attempt = 0; attempt < 3 && !placed; attempt++) {
-          starts = await bannerNextFree(env);
-          ends = starts + rate.weeks * 7 * 86400000;
+          starts = await bannerNextFree(env, rate.weeks);
+          ends = starts + rate.weeks * WEEK_MS;
           const r = await env.DB.prepare(
             'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
             'lamports, status, hold_until, name, contact, created_at, reference) ' +

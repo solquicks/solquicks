@@ -5216,7 +5216,10 @@
       const flow = document.getElementById('bk-flow');
       const d = adData;
       const base = d.rates[0].price;
-      const starts = new Date(d.nextFree).toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+      // a shorter run can fit a gap a longer one cannot, so the date follows the length picked
+      const picked = d.rates.find(function (r) { return r.weeks === adWeeks; });
+      const starts = new Date((picked && picked.startsAt) || d.nextFree)
+        .toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
 
       flow.innerHTML = '<div class="bk-flow">' +
         '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
