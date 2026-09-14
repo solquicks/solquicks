@@ -1440,8 +1440,10 @@ async function openSlots(env, type) {
   return slots;
 }
 
-/// base → rush → discount, in that order. Any other order lets a rush booking
-/// come out cheaper than a normal one, which is a bug customers will find.
+/// Rush and holder discount are both multipliers, so the order they are applied
+/// in does not change the total. What must stay in step is the breakdown the
+/// payment screen draws in index.html, which is computed separately — see
+/// test/booking-quote.test.mjs.
 function quoteFor(type, startsAt, isHolder) {
   const base = type.price;
   const rush = type.mode === 'slot' && startsAt &&
@@ -2457,8 +2459,7 @@ export default {
         const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
         if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
 
-        // 1% tolerance on SOL, which can tick between quote and signature.
-        // USDC is a dollar, so it is expected exactly.
+        // USDC only, expected in full; verifyInvoice refuses SOL outright.
         const v = await verifyInvoice(env, payer, signature,
           usdcUnits(b.total_usd), 'booking:' + ref);
         if (!v.ok) return json(request, env, { error: v.error }, 402);

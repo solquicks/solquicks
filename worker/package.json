@@ -1,5 +1,6 @@
 {
   "name": "solquicks-points",
   "private": true,
+  "type": "module",
   "scripts": { "deploy": "wrangler deploy" }
 }

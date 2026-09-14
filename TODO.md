@@ -182,8 +182,47 @@ Two things it found that are worth remembering:
   tested against hypothetical prices that would expose it. **If a price is ever
   set to something like $199 or $49.99, that rounding starts doing real work.**
 
-Still untested: `/api/book` end to end (hold, expiry, double-booking), and the
-site itself has no browser test.
+**14. Booking API, end to end — added 2026-09-14.** `worker/test/booking-api.test.mjs`,
+90 assertions. Imports the real worker and calls its real fetch handler, backed
+by a real SQLite database built from `schema.sql`, a fake clock and a fake
+chain. Every refusal, both payment paths, expiry, replayed and short payments,
+SOL sent instead of USDC, holder pricing, and the rate limit. Checked by
+mutation: eleven deliberate bugs in the booking code, all eleven caught.
+
+**15. `schema.sql` could not rebuild production.** It had 11 of the 35 tables
+and indexes the live database uses — `bookings`, `banner_bookings` and
+`rate_limits` among the missing. Recovered from the live D1 schema (structure
+only) and verified to rebuild all 35 column-for-column. **Anything created by
+hand in the Cloudflare dashboard has to be added there too**, or a rebuild
+silently loses it. The booking test builds from this file, so CI now notices
+if a table the booking code needs goes missing.
+
+### Open bugs the booking test proved — not yet fixed ← DECIDE
+
+The test prints these as `KNOWN` on every run. Fixing one makes its line fail
+until it is turned into an ordinary assertion, so a fix cannot land unnoticed.
+
+**A. A paid booking can be lost.** The payment screen promises *"If you pay and
+this page closes, the payment is still found."* It isn't. Only the open tab
+ever looks for a QR payment, and it stops after about five minutes while still
+showing "Waiting for payment…". Nothing on the server looks. So if the customer
+pays and closes the tab — or pays after minute five — the hold expires at
+minute 20, the slot goes back on sale, the USDC sits in the treasury with no
+record, and no alert fires. Coming back with the reference returns "expired".
+The QR also stays on screen with no countdown after the hold ends.
+Needs a decision: when money arrives for an expired hold, honour the booking if
+the slot is still free, or always refund?
+
+**B. Two people can hold the same hour.** The slot check and the insert are
+separate database calls. Two holds for the same or overlapping hour made at the
+same moment both succeed, and both can pay. Unlikely at current volume, but the
+failure is two customers paid for one hour. Fix is a single conditional insert.
+
+**C. A raced duplicate confirm returns a 500.** Money-safe — the payments
+table's primary key stops a single payment confirming two bookings — but the
+losing request shows an error page instead of a clear refusal.
+
+Still untested: the site itself has no browser test.
 
 ---
 
