@@ -197,30 +197,33 @@ hand in the Cloudflare dashboard has to be added there too**, or a rebuild
 silently loses it. The booking test builds from this file, so CI now notices
 if a table the booking code needs goes missing.
 
-### Open bugs the booking test proved — not yet fixed ← DECIDE
+### Bugs the booking test proved — fixed 2026-09-14
 
-The test prints these as `KNOWN` on every run. Fixing one makes its line fail
-until it is turned into an ordinary assertion, so a fix cannot land unnoticed.
+**A. ~~A paid booking could be lost.~~** The payment page promised *"If you pay
+and this page closes, the payment is still found"*, but only the open tab ever
+looked, and it gave up after five minutes. Now:
+- the scheduled job looks for payments on every held or recently expired
+  booking from the last 48 hours, every 30 minutes;
+- a payment that lands after its hold ended is **honoured if the hour is still
+  ahead and free** (your decision), and otherwise marked `refund` with a
+  Telegram alert — "💸 Refund needed", with the payer and signature. Refunds
+  show in `/api/admin/bookings`;
+- the page counts the hold down, greys the QR and disables paying when it ends,
+  and keeps checking for five minutes after.
 
-**A. A paid booking can be lost.** The payment screen promises *"If you pay and
-this page closes, the payment is still found."* It isn't. Only the open tab
-ever looks for a QR payment, and it stops after about five minutes while still
-showing "Waiting for payment…". Nothing on the server looks. So if the customer
-pays and closes the tab — or pays after minute five — the hold expires at
-minute 20, the slot goes back on sale, the USDC sits in the treasury with no
-record, and no alert fires. Coming back with the reference returns "expired".
-The QR also stays on screen with no countdown after the hold ends.
-Needs a decision: when money arrives for an expired hold, honour the booking if
-the slot is still free, or always refund?
+**B. ~~Two people could hold the same hour.~~** The insert now re-checks for an
+overlapping booking inside the same statement, so only one of two simultaneous
+holds can land. Proven: without the guard, five simultaneous holds for one hour
+all succeeded; with it, one.
 
-**B. Two people can hold the same hour.** The slot check and the insert are
-separate database calls. Two holds for the same or overlapping hour made at the
-same moment both succeed, and both can pay. Unlikely at current volume, but the
-failure is two customers paid for one hour. Fix is a single conditional insert.
+**C. ~~A raced duplicate confirm returned a 500.~~** It now gets a plain refusal.
+The page and the wallet noticing one payment at the same moment no longer show
+the customer an error either.
 
-**C. A raced duplicate confirm returns a 500.** Money-safe — the payments
-table's primary key stops a single payment confirming two bookings — but the
-losing request shows an error page instead of a clear refusal.
+**Still open — the ad slot has the same lost-payment bug.** `/api/banner/confirm`
+refuses an expired hold the same way bookings used to, and nothing reconciles
+banner payments. The page changes (countdown, no paying after the hold) already
+cover ads and remove the commonest way into it, but the server side is not done.
 
 Still untested: the site itself has no browser test.
 

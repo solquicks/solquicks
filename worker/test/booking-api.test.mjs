@@ -28,19 +28,34 @@ const advance = (ms) => { clock += ms; };
 
 // ── D1 over node:sqlite ──────────────────────────────────────────────────────
 function d1(db) {
-  const tick = () => new Promise((r) => setImmediate(r));
+  // Even-paced yields cannot produce every real interleaving: a network call
+  // that happens to be slow can open a gap no fixed schedule reproduces. So a
+  // test can also hold one statement at the door until it chooses to let it in.
+  const pauses = [];
+  const tick = async (sql) => {
+    await new Promise((r) => setImmediate(r));
+    const p = pauses.find((x) => !x.hit && x.re.test(sql));
+    if (p) { p.hit = true; p.arrived(); await p.gate; }
+  };
   const norm = (v) => (v === undefined ? null : typeof v === 'boolean' ? Number(v) : v);
   const statement = (sql, args = []) => ({
     bind: (...a) => statement(sql, a.map(norm)),
-    async first() { await tick(); return db.prepare(sql).get(...args) ?? null; },
-    async all() { await tick(); return { results: db.prepare(sql).all(...args), success: true }; },
-    async run() { await tick(); const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: r.changes } }; },
+    async first() { await tick(sql); return db.prepare(sql).get(...args) ?? null; },
+    async all() { await tick(sql); return { results: db.prepare(sql).all(...args), success: true }; },
+    async run() { await tick(sql); const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: r.changes } }; },
     _exec() { return db.prepare(sql).run(...args); }
   });
   return {
+    pauseBefore(re) {
+      const p = { re, hit: false };
+      p.reached = new Promise((r) => { p.arrived = r; });
+      p.gate = new Promise((r) => { p.release = r; });
+      pauses.push(p);
+      return p;
+    },
     prepare: (sql) => statement(sql),
     async batch(list) {
-      await tick();
+      await tick('');
       db.exec('BEGIN');
       try { const out = list.map((s) => s._exec()); db.exec('COMMIT'); return out; }
       catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -51,7 +66,7 @@ function d1(db) {
 // ── a fake chain ─────────────────────────────────────────────────────────────
 const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const chain = { txs: new Map(), byRef: new Map(), n: 0, unexpected: [] };
+const chain = { txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, alerts: [], inScheduled: false };
 
 // usdc and sol are in base units: micro-USDC and lamports
 function pay({ from, usdc = 0, sol = 0, reference = null, failed = false }) {
@@ -77,10 +92,17 @@ globalThis.fetch = async (url, init) => {
     const { method, params } = JSON.parse(init.body);
     let result = null;
     if (method === 'getTransaction') result = chain.txs.get(params[0]) || null;
-    else if (method === 'getSignaturesForAddress') result = chain.byRef.get(params[0]) || [];
-    else chain.unexpected.push('rpc ' + method);
+    else if (method === 'getSignaturesForAddress') { chain.lookups++; result = chain.byRef.get(params[0]) || []; }
+    // the scheduled handler also refreshes analytics and checks health; those
+    // calls get an empty answer rather than counting as a stray request
+    else if (!chain.inScheduled) chain.unexpected.push('rpc ' + method);
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
   }
+  if (u.startsWith('https://api.telegram.org/')) {
+    chain.alerts.push(JSON.parse(init.body).text);
+    return new Response('{"ok":true}', { status: 200 });
+  }
+  if (chain.inScheduled) return new Response('', { status: 503 });
   chain.unexpected.push(u);
   throw new Error('unexpected network call in a test: ' + u);
 };
@@ -97,6 +119,8 @@ function freshEnv(overrides = {}) {
     TREASURY_WALLET: TREASURY,
     HELIUS_API_KEY: 'test',
     ALLOWED_ORIGINS: 'https://solquicks.com',
+    TELEGRAM_ALERT_TOKEN: 'test',
+    TELEGRAM_ALERT_CHAT: 'test',
     _db: db
   }, overrides);
 }
@@ -119,6 +143,16 @@ async function call(env, method, path, { body, ip, token } = {}) {
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch (e) { json = { _raw: text }; }
   return { status: res.status, body: json };
+}
+
+// The cron entry point, exactly as Cloudflare invokes it.
+async function runScheduled(env) {
+  const pending = [];
+  chain.inScheduled = true;
+  try {
+    await worker.scheduled({ cron: '*/30 * * * *', scheduledTime: clock }, env, { waitUntil: (p) => pending.push(p) });
+    await Promise.allSettled(pending);
+  } finally { chain.inScheduled = false; }
 }
 
 const row = (env, ref) => env._db.prepare('SELECT * FROM bookings WHERE ref = ?').get(ref);
@@ -144,16 +178,6 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log('FAIL ' + name + (detail ? '  — ' + detail : '')); }
 };
 const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
-
-// A bug that is proven, recorded in TODO.md, and not yet fixed. It prints on
-// every run so it stays visible, and does not fail CI while it is still true.
-// The moment the behaviour changes it DOES fail — so a fix cannot land without
-// someone turning this back into an ordinary assertion.
-let known = 0;
-const knownBug = (name, stillBroken, detail) => {
-  if (stillBroken) { known++; console.log('KNOWN ' + name + '  — ' + detail); }
-  else { fail++; console.log('FAIL ' + name + '  — behaviour changed; if this is the fix, make it an ordinary assertion'); }
-};
 const section = (s) => console.log('\n── ' + s + ' ──');
 
 async function slots(env, type = 'space') {
@@ -373,50 +397,150 @@ section('an abandoned hold frees the slot');
   const again = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
   eq('someone else can now hold it', again.status, 200);
 
+  // the original customer's wallet now pays, but the hour has gone to someone else
   const late = await call(env, 'POST', '/api/booking/confirm', {
     token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: 200e6 }) }
   });
-  ok('confirming the expired hold is refused', late.status === 409 || late.status === 410, 'status ' + late.status);
+  eq('paying for the expired hold after the hour was taken is refused', late.status, 409);
+  eq('and says a refund is coming', late.body.refund, true);
+  eq('the money is recorded, not lost', payments(env), 1);
+  eq('the booking is marked for refund', row(env, h.body.ref).status, 'refund');
+  eq('the new holder keeps the hour', row(env, again.body.ref).status, 'held');
+  ok('you are told to refund it', chain.alerts.some((a) => a.includes('Refund needed') && a.includes(h.body.ref)));
 }
 
 section('money that arrives when nobody is watching');
 {
   // The payment screen says: "If you pay and this page closes, the payment is
-  // still found." Only the open tab ever looks for a QR payment, and it stops
-  // looking after about five minutes. Nothing on the server looks at all.
+  // still found." The scheduled sweep is what makes that true.
   const env = freshEnv();
   const s = firstCalm(await slots(env));
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
 
   advance(1 * MIN);
   pay({ from: wallet(40), usdc: 200e6, reference: h.body.reference }); // paid in full, on time
-  // ...and the tab is closed. Time passes; other visitors use the site.
-  advance(20 * MIN);
+  advance(20 * MIN); // ...and the tab was closed
   await slots(env);
+  eq('with nobody watching, the hold expires on schedule', row(env, h.body.ref).status, 'expired');
 
-  const b = row(env, h.body.ref);
-  knownBug('a booking paid in full within its hold is lost if the page closed',
-    b.status === 'expired' && payments(env) === 0,
-    `booking ${b.status}, payments recorded ${payments(env)}; the slot is back on sale and no alert fires`);
+  const before = chain.alerts.length;
+  await runScheduled(env);
+  eq('the scheduled sweep finds the payment', row(env, h.body.ref).status, 'paid');
+  eq('records it once', payments(env), 1);
+  eq('against the wallet that paid', row(env, h.body.ref).wallet, wallet(40));
+  ok('the hour is off the calendar again', !(await slots(env)).some((x) => x.starts === s.starts));
+  ok('you are told it was booked late but honoured',
+    chain.alerts.slice(before).some((a) => a.includes(h.body.ref) && a.includes('still free')));
+  eq('coming back with the reference shows it paid', (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'paid');
 
-  const w = await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref);
-  knownBug('coming back with the reference does not recover it',
-    w.body.status === 'expired' && payments(env) === 0,
-    `watch answers "${w.body.status}" and still records nothing`);
+  await runScheduled(env);
+  eq('a second sweep changes nothing', payments(env), 1);
 }
 
-section('two people, the same slot, the same moment');
+section('late payment — each way it can go');
+{
+  // hour still free, customer's page notices on its own
+  const env = freshEnv();
+  const list = (await slots(env)).filter((x) => !x.rush);
+  const a = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: list[0].starts, ...guest } });
+  advance(25 * MIN);
+  await slots(env);
+  pay({ from: wallet(41), usdc: 200e6, reference: a.body.reference });
+  eq('hour still free: the page picks up a late payment as paid',
+    (await call(env, 'GET', '/api/booking/watch?ref=' + a.body.ref)).body.status, 'paid');
+
+  // hour taken by someone else in the meantime
+  const b = await call(env, 'POST', '/api/booking/hold', { body: { type: 'podcast', startsAt: list[8].starts, ...guest } });
+  advance(21 * MIN);
+  await slots(env);
+  const taker = await call(env, 'POST', '/api/booking/hold', { body: { type: 'stream', startsAt: list[8].starts + 30 * MIN, ...guest } });
+  eq('once expired, an overlapping hold is allowed', taker.status, 200);
+  pay({ from: wallet(42), usdc: 350e6, reference: b.body.reference });
+  eq('hour taken: the late payment is marked for refund',
+    (await call(env, 'GET', '/api/booking/watch?ref=' + b.body.ref)).body.status, 'refund');
+  eq('and the person who took the hour keeps it', row(env, taker.body.ref).status, 'held');
+
+  // the connected-wallet path, late, hour still free
+  const buyer = wallet(43);
+  const tok = signIn(env, buyer);
+  const c = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[16].starts, ...guest } });
+  advance(21 * MIN);
+  await slots(env);
+  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: 200e6 }) } });
+  eq('a wallet payment landing after the hold, hour free, is accepted', cc.status, 200);
+  eq('and booked', row(env, c.body.ref).status, 'paid');
+
+  // no hour at all: custom content is always honoured
+  const d = await call(env, 'POST', '/api/booking/hold', { body: { type: 'custom', ...guest } });
+  advance(30 * MIN);
+  await slots(env);
+  pay({ from: wallet(44), usdc: 250e6, reference: d.body.reference });
+  eq('custom content paid late is honoured',
+    (await call(env, 'GET', '/api/booking/watch?ref=' + d.body.ref)).body.status, 'paid');
+
+  // a short payment after expiry is neither honoured nor refunded
+  const e = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: list[24].starts, ...guest } });
+  advance(21 * MIN);
+  await slots(env);
+  pay({ from: wallet(45), usdc: 100e6, reference: e.body.reference });
+  const ew = await call(env, 'GET', '/api/booking/watch?ref=' + e.body.ref);
+  eq('a short late payment leaves the hold expired', ew.body.status, 'expired');
+  ok('with a reason', !!ew.body.note);
+  eq('and is not recorded as a payment', row(env, e.body.ref).status, 'expired');
+
+  const admin = env._db.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status = 'refund'").get().n;
+  eq('exactly one booking in this run needs a refund', admin, 1);
+}
+
+section('late payment for a time that has already passed');
+{
+  const env = freshEnv();
+  const s = firstRush(await slots(env)); // 24–48 hours out
+  const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
+  clock = s.starts + 5 * MIN; // the Space has started
+  await slots(env);
+  pay({ from: wallet(46), usdc: 300e6, reference: h.body.reference });
+  eq('it is refunded rather than booked into the past',
+    (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'refund');
+  clock = Date.UTC(2026, 8, 14, 15, 0, 0);
+}
+
+section('old abandoned holds cost nothing');
 {
   const env = freshEnv();
   const s = firstCalm(await slots(env));
-  const both = await Promise.all([
+  const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
+  advance(49 * HOUR);
+  await slots(env);
+  const n = chain.lookups;
+  eq('an expired hold older than two days is not looked up again',
+    (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'expired');
+  await runScheduled(env);
+  eq('by the page or by the sweep', chain.lookups, n);
+  clock = Date.UTC(2026, 8, 14, 15, 0, 0);
+}
+
+section('two people, the same hour, the same moment');
+{
+  const env = freshEnv();
+  const s = firstCalm(await slots(env));
+  const same = await Promise.all([
     call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, name: 'A', contact: '@a' } }),
-    call(env, 'POST', '/api/booking/hold', { body: { type: 'podcast', startsAt: s.starts + 30 * MIN, name: 'B', contact: '@b' } })
+    call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, name: 'B', contact: '@b' } })
   ]);
-  const held = env._db.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status = 'held'").get().n;
-  knownBug('two overlapping holds made at the same moment both succeed',
-    held === 2,
-    `responses ${both.map((r) => r.status).join(' and ')}, ${held} overlapping bookings held — both can pay`);
+  eq('same hour: exactly one hold succeeds', same.map((r) => r.status).sort().join(), '200,409');
+
+  const t = firstCalm((await slots(env)).filter((x) => x.starts > s.starts + 3 * HOUR));
+  const overlap = await Promise.all([
+    call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: t.starts, name: 'A', contact: '@a' } }),
+    call(env, 'POST', '/api/booking/hold', { body: { type: 'podcast', startsAt: t.starts + 30 * MIN, name: 'B', contact: '@b' } })
+  ]);
+  eq('overlapping hours: exactly one hold succeeds', overlap.map((r) => r.status).sort().join(), '200,409');
+  eq('two bookings held in total', env._db.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status = 'held'").get().n, 2);
+
+  const five = await Promise.all([0, 1, 2, 3, 4].map((i) =>
+    call(env, 'POST', '/api/booking/hold', { body: { type: 'stream', startsAt: t.starts + 6 * HOUR, name: 'P' + i, contact: '@p' } })));
+  eq('five at once: one wins', five.filter((r) => r.status === 200).length, 1);
 }
 
 section('two bookings, one payment, the same moment');
@@ -432,14 +556,48 @@ section('two bookings, one payment, the same moment');
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h1.body.ref, signature: sig } }),
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig } })
   ]);
-  const paid = env._db.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status = 'paid'").get().n;
-  // The payments table's primary key is what actually stops this.
-  eq('one payment confirms exactly one booking, even when raced', paid, 1);
+  eq('one payment confirms exactly one booking, even when raced',
+    env._db.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status = 'paid'").get().n, 1);
   eq('and is recorded once', payments(env), 1);
-  const codes = both.map((r) => r.status).sort();
-  knownBug('the losing request gets a 500 rather than a clear refusal',
-    codes[0] === 200 && codes[1] === 500,
-    `responses ${codes.join(' and ')} — safe, but an error page for a customer`);
+  eq('the other request is refused plainly, not with a server error', both.map((r) => r.status).sort().join(), '200,402');
+}
+
+section('the page and the wallet noticing the same payment at once');
+{
+  // The page polls every two seconds while the wallet is confirming, so both
+  // can try to settle one payment together. Each is paused at the worst moment
+  // — payment recorded, booking not yet updated — while the other runs.
+  const env = freshEnv();
+  const buyer = wallet(51);
+  const tok = signIn(env, buyer);
+  const list = (await slots(env)).filter((x) => !x.rush);
+
+  const h = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[0].starts, ...guest } });
+  const sig = pay({ from: buyer, usdc: 200e6, reference: h.body.reference });
+  const door = env.DB.pauseBefore(/^UPDATE bookings SET status = 'paid'/);
+  const confirming = call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h.body.ref, signature: sig } });
+  await door.reached;
+  const w = await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref);
+  eq('wallet mid-confirm: the page polling in that instant keeps waiting', w.body.status, 'waiting');
+  ok('with no error shown', !w.body.note, w.body.note);
+  eq('and nothing is marked for refund', row(env, h.body.ref).status, 'held');
+  door.release();
+  eq('the wallet confirm then completes', (await confirming).status, 200);
+  eq('booking paid', row(env, h.body.ref).status, 'paid');
+  eq('payment recorded once', payments(env), 1);
+
+  const h2 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[6].starts, ...guest } });
+  const sig2 = pay({ from: buyer, usdc: 200e6, reference: h2.body.reference });
+  const door2 = env.DB.pauseBefore(/^UPDATE bookings SET status = 'paid'/);
+  const watching = call(env, 'GET', '/api/booking/watch?ref=' + h2.body.ref);
+  await door2.reached;
+  const c = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig2 } });
+  eq('page mid-settle: the wallet confirm in that instant is told it is finishing', c.status, 202);
+  ok('not shown an error', !c.body.error, c.body.error);
+  door2.release();
+  eq('the page then shows paid', (await watching).body.status, 'paid');
+  eq('and a repeat confirm agrees', (await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig2 } })).body.alreadyPaid, true);
+  eq('two payments recorded in total', payments(env), 2);
 }
 
 section('abuse');
@@ -470,5 +628,5 @@ section('payments switched off');
 ok('no request tried to reach anything but the Solana RPC', chain.unexpected.length === 0, chain.unexpected.join(', '));
 
 Date.now = realNow;
-console.log(`\n${pass}/${pass + fail} passed` + (known ? `, ${known} known bug(s) still open — see TODO.md` : ''));
+console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);

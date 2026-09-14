@@ -1382,6 +1382,16 @@
     @media (prefers-reduced-motion: reduce) { .pay-dot { animation: none; } }
     .pay-status.done { color: var(--green); }
     .pay-status.done .pay-dot { background: var(--green); animation: none; }
+    .pay-status.ended { color: var(--ink-soft); border-radius: 14px; line-height: 1.45; }
+    .pay-status.ended .pay-dot { background: var(--muted); animation: none; }
+    .pay-clock { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+    /* once the hold is over the code must not look payable */
+    .pay-qr.ended { position: relative; }
+    .pay-qr.ended > * { opacity: 0.12; filter: grayscale(1); }
+    .pay-qr.ended::after {
+      content: 'Hold ended'; position: absolute; inset: 0; display: grid; place-items: center;
+      font-size: 0.8rem; font-weight: 800; color: var(--ink);
+    }
     .pay-link {
       display: block; width: 100%; box-sizing: border-box; margin-top: 10px;
       background: var(--cream); border: 2px solid #E7DFD2; border-radius: 10px;
@@ -1466,6 +1476,7 @@
     .bk-go:hover { background: var(--orange-deep); }
     .bk-go.ghost { background: var(--cream); color: var(--ink); border: 2px solid var(--ink); }
     .bk-go.ghost:hover { background: #fff; }
+    .bk-go.ended, .bk-go.ended:hover { background: #E7DFD2; color: var(--muted); cursor: not-allowed; }
 
     /* checkout */
     .bk-flow { background: var(--card); border: var(--line); border-radius: var(--radius); box-shadow: var(--pop); padding: 18px; text-align: left; }
@@ -4982,10 +4993,53 @@
 
     /// kind: 'booking' | 'ad'. onPaid runs once the chain confirms.
     function renderPayment(d, kind, title, onPaid) {
-      window._pay = { d: d, kind: kind, onPaid: onPaid, title: title };
+      // Measured against the server's clock, so a visitor whose clock is off
+      // still sees the hold end when it really ends.
+      const holdMs = d.holdUntil ? d.holdUntil - (d.serverNow || Date.now()) : 20 * 60000;
+      window._pay = { d: d, kind: kind, onPaid: onPaid, title: title, deadline: Date.now() + holdMs };
       paintPayment();
       bkScrollTo('bk-flow');
       startPayPolling(d.ref, kind, onPaid);
+    }
+
+    function payHoldEnded() {
+      const ctx = window._pay;
+      return !!ctx && Date.now() >= ctx.deadline;
+    }
+
+    function setPayStatus(cls, text) {
+      const s = document.getElementById('pay-status');
+      if (!s) return;
+      s.className = 'pay-status' + (cls ? ' ' + cls : '');
+      document.getElementById('pay-status-text').textContent = text;
+      const clock = document.getElementById('pay-clock');
+      if (clock && cls) clock.remove();
+    }
+
+    function tickPayClock() {
+      const ctx = window._pay;
+      const clock = document.getElementById('pay-clock');
+      if (!ctx || !clock) return;
+      const left = Math.max(0, ctx.deadline - Date.now());
+      const m = Math.floor(left / 60000), s = Math.floor(left / 1000) % 60;
+      clock.textContent = 'held ' + m + ':' + String(s).padStart(2, '0');
+      if (left === 0) endPayHold();
+    }
+
+    // The hold is over: stop anyone paying for it. Keep looking a little longer
+    // in case money already left a wallet just before the end.
+    function endPayHold() {
+      const ctx = window._pay;
+      if (!ctx || ctx.ended) return;
+      ctx.ended = true;
+      const qr = document.getElementById('pay-qr');
+      if (qr) qr.classList.add('ended');
+      // someone mid-payment has already sent it; don't tell them not to
+      if (ctx.paying) return;
+      const btn = document.getElementById('pay-wallet');
+      if (btn) { btn.disabled = true; btn.classList.add('ended'); btn.textContent = 'Hold ended'; }
+      setPayStatus('ended', 'This hold has ended, so please don\'t pay now. If you already paid, ' +
+        'it is still matched to ' + ctx.d.ref + ' on its own.');
     }
 
     /// Bookings and the ad slot are paid in USDC only. Priced in dollars, so a
@@ -5027,7 +5081,8 @@
           'Scan with any Solana wallet, or pay in this browser.</div>' +
           '<div class="pay-link">' + escapeHtml(d.payTo) + '</div></div>' +
         '</div>' +
-        '<div class="pay-status" id="pay-status"><span class="pay-dot"></span><span id="pay-status-text">Waiting for payment…</span></div>' +
+        '<div class="pay-status" id="pay-status"><span class="pay-dot"></span><span id="pay-status-text">Waiting for payment…</span>' +
+          '<span class="pay-clock" id="pay-clock"></span></div>' +
         '<div class="pay-or">or</div>' +
         '<button class="bk-go" id="pay-wallet" onclick="payWithWallet()">Pay ' + amount + ' with connected wallet</button>' +
         '<div class="bk-msg" id="pay-msg"></div>' +
@@ -5038,24 +5093,31 @@
       drawQr(document.getElementById('pay-qr'), url);
     }
 
+    // Looks for the payment for the whole hold, then a few minutes more. It used
+    // to give up after five minutes while still saying "Waiting for payment…".
+    const PAY_GRACE_MS = 5 * 60000;
+    var payClock = null;
+
     function startPayPolling(ref, kind, onPaid) {
       stopPayPolling();
       const endpoint = kind === 'ad' ? '/api/banner/watch' : '/api/booking/watch';
-      let tries = 0;
+      tickPayClock();
+      payClock = setInterval(tickPayClock, 1000);
       payPoll = setInterval(async function () {
-        tries++;
-        if (tries > 150) { stopPayPolling(); return; }   // ~5 minutes
+        const ctx = window._pay;
+        if (!ctx || Date.now() > ctx.deadline + PAY_GRACE_MS) { stopPayPolling(); return; }
         try {
           const res = await fetch(POINTS_API + endpoint + '?ref=' + encodeURIComponent(ref));
           const r = await res.json();
           if (r.status === 'paid') {
             stopPayPolling();
-            const s = document.getElementById('pay-status');
-            if (s) {
-              s.classList.add('done');
-              document.getElementById('pay-status-text').textContent = 'Payment received';
-            }
+            setPayStatus('done', 'Payment received');
             setTimeout(function () { onPaid(r.signature); }, 700);
+          } else if (r.status === 'refund') {
+            stopPayPolling();
+            endPayHold();
+            setPayStatus('ended', 'Your payment arrived after the hold ended, and that time had been taken. ' +
+              'It is recorded against ' + ref + ' and will be refunded.');
           }
         } catch (e) { /* keep waiting */ }
       }, 2000);
@@ -5063,6 +5125,7 @@
 
     function stopPayPolling() {
       if (payPoll) { clearInterval(payPoll); payPoll = null; }
+      if (payClock) { clearInterval(payClock); payClock = null; }
     }
 
     async function payWithWallet() {
@@ -5072,6 +5135,7 @@
       const msg = document.getElementById('pay-msg');
       msg.className = 'bk-msg';
       msg.textContent = '';
+      if (payHoldEnded()) { endPayHold(); return; }
 
       if (!Wallet.pubkey) {
         msg.textContent = 'Connect your wallet…';
@@ -5085,6 +5149,7 @@
 
       btn.disabled = true;
       btn.textContent = 'Check your wallet…';
+      ctx.paying = true;
       try {
         const sig = await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference);
         btn.textContent = 'Confirming…';
@@ -5096,7 +5161,19 @@
           body: JSON.stringify({ ref: ctx.d.ref, signature: sig })
         });
         const r = await res.json();
+        if (r.refund) {
+          stopPayPolling();
+          endPayHold();
+          setPayStatus('ended', r.error);
+          return;
+        }
         if (r.error) throw new Error(r.error);
+        if (r.pending) {
+          // the page's own check got there first and is finishing; it will
+          // flip to "Payment received" on its next look
+          btn.textContent = 'Payment received — finishing up…';
+          return;
+        }
         stopPayPolling();
         ctx.onPaid(sig);
       } catch (e) {
@@ -5106,6 +5183,8 @@
           'this page will pick it up on its own — leave it open a moment.';
         btn.disabled = false;
         btn.textContent = 'Try again';
+        ctx.paying = false;
+        if (payHoldEnded()) { ctx.ended = false; endPayHold(); }
       }
     }
 
