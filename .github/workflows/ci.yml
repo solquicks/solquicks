@@ -173,6 +173,12 @@ jobs:
         working-directory: worker
         run: node test/booking-api.test.mjs
 
+      # Which swaps earn the fee and in which token, the Jupiter address in use,
+      # wallet holdings across both token programs, and swap history.
+      - name: Swap API
+        working-directory: worker
+        run: node test/swap-api.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest

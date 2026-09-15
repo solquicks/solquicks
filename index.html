@@ -1330,19 +1330,33 @@
       font-size: 1.2rem; line-height: 1; color: var(--ink-soft); flex-shrink: 0;
     }
     .sw-results { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 3px; min-height: 220px; }
-    .sw-result {
-      appearance: none; cursor: pointer; text-align: left; width: 100%;
-      display: flex; align-items: center; gap: 10px;
-      background: transparent; border: 2px solid transparent; border-radius: 12px;
-      padding: 9px 10px; font-family: inherit; color: var(--ink);
+    .sw-section {
+      font-size: 0.66rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase;
+      color: var(--muted); margin: 10px 10px 2px;
     }
+    .sw-section:first-child { margin-top: 2px; }
+    .sw-result { display: flex; align-items: center; border-radius: 12px; }
     .sw-result:hover { background: var(--cream); }
+    .sw-result-pick {
+      appearance: none; cursor: pointer; text-align: left; flex: 1; min-width: 0;
+      display: flex; align-items: center; gap: 10px;
+      background: transparent; border: none; padding: 9px 4px 9px 10px;
+      font-family: inherit; color: var(--ink);
+    }
+    .sw-result-bal { text-align: right; font-size: 0.76rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .sw-result-bal small { display: block; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
+    .sw-star {
+      appearance: none; cursor: pointer; background: none; border: none; flex-shrink: 0;
+      font-size: 1.05rem; line-height: 1; color: #CFC6DA; padding: 8px 10px 8px 6px;
+    }
+    .sw-star:hover { color: var(--orange-deep); }
+    .sw-star.on { color: var(--orange); }
     .sw-result img { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; background: var(--cream); }
     .sw-result-body { flex: 1; min-width: 0; }
     .sw-result-sym { font-weight: 800; font-size: 0.9rem; display: flex; align-items: center; gap: 5px; }
-    .sw-result-name { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sw-result-name { display: block; font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sw-tick { color: var(--green); font-size: 0.8rem; }
-    .sw-result-warn { font-size: 0.72rem; color: var(--crimson); font-weight: 700; margin-top: 1px; }
+    .sw-result-warn { display: block; font-size: 0.72rem; color: var(--crimson); font-weight: 700; margin-top: 1px; }
     .sw-empty { font-size: 0.84rem; color: var(--muted); text-align: center; padding: 20px 10px; line-height: 1.5; }
 
     .sw-warnbox {
@@ -1352,6 +1366,36 @@
     }
     .sw-warnbox strong { color: var(--crimson); display: block; margin-bottom: 3px; }
     .sw-warnbox ul { margin: 0; padding-left: 16px; }
+
+    .sw-pcts { display: flex; gap: 6px; margin-top: 6px; }
+    .sw-pcts button, .sw-chip {
+      appearance: none; cursor: pointer; background: var(--card); border: 2px solid #E7DFD2;
+      border-radius: 999px; padding: 2px 10px; font-family: inherit; font-size: 0.7rem;
+      font-weight: 800; color: var(--ink-soft);
+    }
+    .sw-pcts button:hover, .sw-chip:hover { border-color: var(--orange); color: var(--ink); }
+    .sw-recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .sw-chip { background: var(--cream); padding: 4px 11px; }
+    .sw-quoting { text-transform: none; letter-spacing: 0; font-weight: 700; margin-left: 4px; }
+    .sw-refresh {
+      appearance: none; cursor: pointer; background: none; border: none; padding: 0 0 0 6px;
+      font-family: inherit; font-size: 0.72rem; font-weight: 700; color: var(--muted);
+    }
+    .sw-refresh:hover { color: var(--orange-deep); }
+    .sw-moved { background: #FDF0E1; border-radius: 10px; padding: 8px 11px; color: var(--ink) !important; font-weight: 700 !important; }
+
+    .sw-history {
+      margin-top: 16px; background: var(--card); border: var(--line); border-radius: var(--radius);
+      box-shadow: var(--pop); padding: 14px 16px; text-align: left;
+    }
+    .sw-history-title { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1rem; color: var(--ink); margin-bottom: 4px; }
+    .sw-hrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid #EFE8DC; }
+    .sw-hrow:first-of-type { border-top: none; }
+    .sw-hpair { font-size: 0.84rem; font-weight: 800; color: var(--ink); }
+    .sw-hmeta { font-size: 0.72rem; color: var(--muted); font-weight: 600; margin-top: 1px; }
+    .sw-hmeta a { color: var(--muted); }
+    .sw-hright { text-align: right; white-space: nowrap; font-size: 0.8rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .sw-hpts { display: block; font-size: 0.72rem; color: var(--green); font-weight: 800; }
 
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
@@ -2233,6 +2277,7 @@
           </div>
           <div class="sw-results" id="sw-results"></div>
         </div>
+        <div class="sw-recent" id="sw-recent" hidden></div>
         <div class="sw-leg" id="sw-leg-in">
           <div class="sw-legtop"><span class="sw-label">You pay</span><span class="sw-bal" id="sw-bal"></span></div>
           <div class="sw-row">
@@ -2240,12 +2285,17 @@
             <button class="sw-pick" id="sw-in-token" onclick="openTokenPicker('in')">SOL</button>
           </div>
           <div class="sw-usd" id="sw-in-usd"></div>
+          <div class="sw-pcts" id="sw-pcts" hidden>
+            <button onclick="setSwapPct(25)">25%</button>
+            <button onclick="setSwapPct(50)">50%</button>
+            <button onclick="setSwapPct(100)">Max</button>
+          </div>
         </div>
 
         <div class="sw-flip"><button onclick="flipSwap()" aria-label="Swap direction">⇅</button></div>
 
         <div class="sw-leg">
-          <div class="sw-legtop"><span class="sw-label">You receive</span><span class="sw-bal" id="sw-quoting"></span></div>
+          <div class="sw-legtop"><span class="sw-label">You receive<span class="sw-quoting" id="sw-quoting"></span></span><span class="sw-bal" id="sw-bal-out"></span></div>
           <div class="sw-row">
             <input class="sw-amount" id="sw-out-amount" placeholder="0.00" disabled>
             <button class="sw-pick" id="sw-out-token" onclick="openTokenPicker('out')">USDC</button>
@@ -2254,9 +2304,10 @@
         </div>
 
         <div class="sw-detail" id="sw-detail" hidden>
-          <div class="sw-line"><span>Rate</span><span id="sw-rate">–</span></div>
+          <div class="sw-line"><span>Rate<button class="sw-refresh" id="sw-refresh" onclick="quoteSwap()" title="Refresh the price now"></button></span><span id="sw-rate">–</span></div>
           <div class="sw-line"><span>Price impact</span><span id="sw-impact">–</span></div>
           <div class="sw-line"><span>Minimum received</span><span id="sw-min">–</span></div>
+          <div class="sw-line" id="sw-after-line" hidden><span>After this swap</span><span id="sw-after">–</span></div>
           <div class="sw-line"><span>Fee</span><span id="sw-fee">–</span></div>
           <div class="sw-line"><span>Fox Points</span><span id="sw-points">–</span></div>
           <div class="sw-line"><span>Max slippage</span>
@@ -2273,6 +2324,11 @@
         <div class="sw-msg" id="sw-msg"></div>
         <p class="sw-foot">Routed by Jupiter across every Solana DEX. Non-custodial —
           the swap happens in your own wallet.</p>
+      </div>
+
+      <div class="sw-history" id="sw-history" hidden>
+        <div class="sw-history-title">Your swaps</div>
+        <div id="sw-history-list"></div>
       </div>
     </div>
 
@@ -4413,9 +4469,44 @@
     var swapPrices = {};
     var pickerSide = null;
     var pickerDebounce = null;
+    var swapBalances = { in: null, out: null }; // numbers, or null when unknown
+    var swapHoldings = null;                     // the connected wallet's tokens, largest first
+    var swapHoldingsFor = undefined;             // which wallet those holdings belong to
+    var swapQuoteAt = 0;                         // when the price on screen was fetched
+    var swapQuoteKey = '';                       // the pair and amount that price is for
+    var swapShownOut = 0;                        // the output amount the customer last saw
+    var swapQuoting = false;
+    var swapBusy = false;                        // a swap is being built, signed or sent
+    var swapTicker = null;
+
+    const SOL_MINT = 'So11111111111111111111111111111111111111112';
+    const QUOTE_REFRESH_MS = 15000;
+    // a price this much worse than the one on screen is shown before anyone signs
+    const PRICE_MOVED_PCT = 0.5;
+
+    function storedList(key) {
+      try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
+      catch (e) { return []; }
+    }
+    function storeList(key, list) {
+      try { localStorage.setItem(key, JSON.stringify(list)); } catch (e) { /* private mode */ }
+    }
+    // just enough to put a token back on screen later
+    function tokenRecord(t) {
+      return { mint: t.mint, symbol: t.symbol, name: t.name || '', decimals: t.decimals,
+        icon: t.icon || null, verified: !!t.verified, warnings: t.warnings || [] };
+    }
+    function fmtAmount(n) {
+      if (n === null || n === undefined || !isFinite(n)) return '–';
+      if (Math.abs(n) >= 1e6) return n.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 2 });
+      return n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n) >= 1 ? 4 : 6 });
+    }
+    function fmtUsd(n) {
+      return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
 
     async function loadSwap() {
-      if (swapTokens) return;
+      if (swapTokens) { loadSwapHistory(); return; }
       try {
         const res = await fetch(POINTS_API + '/api/swap/tokens');
         const d = await res.json();
@@ -4426,6 +4517,7 @@
       swapPair.out = swapTokens[1];  // USDC
       paintPair();
       setSlippage(swapSlippage);
+      paintRecentPairs();
 
       const amt = document.getElementById('sw-in-amount');
       amt.addEventListener('input', function () {
@@ -4444,6 +4536,7 @@
       refreshSwapBalance();
       refreshSwapPrices();
       loadSwapPoints().then(flushSwapPoints);
+      if (!swapTicker) swapTicker = setInterval(tickSwapQuote, 1000);
     }
 
     function paintPair() {
@@ -4503,7 +4596,7 @@
       document.getElementById('sw-picker').hidden = false;
       const search = document.getElementById('sw-search');
       search.value = '';
-      renderTokenResults(swapTokens.map(function (t) { return Object.assign({ verified: true, warnings: [] }, t); }));
+      renderPickerHome();
       search.focus();
     }
 
@@ -4512,41 +4605,96 @@
       pickerSide = null;
     }
 
+    /// Before anything is typed: what the wallet already holds, then favourites,
+    /// then tokens swapped recently, then the popular list.
+    function renderPickerHome() {
+      const sections = [];
+      if (Wallet.pubkey) {
+        sections.push({
+          title: 'Your tokens',
+          tokens: swapHoldings ? swapHoldings.tokens : null,
+          empty: swapHoldings && swapHoldings.failed ? 'Could not read your wallet just now.' : 'No tokens in this wallet yet.'
+        });
+      }
+      const favs = storedList('sq.swap.favs');
+      if (favs.length) sections.push({ title: 'Favourites', tokens: favs });
+      const recent = [];
+      for (const p of storedList('sq.swap.pairs')) {
+        for (const t of [p.in, p.out]) {
+          if (t && !recent.some(function (r) { return r.mint === t.mint; })) recent.push(t);
+        }
+      }
+      if (recent.length) sections.push({ title: 'Recent', tokens: recent.slice(0, 6) });
+      sections.push({ title: 'Popular', tokens: swapTokens.map(function (t) { return Object.assign({ verified: true, warnings: [] }, t); }) });
+      renderTokenResults(sections);
+    }
+
     async function runTokenSearch() {
       const q = document.getElementById('sw-search').value.trim();
       const box = document.getElementById('sw-results');
-      if (q.length < 2) {
-        renderTokenResults(swapTokens.map(function (t) { return Object.assign({ verified: true, warnings: [] }, t); }));
-        return;
-      }
+      if (q.length < 2) { renderPickerHome(); return; }
       box.innerHTML = '<div class="sw-empty">Searching…</div>';
       try {
         const res = await fetch(POINTS_API + '/api/swap/search?q=' + encodeURIComponent(q));
         const d = await res.json();
-        renderTokenResults(d.tokens || []);
+        renderTokenResults([{ title: null, tokens: d.tokens || [],
+          empty: 'Nothing found. Paste a mint address to look one up directly.' }]);
       } catch (e) {
         box.innerHTML = '<div class="sw-empty">Could not search just now.</div>';
       }
     }
 
-    function renderTokenResults(list) {
+    function renderTokenResults(sections) {
       const box = document.getElementById('sw-results');
-      if (!list.length) {
-        box.innerHTML = '<div class="sw-empty">Nothing found. Paste a mint address to look one up directly.</div>';
-        return;
+      const flat = [];
+      const favs = storedList('sq.swap.favs').map(function (f) { return f.mint; });
+      const held = {};
+      if (swapHoldings) for (const h of swapHoldings.tokens) held[h.mint] = h;
+
+      let html = '';
+      for (const s of sections) {
+        if (s.title) html += '<div class="sw-section">' + escapeHtml(s.title) + '</div>';
+        if (s.tokens === null) { html += '<div class="sw-empty">Reading your wallet…</div>'; continue; }
+        if (!s.tokens.length) { html += '<div class="sw-empty">' + escapeHtml(s.empty || 'Nothing here yet.') + '</div>'; continue; }
+        for (const t of s.tokens) {
+          const i = flat.push(t) - 1;
+          const warn = (t.warnings || [])[0];
+          const h = held[t.mint];
+          const fav = favs.indexOf(t.mint) >= 0;
+          html += '<div class="sw-result">' +
+            '<button class="sw-result-pick" onclick="chooseToken(' + i + ')">' +
+            (t.icon ? '<img src="' + escapeHtml(t.icon) + '" alt="" loading="lazy">' : '<img alt="">') +
+            '<span class="sw-result-body">' +
+            '<span class="sw-result-sym">' + escapeHtml(t.symbol || '?') +
+            (t.verified ? '<span class="sw-tick" title="On Jupiter’s verified list">✓</span>' : '') + '</span>' +
+            '<span class="sw-result-name">' + escapeHtml(t.name || '') + '</span>' +
+            (warn ? '<span class="sw-result-warn">⚠ ' + escapeHtml(warn) + '</span>' : '') +
+            '</span>' +
+            (h ? '<span class="sw-result-bal">' + escapeHtml(fmtAmount(h.amount)) +
+              (h.usd !== null && h.usd !== undefined ? '<small>' + fmtUsd(h.usd) + '</small>' : '') + '</span>' : '') +
+            '</button>' +
+            '<button class="sw-star' + (fav ? ' on' : '') + '" onclick="toggleFavourite(' + i + ')" ' +
+            'aria-pressed="' + fav + '" aria-label="' + (fav ? 'Remove from' : 'Add to') + ' favourites">' +
+            (fav ? '★' : '☆') + '</button></div>';
+        }
       }
-      box.innerHTML = list.map(function (t, i) {
-        const warn = (t.warnings || [])[0];
-        return '<button class="sw-result" onclick="chooseToken(' + i + ')">' +
-          (t.icon ? '<img src="' + escapeHtml(t.icon) + '" alt="" loading="lazy">' : '<img alt="">') +
-          '<span class="sw-result-body">' +
-          '<span class="sw-result-sym">' + escapeHtml(t.symbol || '?') +
-          (t.verified ? '<span class="sw-tick" title="On Jupiter’s verified list">✓</span>' : '') + '</span>' +
-          '<span class="sw-result-name">' + escapeHtml(t.name || '') + '</span>' +
-          (warn ? '<span class="sw-result-warn">⚠ ' + escapeHtml(warn) + '</span>' : '') +
-          '</span></button>';
-      }).join('');
-      box._list = list;
+      box.innerHTML = html;
+      box._list = flat;
+      box._sections = sections;
+    }
+
+    /// Starred tokens are kept on this device and listed near the top of the picker.
+    function toggleFavourite(i) {
+      const box = document.getElementById('sw-results');
+      const t = box._list && box._list[i];
+      if (!t) return;
+      let favs = storedList('sq.swap.favs');
+      favs = favs.some(function (f) { return f.mint === t.mint; })
+        ? favs.filter(function (f) { return f.mint !== t.mint; })
+        : [tokenRecord(t)].concat(favs).slice(0, 12);
+      storeList('sq.swap.favs', favs);
+      if (document.getElementById('sw-search').value.trim().length < 2) renderPickerHome();
+      else renderTokenResults(box._sections);
     }
 
     function chooseToken(i) {
@@ -4589,43 +4737,212 @@
       quoteSwap();
     }
 
-    async function refreshSwapBalance() {
-      const el = document.getElementById('sw-bal');
-      if (!el || !swapPair.in) return;
-      const mint = swapPair.in.mint;
-      if (!Wallet.pubkey) { el.textContent = ''; return; }
-      try {
-        const { Connection, PublicKey } = w3();
-        const conn = rpc();
-        let ui;
-        if (mint === 'So11111111111111111111111111111111111111112') {
-          ui = (await conn.getBalance(new PublicKey(Wallet.pubkey))) / 1e9;
-        } else {
-          const ata = ataFor(Wallet.pubkey, mint);
-          const info = await conn.getTokenAccountBalance(ata).catch(function () { return null; });
-          ui = info ? Number(info.value.uiAmount) : null;
-        }
-        if (ui === null) { el.textContent = ''; el.onclick = null; return; }
-        el.textContent = 'Balance ' + ui.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + swapPair.in.symbol;
-        el.style.cursor = 'pointer';
-        el.onclick = function () {
-          // leave a little SOL behind for fees, or the swap cannot be paid for
-          const usable = mint === 'So11111111111111111111111111111111111111112' ? Math.max(0, ui - 0.01) : ui;
-          document.getElementById('sw-in-amount').value = String(usable);
-          quoteSwap();
-        };
-      } catch (e) { el.textContent = ''; }
+    // ── recent pairs ──
+    /// The last few pairs actually swapped, one tap to set up again.
+    function rememberPair() {
+      const pairs = storedList('sq.swap.pairs').filter(function (p) {
+        return !(p.in.mint === swapPair.in.mint && p.out.mint === swapPair.out.mint);
+      });
+      pairs.unshift({ in: tokenRecord(swapPair.in), out: tokenRecord(swapPair.out) });
+      storeList('sq.swap.pairs', pairs.slice(0, 4));
+      paintRecentPairs();
     }
 
-    async function quoteSwap() {
+    function paintRecentPairs() {
+      const box = document.getElementById('sw-recent');
+      const pairs = storedList('sq.swap.pairs');
+      box.hidden = !pairs.length;
+      box.innerHTML = pairs.map(function (p, i) {
+        return '<button class="sw-chip" onclick="useRecentPair(' + i + ')">' +
+          escapeHtml(p.in.symbol) + ' → ' + escapeHtml(p.out.symbol) + '</button>';
+      }).join('');
+    }
+
+    function useRecentPair(i) {
+      const p = storedList('sq.swap.pairs')[i];
+      if (!p) return;
+      swapPair.in = p.in;
+      swapPair.out = p.out;
+      paintPair();
+      refreshSwapBalance();
+      refreshSwapPrices();
+      quoteSwap();
+    }
+
+    // ── balances ──
+    /// Looks up token accounts by mint, which finds them under either token
+    /// program. Deriving the classic associated account instead is why a
+    /// Token-2022 token like PYUSD never showed a balance.
+    async function tokenBalance(owner, mint) {
+      const { PublicKey } = w3();
+      const conn = rpc();
+      if (mint === SOL_MINT) return (await conn.getBalance(new PublicKey(owner))) / 1e9;
+      const res = await conn.getParsedTokenAccountsByOwner(new PublicKey(owner), { mint: new PublicKey(mint) });
+      let total = 0;
+      for (const a of res.value) total += Number(a.account.data.parsed.info.tokenAmount.uiAmount || 0);
+      return total;
+    }
+
+    /// Both sides of the pair, read from the chain for just these two tokens so
+    /// they are right even a moment after a swap.
+    async function refreshSwapBalance() {
+      const el = document.getElementById('sw-bal');
+      const outEl = document.getElementById('sw-bal-out');
+      const pcts = document.getElementById('sw-pcts');
+      if (!el || !swapPair.in || !swapPair.out) return;
+      if ((Wallet.pubkey || null) !== swapHoldingsFor) {   // a different wallet, or none
+        loadSwapHoldings();
+        loadSwapHistory();
+      }
+      if (!Wallet.pubkey) {
+        swapBalances = { in: null, out: null };
+        el.textContent = ''; el.onclick = null; outEl.textContent = ''; pcts.hidden = true;
+        paintAfterSwap();
+        return;
+      }
+      const owner = Wallet.pubkey, inMint = swapPair.in.mint, outMint = swapPair.out.mint;
+      const both = await Promise.all([
+        tokenBalance(owner, inMint).catch(function () { return null; }),
+        tokenBalance(owner, outMint).catch(function () { return null; })
+      ]);
+      // the pair or the wallet may have changed while those were in flight
+      if (owner !== Wallet.pubkey || inMint !== swapPair.in.mint || outMint !== swapPair.out.mint) return;
+      swapBalances = { in: both[0], out: both[1] };
+      el.textContent = both[0] === null ? '' : 'Balance ' + fmtAmount(both[0]) + ' ' + swapPair.in.symbol;
+      el.style.cursor = both[0] ? 'pointer' : '';
+      el.onclick = both[0] ? function () { setSwapPct(100); } : null;
+      pcts.hidden = !both[0];
+      outEl.textContent = both[1] === null ? '' : 'You have ' + fmtAmount(both[1]) + ' ' + swapPair.out.symbol;
+      paintAfterSwap();
+    }
+
+    /// 25%, 50% or all of the balance. "All" of SOL leaves a little behind for
+    /// network fees, or the swap could not be paid for.
+    function setSwapPct(pct) {
+      const bal = swapBalances.in;
+      if (!bal) return;
+      let amount = bal * pct / 100;
+      if (swapPair.in.mint === SOL_MINT) amount = Math.min(amount, Math.max(0, bal - 0.01));
+      const d = swapPair.in.decimals;
+      // rounded down, so it can never be more than is actually there
+      amount = Math.floor(amount * Math.pow(10, d)) / Math.pow(10, d);
+      document.getElementById('sw-in-amount').value = amount > 0 ? amount.toFixed(d).replace(/\.?0+$/, '') : '';
+      quoteSwap();
+    }
+
+    function paintAfterSwap() {
+      const line = document.getElementById('sw-after-line');
+      const el = document.getElementById('sw-after');
+      if (!line) return;
+      const raw = parseFloat(document.getElementById('sw-in-amount').value);
+      if (!swapQuote || swapBalances.in === null || swapBalances.out === null || !(raw > 0)) { line.hidden = true; return; }
+      line.hidden = false;
+      if (raw > swapBalances.in) {
+        el.textContent = 'not enough ' + swapPair.in.symbol;
+        el.classList.add('sw-warn');
+        return;
+      }
+      el.classList.remove('sw-warn');
+      const out = Number(swapQuote.outAmount) / Math.pow(10, swapPair.out.decimals);
+      el.textContent = fmtAmount(swapBalances.in - raw) + ' ' + swapPair.in.symbol +
+        ' · ' + fmtAmount(swapBalances.out + out) + ' ' + swapPair.out.symbol;
+    }
+
+    async function loadSwapHoldings(fresh) {
+      const owner = Wallet.pubkey || null;
+      swapHoldingsFor = owner;
+      swapHoldings = null;
+      if (!owner) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/holdings?wallet=' + owner + (fresh ? '&fresh=1' : ''));
+        const d = await res.json();
+        if (owner !== Wallet.pubkey) return;
+        if (d.error) throw new Error(d.error);
+        swapHoldings = {
+          totalUsd: d.totalUsd,
+          tokens: (d.tokens || []).map(function (t) {
+            return Object.assign({}, t, { warnings: t.verified ? [] : ['Not on Jupiter’s verified list'] });
+          })
+        };
+      } catch (e) {
+        if (owner === Wallet.pubkey) swapHoldings = { tokens: [], totalUsd: 0, failed: true };
+      }
+      // the picker may be open and waiting on this
+      if (pickerSide && document.getElementById('sw-search').value.trim().length < 2) renderPickerHome();
+    }
+
+    // ── history ──
+    /// Adds a swap to history. The chain may not have it the instant the wallet
+    /// confirms, so "not found yet" is retried a few times before giving up.
+    async function recordSwap(signature) {
+      for (const wait of [0, 3000, 8000, 20000]) {
+        if (wait) await new Promise(function (r) { setTimeout(r, wait); });
+        try {
+          const res = await fetch(POINTS_API + '/api/swap/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signature: signature })
+          });
+          if (res.status !== 404) break;
+        } catch (e) { /* try again */ }
+      }
+      loadSwapHistory();
+    }
+
+    async function loadSwapHistory() {
+      const box = document.getElementById('sw-history');
+      const list = document.getElementById('sw-history-list');
+      const owner = Wallet.pubkey;
+      if (!box) return;
+      if (!owner) { box.hidden = true; return; }
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/history?wallet=' + owner);
+        const d = await res.json();
+        if (owner !== Wallet.pubkey) return;
+        const rows = d.swaps || [];
+        box.hidden = !rows.length;
+        const label = function (sym, mint) { return escapeHtml(sym || mint.slice(0, 4) + '…'); };
+        list.innerHTML = rows.map(function (s) {
+          const at = new Date(s.ts);
+          const when = at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
+            at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          return '<div class="sw-hrow"><div>' +
+            '<div class="sw-hpair">' + escapeHtml(fmtAmount(s.in_amount)) + ' ' + label(s.in_symbol, s.in_mint) +
+            ' → ' + escapeHtml(fmtAmount(s.out_amount)) + ' ' + label(s.out_symbol, s.out_mint) + '</div>' +
+            '<div class="sw-hmeta">' + escapeHtml(when) + ' · <a href="https://solscan.io/tx/' +
+            encodeURIComponent(s.signature) + '" target="_blank" rel="noopener noreferrer">view</a></div>' +
+            '</div><div class="sw-hright">' + (s.usd !== null && s.usd !== undefined ? fmtUsd(s.usd) : '') +
+            (s.points ? '<span class="sw-hpts">+' + Number(s.points).toLocaleString() + ' pts</span>' : '') +
+            '</div></div>';
+        }).join('');
+      } catch (e) { /* history is a convenience; swapping is unaffected */ }
+    }
+
+    // ── live price ──
+    /// Keeps the price on screen current: refreshed every 15 seconds while it is
+    /// being looked at, and not while a swap is under way or the tab is hidden.
+    function tickSwapQuote() {
+      const btn = document.getElementById('sw-refresh');
+      if (!btn) return;
+      if (!swapQuote || swapBusy) { btn.textContent = ''; return; }
+      const left = Math.max(0, Math.ceil((swapQuoteAt + QUOTE_REFRESH_MS - Date.now()) / 1000));
+      btn.textContent = '↻ ' + left + 's';
+      const watched = document.visibilityState === 'visible' &&
+        document.getElementById('panel-swap').classList.contains('active');
+      if (left === 0 && watched && !pickerSide && !swapQuoting) quoteSwap({ auto: true });
+    }
+
+    async function quoteSwap(opts) {
+      const auto = !!(opts && opts.auto);
       const tIn = swapPair.in;
       const tOut = swapPair.out;
       const raw = parseFloat(document.getElementById('sw-in-amount').value);
       const go = document.getElementById('sw-go');
       const detail = document.getElementById('sw-detail');
       const msg = document.getElementById('sw-msg');
-      msg.textContent = '';
-      msg.className = 'sw-msg';
+      const key = tIn.mint + '>' + tOut.mint + ':' + raw + ':' + swapSlippage;
+      // a refresh leaves a success message alone; a new amount or pair clears everything
+      if (!auto || msg.dataset.kind) { msg.textContent = ''; msg.className = 'sw-msg'; msg.dataset.kind = ''; }
       paintUsd();
 
       if (!raw || raw <= 0) {
@@ -4635,13 +4952,17 @@
         detail.hidden = true;
         go.disabled = true;
         go.textContent = 'Enter an amount';
+        paintAfterSwap();
         return;
       }
 
       const amount = Math.round(raw * Math.pow(10, tIn.decimals));
       const seq = ++swapSeq;
-      document.getElementById('sw-quoting').textContent = 'Finding the best route…';
-      go.disabled = true;
+      swapQuoting = true;
+      if (!auto) {
+        document.getElementById('sw-quoting').textContent = '· finding the best route…';
+        go.disabled = true;
+      }
 
       try {
         const res = await fetch(POINTS_API + '/api/swap/quote?in=' + tIn.mint + '&out=' + tOut.mint +
@@ -4651,10 +4972,16 @@
         document.getElementById('sw-quoting').textContent = '';
         if (d.error) throw new Error(d.error);
 
+        const previous = swapQuoteKey === key ? swapShownOut : 0;
         swapQuote = d.quote;
+        swapQuoteAt = Date.now();
+        swapQuoteKey = key;
+        swapShownOut = Number(d.quote.outAmount);
         const out = Number(d.quote.outAmount) / Math.pow(10, tOut.decimals);
         const min = Number(d.quote.otherAmountThreshold) / Math.pow(10, tOut.decimals);
-        document.getElementById('sw-out-amount').value = out.toLocaleString(undefined, { maximumFractionDigits: 6 });
+        // whole-token precision is noise on a memecoin amount in the millions
+        const places = function (n) { return { maximumFractionDigits: n >= 1000 ? 2 : 6 }; };
+        document.getElementById('sw-out-amount').value = out.toLocaleString(undefined, places(out));
         paintUsd();
 
         const rate = out / raw;
@@ -4667,20 +4994,35 @@
         impactEl.classList.toggle('sw-warn', impact >= 1);
 
         document.getElementById('sw-min').textContent =
-          min.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + tOut.symbol;
+          min.toLocaleString(undefined, places(min)) + ' ' + tOut.symbol;
 
+        // The quote always prices the fee in the output token, but it can be taken
+        // from the token being sold instead — the server says which.
         const pf = d.quote.platformFee;
-        document.getElementById('sw-fee').textContent = pf
-          ? (Number(pf.amount) / Math.pow(10, tOut.decimals)).toLocaleString(undefined, { maximumFractionDigits: 6 }) +
-            ' ' + tOut.symbol + ' (' + (pf.feeBps / 100) + '%)'
-          : 'none on this pair';
+        let feeText = 'none on this pair';
+        if (pf && d.feeMint) {
+          feeText = (d.feeMint === tIn.mint
+            ? fmtAmount(raw * pf.feeBps / 10000) + ' ' + tIn.symbol
+            : fmtAmount(Number(pf.amount) / Math.pow(10, tOut.decimals)) + ' ' + tOut.symbol) +
+            ' (' + (pf.feeBps / 100) + '%)';
+        }
+        document.getElementById('sw-fee').textContent = feeText;
 
         paintSwapPoints();
+        paintAfterSwap();
         detail.hidden = false;
         go.disabled = false;
         go.textContent = 'Swap ' + tIn.symbol + ' for ' + tOut.symbol;
-        if (impact >= 3) {
+
+        if (previous && swapShownOut < previous * (1 - PRICE_MOVED_PCT / 100)) {
+          const drop = (1 - swapShownOut / previous) * 100;
+          msg.className = 'sw-msg sw-moved';
+          msg.dataset.kind = 'moved';
+          msg.textContent = 'The price moved: you would now receive ' + fmtAmount(out) + ' ' + tOut.symbol +
+            ', ' + drop.toFixed(1) + '% less than a moment ago.';
+        } else if (impact >= 3) {
           msg.className = 'sw-msg bad';
+          msg.dataset.kind = 'impact';
           msg.textContent = 'Price impact is ' + impact.toFixed(1) + '% — that is a lot. Try a smaller amount.';
         }
       } catch (e) {
@@ -4691,7 +5033,11 @@
         go.disabled = true;
         go.textContent = 'No route';
         msg.className = 'sw-msg bad';
+        msg.dataset.kind = 'error';
         msg.textContent = e.message || 'Could not price that swap.';
+        paintAfterSwap();
+      } finally {
+        if (seq === swapSeq) swapQuoting = false;
       }
     }
 
@@ -4794,9 +5140,10 @@
     async function doSwap() {
       const go = document.getElementById('sw-go');
       const msg = document.getElementById('sw-msg');
+      if (!swapQuote || swapBusy) return;
       msg.className = 'sw-msg';
       msg.textContent = '';
-      if (!swapQuote) return;
+      msg.dataset.kind = '';
 
       if (!Wallet.pubkey) {
         try { await connectWallet(); } catch (e) { /* closed the picker */ }
@@ -4809,8 +5156,19 @@
       }
 
       go.disabled = true;
-      go.textContent = 'Building route…';
+      swapBusy = true;
       try {
+        // A price the customer looked at a while ago is checked again before they
+        // sign. If it has got meaningfully worse, they see the new one and tap again.
+        if (Date.now() - swapQuoteAt > QUOTE_REFRESH_MS) {
+          go.textContent = 'Checking the price…';
+          swapBusy = false;
+          await quoteSwap({ auto: true });
+          swapBusy = true;
+          if (!swapQuote || msg.dataset.kind === 'moved') return;
+          go.disabled = true;
+        }
+        go.textContent = 'Building route…';
         const res = await fetch(POINTS_API + '/api/swap/build', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -4832,6 +5190,7 @@
               '<a href="https://solscan.io/tx/' + encodeURIComponent(sendErr.sentSignature) +
               '" target="_blank" rel="noopener noreferrer">Check it here</a> before trying again.';
             awardSwapPoints(sendErr.sentSignature, msg);
+            recordSwap(sendErr.sentSignature);
             go.textContent = 'Swap';
             go.disabled = false;
             return;
@@ -4842,18 +5201,22 @@
         msg.innerHTML = 'Swapped. <a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
           '" target="_blank" rel="noopener noreferrer">View it</a>';
         awardSwapPoints(sig, msg);
+        recordSwap(sig);
+        rememberPair();
         document.getElementById('sw-in-amount').value = '';
         document.getElementById('sw-out-amount').value = '';
         document.getElementById('sw-detail').hidden = true;
         swapQuote = null;
         go.textContent = 'Swap again';
         refreshSwapBalance();
+        loadSwapHoldings(true);
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = friendlySwapError(e);
         go.textContent = 'Try again';
         reportSwapFailure(e);
       } finally {
+        swapBusy = false;
         go.disabled = false;
       }
     }

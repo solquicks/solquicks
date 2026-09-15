@@ -1,184 +1,12 @@
 // The booking and ad-slot checkouts, end to end, against the worker that ships.
-//
-// Nothing here is re-implemented. The real worker module is imported and its
-// real fetch handler is called with real Requests. Behind it:
-//
-//   - a real SQLite database, built from the committed schema.sql, wearing a
-//     thin D1-shaped adapter. D1 is SQLite, so the SQL that decides whether a
-//     slot is free runs exactly as it does in production.
-//   - a fake Solana chain answering the two RPC calls payment verification
-//     makes. Any other network call fails the run.
-//   - a clock the test controls, so a 20-minute hold can expire in no time.
-//
-// Every D1 call yields to the event loop before it executes, the way a network
-// round-trip does. Without that, two requests could never interleave and the
-// concurrency tests below would pass by construction.
-//
-// Needs Node 22.13+ for node:sqlite. No dependencies, no network.
+// The database, clock and fake network are in harness.mjs.
 
-import fs from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
-
-// ── a controllable clock ─────────────────────────────────────────────────────
-const realNow = Date.now;
-let clock = Date.UTC(2026, 8, 14, 15, 0, 0); // a Monday, 11:00 in New York
-Date.now = () => clock;
-const MIN = 60000, HOUR = 60 * MIN;
-const advance = (ms) => { clock += ms; };
-
-// ── D1 over node:sqlite ──────────────────────────────────────────────────────
-function d1(db) {
-  // Even-paced yields cannot produce every real interleaving: a network call
-  // that happens to be slow can open a gap no fixed schedule reproduces. So a
-  // test can also hold one statement at the door until it chooses to let it in.
-  const pauses = [];
-  const tick = async (sql) => {
-    await new Promise((r) => setImmediate(r));
-    const p = pauses.find((x) => !x.hit && x.re.test(sql));
-    if (p) { p.hit = true; p.arrived(); await p.gate; }
-  };
-  const norm = (v) => (v === undefined ? null : typeof v === 'boolean' ? Number(v) : v);
-  const statement = (sql, args = []) => ({
-    bind: (...a) => statement(sql, a.map(norm)),
-    async first() { await tick(sql); return db.prepare(sql).get(...args) ?? null; },
-    async all() { await tick(sql); return { results: db.prepare(sql).all(...args), success: true }; },
-    async run() { await tick(sql); const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: r.changes } }; },
-    _exec() { return db.prepare(sql).run(...args); }
-  });
-  return {
-    pauseBefore(re) {
-      const p = { re, hit: false };
-      p.reached = new Promise((r) => { p.arrived = r; });
-      p.gate = new Promise((r) => { p.release = r; });
-      pauses.push(p);
-      return p;
-    },
-    prepare: (sql) => statement(sql),
-    async batch(list) {
-      await tick('');
-      db.exec('BEGIN');
-      try { const out = list.map((s) => s._exec()); db.exec('COMMIT'); return out; }
-      catch (e) { db.exec('ROLLBACK'); throw e; }
-    }
-  };
-}
-
-// ── a fake chain ─────────────────────────────────────────────────────────────
-const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
-const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const chain = { txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, alerts: [], inScheduled: false };
-
-// usdc and sol are in base units: micro-USDC and lamports
-function pay({ from, usdc = 0, sol = 0, reference = null, failed = false }) {
-  const sig = 'sig' + String(++chain.n).padStart(84, '0');
-  const keys = [from, TREASURY].concat(reference ? [reference] : []);
-  chain.txs.set(sig, {
-    transaction: { message: { accountKeys: keys.map((k) => ({ pubkey: k })) } },
-    meta: {
-      err: failed ? { InstructionError: [0, 'Custom'] } : null,
-      preBalances: [5e9, 1e9],
-      postBalances: [5e9 - sol, 1e9 + sol],
-      preTokenBalances: [{ accountIndex: 1, mint: USDC, owner: TREASURY, uiTokenAmount: { amount: '1000000000' } }],
-      postTokenBalances: [{ accountIndex: 1, mint: USDC, owner: TREASURY, uiTokenAmount: { amount: String(1e9 + usdc) } }]
-    }
-  });
-  if (reference) chain.byRef.set(reference, [{ signature: sig, err: failed ? {} : null }].concat(chain.byRef.get(reference) || []));
-  return sig;
-}
-
-globalThis.fetch = async (url, init) => {
-  const u = String(url);
-  if (u.startsWith('https://mainnet.helius-rpc.com/')) {
-    const { method, params } = JSON.parse(init.body);
-    let result = null;
-    if (method === 'getTransaction') result = chain.txs.get(params[0]) || null;
-    else if (method === 'getSignaturesForAddress') { chain.lookups++; result = chain.byRef.get(params[0]) || []; }
-    // the scheduled handler also refreshes analytics and checks health; those
-    // calls get an empty answer rather than counting as a stray request
-    else if (!chain.inScheduled) chain.unexpected.push('rpc ' + method);
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
-  }
-  if (u.startsWith('https://api.telegram.org/')) {
-    chain.alerts.push(JSON.parse(init.body).text);
-    return new Response('{"ok":true}', { status: 200 });
-  }
-  if (chain.inScheduled) return new Response('', { status: 503 });
-  chain.unexpected.push(u);
-  throw new Error('unexpected network call in a test: ' + u);
-};
-
-// ── the worker ───────────────────────────────────────────────────────────────
-const schema = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
-const { default: worker } = await import('../src/index.js');
-
-function freshEnv(overrides = {}) {
-  const db = new DatabaseSync(':memory:');
-  db.exec(schema);
-  return Object.assign({
-    DB: d1(db),
-    TREASURY_WALLET: TREASURY,
-    HELIUS_API_KEY: 'test',
-    ALLOWED_ORIGINS: 'https://solquicks.com',
-    TELEGRAM_ALERT_TOKEN: 'test',
-    TELEGRAM_ALERT_CHAT: 'test',
-    _db: db
-  }, overrides);
-}
-
-let ipSeq = 0;
-const newIp = () => '10.0.' + Math.floor(++ipSeq / 250) + '.' + (ipSeq % 250);
-
-// Runs one request through the real handler. waitUntil work is collected and
-// finished after the response, which is what the Workers runtime does.
-async function call(env, method, path, { body, ip, token } = {}) {
-  const pending = [];
-  const headers = { 'Content-Type': 'application/json', Origin: 'https://solquicks.com', 'CF-Connecting-IP': ip || newIp() };
-  if (token) headers.Authorization = 'Bearer ' + token;
-  const res = await worker.fetch(
-    new Request('https://api.test' + path, { method, headers, body: body ? JSON.stringify(body) : undefined }),
-    env,
-    { waitUntil: (p) => pending.push(p), passThroughOnException() {} }
-  );
-  await Promise.allSettled(pending);
-  const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch (e) { json = { _raw: text }; }
-  return { status: res.status, body: json };
-}
-
-// The cron entry point, exactly as Cloudflare invokes it.
-async function runScheduled(env) {
-  const pending = [];
-  chain.inScheduled = true;
-  try {
-    await worker.scheduled({ cron: '*/30 * * * *', scheduledTime: clock }, env, { waitUntil: (p) => pending.push(p) });
-    await Promise.allSettled(pending);
-  } finally { chain.inScheduled = false; }
-}
+import {
+  MIN, HOUR, START, clock, advance, setClock, TREASURY, USDC, chain, pay, freshEnv, call, runScheduled,
+  payments, wallet, signIn, ok, eq, section, finish
+} from './harness.mjs';
 
 const row = (env, ref) => env._db.prepare('SELECT * FROM bookings WHERE ref = ?').get(ref);
-const payments = (env) => env._db.prepare('SELECT COUNT(*) AS n FROM payments').get().n;
-
-function signIn(env, wallet, { holder = false, expired = false } = {}) {
-  const token = 'tok-' + wallet;
-  env._db.prepare('INSERT OR REPLACE INTO sessions (token, wallet, expires) VALUES (?, ?, ?)')
-    .run(token, wallet, expired ? clock - MIN : clock + 24 * HOUR);
-  if (holder) {
-    env._db.prepare('INSERT OR REPLACE INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 1, ?, ?)')
-      .run(wallet, clock, clock);
-  }
-  return token;
-}
-
-const wallet = (n) => ('W' + n).padEnd(44, '1');
-
-// ── assertions ───────────────────────────────────────────────────────────────
-let pass = 0, fail = 0;
-const ok = (name, cond, detail = '') => {
-  if (cond) { pass++; console.log('PASS ' + name); }
-  else { fail++; console.log('FAIL ' + name + (detail ? '  — ' + detail : '')); }
-};
-const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
-const section = (s) => console.log('\n── ' + s + ' ──');
 
 async function slots(env, type = 'space') {
   const r = await call(env, 'GET', '/api/booking/slots?type=' + type);
@@ -497,12 +325,12 @@ section('late payment for a time that has already passed');
   const env = freshEnv();
   const s = firstRush(await slots(env)); // 24–48 hours out
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
-  clock = s.starts + 5 * MIN; // the Space has started
+  setClock(s.starts + 5 * MIN); // the Space has started
   await slots(env);
   pay({ from: wallet(46), usdc: 300e6, reference: h.body.reference });
   eq('it is refunded rather than booked into the past',
     (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'refund');
-  clock = Date.UTC(2026, 8, 14, 15, 0, 0);
+  setClock(START);
 }
 
 section('old abandoned holds cost nothing');
@@ -517,7 +345,7 @@ section('old abandoned holds cost nothing');
     (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'expired');
   await runScheduled(env);
   eq('by the page or by the sweep', chain.lookups, n);
-  clock = Date.UTC(2026, 8, 14, 15, 0, 0);
+  setClock(START);
 }
 
 section('two people, the same hour, the same moment');
@@ -845,8 +673,4 @@ section('ad slot — the page and the wallet noticing one payment at once');
   eq('run paid, payment recorded once', adRow(env, a.body.ref).status + ' ' + payments(env), 'paid 1');
 }
 
-ok('no request tried to reach anything but the Solana RPC', chain.unexpected.length === 0, chain.unexpected.join(', '));
-
-Date.now = realNow;
-console.log(`\n${pass}/${pass + fail} passed`);
-process.exit(fail ? 1 : 0);
+finish();

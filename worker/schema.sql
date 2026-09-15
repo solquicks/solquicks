@@ -128,3 +128,9 @@ CREATE INDEX IF NOT EXISTS idx_holder_positions_count ON holder_positions(count 
 CREATE INDEX IF NOT EXISTS idx_rewards_wallet ON mission_rewards(wallet, claimed);
 CREATE INDEX IF NOT EXISTS idx_rl_expires ON rate_limits(expires);
 CREATE INDEX IF NOT EXISTS idx_swap_awards_wallet ON swap_awards(wallet, ts);
+
+-- Swap history, one row per swap made through the site. Every column is read
+-- from the chain at record time; symbols and dollar value are kept as they were
+-- then, since both change afterwards. fee_mint is null when no fee was paid.
+CREATE TABLE IF NOT EXISTS swaps (signature TEXT PRIMARY KEY, wallet TEXT NOT NULL, in_mint TEXT NOT NULL, in_symbol TEXT, in_amount REAL NOT NULL, out_mint TEXT NOT NULL, out_symbol TEXT, out_amount REAL NOT NULL, usd REAL, fee_mint TEXT, fee_amount REAL, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet, ts);

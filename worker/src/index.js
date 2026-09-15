@@ -340,6 +340,9 @@ const RATE_RULES = [
   { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/swap/record'], name: 'swaprecord', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/swap/history'], name: 'swaphistory', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/cleanup/scan'], name: 'cleanscan', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/cleanup/award'], name: 'cleanaward', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
@@ -356,7 +359,8 @@ const RATE_RULES = [
   // A global ceiling on wallet scans. Per-IP limits do nothing against a proxy
   // pool, and each scan costs real Helius credits — if those run out, holder
   // analytics and the Ranger grid stop working for everyone.
-  { match: ['scan:global'], name: 'scanbudget', by: 'global', limit: 600, windowMs: 3600000 }
+  { match: ['scan:global'], name: 'scanbudget', by: 'global', limit: 600, windowMs: 3600000 },
+  { match: ['holdings:global'], name: 'holdingsbudget', by: 'global', limit: 1200, windowMs: 3600000 }
 ];
 
 /// Compares without leaking where two strings first differ. A plain !== returns
@@ -484,7 +488,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'banner-gapfill-3';
+const BUILD = 'swap-upgrade-4';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -941,7 +945,18 @@ async function findPaymentByReference(env, reference) {
 // Swap API rather than the Plugin because the Plugin runs on Ultra, whose
 // integrator fee starts at 50bps — two and a half times what we charge.
 
-const JUP = 'https://lite-api.jup.ag';
+/// lite-api.jup.ag is being phased out, its rate limit cut progressively until
+/// it is retired. api.jup.ag serves the same paths but allows keyless callers
+/// only about one request every two seconds — shared by every visitor, since
+/// all calls leave from this worker. So calls move there only once a key is set
+/// (`wrangler secret put JUPITER_API_KEY`), and stay on lite-api until then.
+function jupFetch(env, path, init) {
+  const key = env && env.JUPITER_API_KEY;
+  const opts = Object.assign({}, init || {});
+  if (key) opts.headers = Object.assign({}, opts.headers || {}, { 'x-api-key': key });
+  return fetch((key ? 'https://api.jup.ag' : 'https://lite-api.jup.ag') + path, opts);
+}
+
 const SWAP_FEE_BPS = 20;
 
 // Fees can only be collected in a token that is one side of the swap, so the
@@ -970,31 +985,48 @@ const SWAP_TOKENS = [
   { mint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo', symbol: 'PYUSD', name: 'PayPal USD', decimals: 6 }
 ];
 
-/// On an ExactIn swap Jupiter denominates the platform fee in the OUTPUT
-/// token, so the fee account must belong to that mint — and to that mint's own
-/// token program. Handing it an account under the wrong program fails the whole
-/// swap with IncorrectTokenProgramID (6014), which is how a Token-2022 output
-/// like PYUSD broke an otherwise fine trade. No account for the output token
-/// means no fee: the swap still goes through, it just earns nothing.
-function swapFeeAccount(inputMint, outputMint) {
-  return SWAP_FEE_ACCOUNTS[outputMint] || null;
+// The fee can also be taken from the token being SOLD. Proven by simulating
+// swaps on mainnet (2026-09-14): with the SOL or USDC fee account passed for
+// the input side, exactly 0.2% of the input reached the fee account and the
+// wallet received 99.8% of the no-fee amount — charged once, not twice. Without
+// this, SOL into any token other than USDC or PYUSD — the most common trade —
+// earned nothing. PYUSD stays output-only: taking a fee from a Token-2022 input
+// has not been tested.
+const INPUT_FEE_MINTS = [
+  'So11111111111111111111111111111111111111112',
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+];
+
+/// Which fee account a swap pays into, and in which token. The output side is
+/// preferred so pairs that already earned keep earning exactly as before; the
+/// input side is the fallback. The account must also sit under its mint's own
+/// token program — the wrong one fails the whole swap with
+/// IncorrectTokenProgramID (6014), which is how a Token-2022 output like PYUSD
+/// once broke. No match on either side means no fee; the swap still goes through.
+function swapFee(inputMint, outputMint) {
+  if (SWAP_FEE_ACCOUNTS[outputMint]) return { account: SWAP_FEE_ACCOUNTS[outputMint], mint: outputMint };
+  if (INPUT_FEE_MINTS.indexOf(inputMint) >= 0) return { account: SWAP_FEE_ACCOUNTS[inputMint], mint: inputMint };
+  return null;
 }
 
 const SWAP_POINTS_PER_USD = 1;
 const SWAP_POINTS_DAILY_CAP = 500;
 const SWAP_POINTS_MIN_USD = 5;
 
-async function jupPrices(mints) {
+/// USD prices for up to 50 mints per call. Unreliable prices come back missing,
+/// which callers treat as "unpriced", never as zero.
+async function jupPrices(env, mints) {
   const ids = mints.filter(Boolean).join(',');
   if (!ids) return {};
-  const res = await fetch(JUP + '/price/v3?ids=' + ids);
+  const res = await jupFetch(env, '/price/v3?ids=' + ids);
   if (!res.ok) return {};
   return await res.json().catch(function () { return {}; });
 }
 
-/// What the wallet actually gave up in this transaction, in dollars. Read off
-/// the chain rather than taken from the client, which could claim any number.
-async function swapValueUsd(env, signature, wallet) {
+/// Reads a finished swap off the chain: who signed it, what they gave up and
+/// got back, and whether this site's fee was paid. Everything is taken from the
+/// transaction itself rather than the client, which could claim any number.
+async function inspectSwap(env, signature) {
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1009,37 +1041,63 @@ async function swapValueUsd(env, signature, wallet) {
   if (tx.meta && tx.meta.err) return { ok: false, error: 'that swap failed' };
 
   const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
-  if (keys[0] !== wallet) return { ok: false, error: 'that swap was not signed by your wallet' };
+  const wallet = keys[0];
 
-  const spent = {};
-  const own = function (rows) {
+  // Whole base units, not the floating uiAmount: 5.001 - 5 in floating point is
+  // 0.001000000000000334, and that is what would be stored as the fee.
+  const decimals = {};
+  const owned = function (rows, who) {
     const out = {};
     for (const r of rows || []) {
-      if (r.owner !== wallet) continue;
-      out[r.mint] = Number((r.uiTokenAmount && r.uiTokenAmount.uiAmount) || 0);
+      if (who ? r.owner !== who : false) continue;
+      const key = who ? r.mint : r.accountIndex;
+      decimals[r.mint] = r.uiTokenAmount.decimals;
+      out[key] = (out[key] || 0n) + BigInt(r.uiTokenAmount.amount || '0');
     }
     return out;
   };
-  const pre = own(tx.meta.preTokenBalances);
-  const post = own(tx.meta.postTokenBalances);
+  const ui = function (raw, mint) { return Number(raw) / Math.pow(10, decimals[mint] || 0); };
+  const pre = owned(tx.meta.preTokenBalances, wallet);
+  const post = owned(tx.meta.postTokenBalances, wallet);
+  const spent = {}, received = {};
   for (const mint of new Set(Object.keys(pre).concat(Object.keys(post)))) {
-    const delta = (post[mint] || 0) - (pre[mint] || 0);
-    if (delta < 0) spent[mint] = -delta;
+    const delta = (post[mint] || 0n) - (pre[mint] || 0n);
+    if (delta < 0n) spent[mint] = ui(-delta, mint);
+    if (delta > 0n) received[mint] = ui(delta, mint);
+  }
+  // native SOL, with the network fee excluded so it is not counted as volume
+  const SOL = 'So11111111111111111111111111111111111111112';
+  const solDelta = ((tx.meta.postBalances[0] || 0) - (tx.meta.preBalances[0] || 0) + (tx.meta.fee || 0)) / 1e9;
+  if (solDelta < 0) spent[SOL] = (spent[SOL] || 0) - solDelta;
+  if (solDelta > 0) received[SOL] = (received[SOL] || 0) + solDelta;
+
+  // the fee shows as a balance increase on one of this site's fee accounts
+  let feePaid = null;
+  const feeAccounts = Object.values(SWAP_FEE_ACCOUNTS);
+  const preIdx = owned(tx.meta.preTokenBalances, null), postIdx = owned(tx.meta.postTokenBalances, null);
+  for (const r of tx.meta.postTokenBalances || []) {
+    if (feeAccounts.indexOf(keys[r.accountIndex]) < 0) continue;
+    const delta = postIdx[r.accountIndex] - (preIdx[r.accountIndex] || 0n);
+    if (delta > 0n) feePaid = { mint: r.mint, amount: ui(delta, r.mint) };
   }
 
-  // native SOL, with the network fee excluded so it is not counted as volume
-  const solDelta = ((tx.meta.postBalances[0] || 0) - (tx.meta.preBalances[0] || 0) + (tx.meta.fee || 0)) / 1e9;
-  if (solDelta < 0) spent['So11111111111111111111111111111111111111112'] = -solDelta;
+  return { ok: true, wallet: wallet, spent: spent, received: received, feePaid: feePaid, ts: (tx.blockTime || 0) * 1000 };
+}
 
-  const mints = Object.keys(spent);
+/// What the wallet gave up in a swap, in dollars — the largest priced leg.
+async function swapValueUsd(env, signature, wallet) {
+  const s = await inspectSwap(env, signature);
+  if (!s.ok) return s;
+  if (s.wallet !== wallet) return { ok: false, error: 'that swap was not signed by your wallet' };
+  const mints = Object.keys(s.spent);
   if (!mints.length) return { ok: false, error: 'no swap found in that transaction' };
 
-  const prices = await jupPrices(mints);
+  const prices = await jupPrices(env, mints);
   let best = 0;
   for (const mint of mints) {
     const p = prices[mint] && Number(prices[mint].usdPrice);
     if (!p) continue;
-    best = Math.max(best, spent[mint] * p);
+    best = Math.max(best, s.spent[mint] * p);
   }
   if (!best) return { ok: false, error: 'could not value that swap' };
   return { ok: true, usd: best };
@@ -1073,6 +1131,118 @@ async function rpcCall(env, method, params) {
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || 'rpc error');
   return data.result;
+}
+
+/// Every fungible token a wallet holds, with a dollar value, largest first — so
+/// the swap can start from what someone owns rather than a search box. Reads
+/// both token programs: the balance line used to look only under the classic
+/// one, so a Token-2022 token like PYUSD never showed a balance at all.
+async function walletHoldings(env, wallet) {
+  const SOL = 'So11111111111111111111111111111111111111112';
+  const byMint = {};
+  for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    const res = await rpcCall(env, 'getTokenAccountsByOwner',
+      [wallet, { programId: programId }, { encoding: 'jsonParsed' }]);
+    for (const item of (res && res.value) || []) {
+      const info = item.account.data.parsed.info;
+      const t = info.tokenAmount;
+      if (t.amount === '0') continue;
+      if (t.amount === '1' && t.decimals === 0) continue; // the shape of an NFT
+      // wrapped SOL is left out: swaps spend native SOL, and showing both would
+      // count the same money twice
+      if (info.mint === SOL) continue;
+      const cur = byMint[info.mint] || { mint: info.mint, decimals: t.decimals, raw: 0n, programId: programId };
+      cur.raw += BigInt(t.amount);
+      byMint[info.mint] = cur;
+    }
+  }
+  const lamports = await rpcCall(env, 'getBalance', [wallet]);
+  const native = (lamports && lamports.value) || 0;
+
+  const list = Object.values(byMint);
+  if (native > 0) list.unshift({ mint: SOL, decimals: 9, raw: BigInt(native), programId: null });
+  for (const t of list) t.amount = Number(t.raw) / Math.pow(10, t.decimals);
+
+  // prices in batches of 50; a wallet full of airdropped spam is capped rather
+  // than allowed to cost dozens of calls
+  const priced = list.slice(0, 200);
+  const prices = {};
+  for (let i = 0; i < priced.length; i += 50) {
+    Object.assign(prices, await jupPrices(env, priced.slice(i, i + 50).map(function (t) { return t.mint; })));
+  }
+  for (const t of priced) {
+    const p = prices[t.mint] && Number(prices[t.mint].usdPrice);
+    t.price = p || null;
+    t.usd = p ? t.amount * p : null;
+  }
+  priced.sort(function (a, b) { return (b.usd || 0) - (a.usd || 0); });
+
+  // names and icons for the first 100, which is the most the lookup takes
+  const top = priced.slice(0, 100);
+  const meta = {};
+  if (top.length) {
+    const res = await jupFetch(env, '/tokens/v2/search?query=' + top.map(function (t) { return t.mint; }).join(','));
+    const found = res.ok ? await res.json().catch(function () { return []; }) : [];
+    for (const m of Array.isArray(found) ? found : []) meta[m.id] = m;
+  }
+
+  let totalUsd = 0;
+  const tokens = top.map(function (t) {
+    const m = meta[t.mint] || {};
+    if (t.usd) totalUsd += t.usd;
+    return {
+      mint: t.mint,
+      symbol: m.symbol || (t.mint === SOL ? 'SOL' : t.mint.slice(0, 4) + '…'),
+      name: m.name || '',
+      icon: m.icon || null,
+      decimals: t.decimals,
+      verified: !!m.isVerified,
+      amount: t.amount,
+      price: t.price,
+      usd: t.usd === null ? null : Math.round(t.usd * 100) / 100
+    };
+  });
+  return { wallet: wallet, tokens: tokens, totalUsd: Math.round(totalUsd * 100) / 100, more: Math.max(0, list.length - tokens.length) };
+}
+
+/// Stores one swap for the wallet's history, valued and named at the time it
+/// happened. Anyone may report a signature, because nothing about it is taken
+/// on trust: the wallet, the tokens, the amounts and whether the fee was paid
+/// all come from the chain.
+async function recordSwap(env, signature) {
+  const s = await inspectSwap(env, signature);
+  if (!s.ok) return s;
+  const spent = Object.keys(s.spent), received = Object.keys(s.received);
+  if (!spent.length || !received.length) return { ok: false, error: 'no swap found in that transaction' };
+
+  const prices = await jupPrices(env, spent.concat(received));
+  const price = function (m) { return (prices[m] && Number(prices[m].usdPrice)) || 0; };
+  const biggest = function (legs) {
+    return Object.keys(legs).sort(function (a, b) { return legs[b] * price(b) - legs[a] * price(a); })[0];
+  };
+  const inMint = biggest(s.spent), outMint = biggest(s.received);
+  const usd = s.spent[inMint] * price(inMint) || s.received[outMint] * price(outMint) || null;
+
+  const symbols = {};
+  try {
+    const res = await jupFetch(env, '/tokens/v2/search?query=' + inMint + ',' + outMint);
+    for (const m of (res.ok ? await res.json() : []) || []) symbols[m.id] = m.symbol;
+  } catch (e) { /* the mint is still stored; a symbol is only a label */ }
+
+  const row = {
+    signature: signature, wallet: s.wallet,
+    in_mint: inMint, in_symbol: symbols[inMint] || null, in_amount: s.spent[inMint],
+    out_mint: outMint, out_symbol: symbols[outMint] || null, out_amount: s.received[outMint],
+    usd: usd === null ? null : Math.round(usd * 100) / 100,
+    fee_mint: s.feePaid ? s.feePaid.mint : null, fee_amount: s.feePaid ? s.feePaid.amount : null,
+    ts: s.ts || Date.now()
+  };
+  await env.DB.prepare(
+    'INSERT INTO swaps (signature, wallet, in_mint, in_symbol, in_amount, out_mint, out_symbol, out_amount, usd, fee_mint, fee_amount, ts) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
+  ).bind(row.signature, row.wallet, row.in_mint, row.in_symbol, row.in_amount, row.out_mint, row.out_symbol,
+    row.out_amount, row.usd, row.fee_mint, row.fee_amount, row.ts).run();
+  return { ok: true, swap: row };
 }
 
 async function scanWallet(env, wallet) {
@@ -1124,7 +1294,7 @@ async function scanWallet(env, wallet) {
 
   let prices = {};
   if (mints.length) {
-    try { prices = await jupPrices(mints.slice(0, 50)); } catch (e) { /* unpriced is handled below */ }
+    try { prices = await jupPrices(env, mints.slice(0, 50)); } catch (e) { /* unpriced is handled below */ }
   }
 
   let emptyRent = 0;
@@ -1764,6 +1934,8 @@ export default {
           path === '/api/swap/earned' || path === '/api/swap/search' ||
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
           path === '/api/cleanup/scan' ||
+          path === '/api/swap/holdings' || path === '/api/swap/record' ||
+          path === '/api/swap/history' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -2179,7 +2351,7 @@ export default {
       if (path === '/api/swap/search' && request.method === 'GET') {
         const q = String(url.searchParams.get('q') || '').trim().slice(0, 80);
         if (q.length < 2) return json(request, env, { tokens: [] });
-        const res = await fetch(JUP + '/tokens/v2/search?query=' + encodeURIComponent(q));
+        const res = await jupFetch(env, '/tokens/v2/search?query=' + encodeURIComponent(q));
         if (!res.ok) return json(request, env, { tokens: [] });
         const list = await res.json().catch(function () { return []; });
 
@@ -2212,7 +2384,7 @@ export default {
         const ids = String(url.searchParams.get('ids') || '').split(',')
           .filter(isWallet).slice(0, 10);
         if (!ids.length) return json(request, env, { prices: {} });
-        const out = await jupPrices(ids);
+        const out = await jupPrices(env, ids);
         const prices = {};
         for (const [mint, v] of Object.entries(out || {})) {
           if (v && v.usdPrice) prices[mint] = Number(v.usdPrice);
@@ -2265,6 +2437,70 @@ export default {
       }
 
       // ── public: swap ──
+      // Each call costs a few Helius and Jupiter requests, so the same guards
+      // as the cleanup scan: a short per-wallet cache and a global hourly ceiling.
+      if (path === '/api/swap/holdings' && request.method === 'GET') {
+        const who = url.searchParams.get('wallet');
+        if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
+        if (!env.HELIUS_API_KEY) return json(request, env, { error: 'unavailable' }, 503);
+
+        const cache = caches.default;
+        const cacheKey = new Request(
+          new URL('/api/swap/holdings?v=' + BUILD + '&wallet=' + who, url.origin).toString(), request);
+        // after a swap the page asks for fresh numbers; the per-IP limit still applies
+        if (url.searchParams.get('fresh') !== '1') {
+          const hit = await cache.match(cacheKey);
+          if (hit) return json(request, env, await hit.json());
+        }
+        if (await rateLimited(request, env, 'holdings:global', null)) {
+          return json(request, env, { error: 'balances are busy right now — try again in a moment' }, 503);
+        }
+        try {
+          const res = json(request, env, await walletHoldings(env, who));
+          const cached = new Response(res.body, res);
+          cached.headers.set('Cache-Control', 'public, max-age=30');
+          ctx.waitUntil(cache.put(cacheKey, cached.clone()));
+          return cached;
+        } catch (e) {
+          await logError(env, 'swap.holdings', (e && e.message) || e);
+          return json(request, env, { error: 'could not read that wallet just now' }, 502);
+        }
+      }
+
+      if (path === '/api/swap/record' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const signature = String(body.signature || '').trim();
+        if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(signature)) return json(request, env, { error: 'which swap?' }, 400);
+        const seen = await env.DB.prepare('SELECT signature FROM swaps WHERE signature = ?').bind(signature).first();
+        if (seen) return json(request, env, { ok: true, already: true });
+        if (!env.HELIUS_API_KEY) return json(request, env, { error: 'unavailable' }, 503);
+        const r = await recordSwap(env, signature);
+        if (!r.ok) return json(request, env, { error: r.error }, /not found yet/.test(r.error) ? 404 : 400);
+        return json(request, env, { ok: true, swap: r.swap });
+      }
+
+      if (path === '/api/swap/history' && request.method === 'GET') {
+        const who = url.searchParams.get('wallet');
+        if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
+        // swaps that earned points before history existed are filled in a few
+        // at a time, so nobody's first look at it comes back empty
+        if (env.HELIUS_API_KEY) {
+          const missing = await env.DB.prepare(
+            'SELECT a.signature FROM swap_awards a LEFT JOIN swaps s ON s.signature = a.signature ' +
+            'WHERE a.wallet = ? AND s.signature IS NULL ORDER BY a.ts DESC LIMIT 5'
+          ).bind(who).all();
+          for (const m of missing.results || []) {
+            await recordSwap(env, m.signature).catch(function () {});
+          }
+        }
+        const rows = await env.DB.prepare(
+          'SELECT s.signature, s.in_mint, s.in_symbol, s.in_amount, s.out_mint, s.out_symbol, s.out_amount, ' +
+          's.usd, s.ts, a.points FROM swaps s LEFT JOIN swap_awards a ON a.signature = s.signature ' +
+          'WHERE s.wallet = ? ORDER BY s.ts DESC LIMIT 25'
+        ).bind(who).all();
+        return json(request, env, { swaps: rows.results || [] });
+      }
+
       if (path === '/api/swap/tokens' && request.method === 'GET') {
         return json(request, env, { tokens: SWAP_TOKENS, feeBps: SWAP_FEE_BPS });
       }
@@ -2282,14 +2518,14 @@ export default {
           return json(request, env, { error: 'enter an amount' }, 400);
         }
 
-        const feeAccount = swapFeeAccount(inputMint, outputMint);
+        const fee = swapFee(inputMint, outputMint);
         const q = new URLSearchParams({
           inputMint: inputMint, outputMint: outputMint,
           amount: String(amount), slippageBps: String(slippageBps)
         });
-        if (feeAccount) q.set('platformFeeBps', String(SWAP_FEE_BPS));
+        if (fee) q.set('platformFeeBps', String(SWAP_FEE_BPS));
 
-        const res = await fetch(JUP + '/swap/v1/quote?' + q.toString());
+        const res = await jupFetch(env, '/swap/v1/quote?' + q.toString());
         if (!res.ok) {
           const body = await res.text();
           await logError(env, 'swap.quote', res.status + ' ' + body.slice(0, 200));
@@ -2297,7 +2533,9 @@ export default {
         }
         const quote = await res.json();
         if (quote.error) return json(request, env, { error: quote.error }, 400);
-        return json(request, env, { quote: quote, feeBps: feeAccount ? SWAP_FEE_BPS : 0 });
+        // feeMint says which token the fee is really taken in: the quote always
+        // prices it in the output token, even when it comes out of the input
+        return json(request, env, { quote: quote, feeBps: fee ? SWAP_FEE_BPS : 0, feeMint: fee ? fee.mint : null });
       }
 
       if (path === '/api/swap/build' && request.method === 'POST') {
@@ -2308,7 +2546,7 @@ export default {
           return json(request, env, { error: 'missing quote or wallet' }, 400);
         }
         // Rebuild the fee account here rather than trusting the client with it.
-        const feeAccount = swapFeeAccount(quote.inputMint, quote.outputMint);
+        const fee = swapFee(quote.inputMint, quote.outputMint);
 
         const payload = {
           quoteResponse: quote,
@@ -2317,9 +2555,9 @@ export default {
           dynamicComputeUnitLimit: true,
           dynamicSlippage: false
         };
-        if (feeAccount) payload.feeAccount = feeAccount;
+        if (fee) payload.feeAccount = fee.account;
 
-        const res = await fetch(JUP + '/swap/v1/swap', {
+        const res = await jupFetch(env, '/swap/v1/swap', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
