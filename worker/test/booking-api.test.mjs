@@ -340,11 +340,14 @@ section('old abandoned holds cost nothing');
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
   advance(49 * HOUR);
   await slots(env);
-  const n = chain.lookups;
+  // counted for this booking's own reference: the scheduled job also reads the
+  // fee accounts for the swap leaderboard, which is not what is being tested here
+  const ref = h.body.reference;
+  const n = chain.lookupsFor[ref] || 0;
   eq('an expired hold older than two days is not looked up again',
     (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'expired');
   await runScheduled(env);
-  eq('by the page or by the sweep', chain.lookups, n);
+  eq('by the page or by the sweep', chain.lookupsFor[ref] || 0, n);
   setClock(START);
 }
 

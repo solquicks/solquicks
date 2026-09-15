@@ -59,7 +59,7 @@ function d1(db) {
 export const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
 export const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const chain = {
-  txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, alerts: [], inScheduled: false,
+  txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, lookupsFor: {}, alerts: [], inScheduled: false,
   rpc: {},        // extra RPC methods a test answers: { method: (params) => result }
   jup: null,      // a test's Jupiter stand-in: (url, init) => body object, or a Response
   rpcCalls: [], jupCalls: []
@@ -90,7 +90,11 @@ globalThis.fetch = async (url, init) => {
     chain.rpcCalls.push(method);
     let result = null;
     if (method === 'getTransaction') result = chain.txs.get(params[0]) || null;
-    else if (method === 'getSignaturesForAddress') { chain.lookups++; result = chain.byRef.get(params[0]) || []; }
+    else if (method === 'getSignaturesForAddress') {
+      chain.lookups++;
+      chain.lookupsFor[params[0]] = (chain.lookupsFor[params[0]] || 0) + 1;
+      result = chain.byRef.get(params[0]) || [];
+    }
     else if (chain.rpc[method]) result = chain.rpc[method](params);
     // the scheduled handler also refreshes analytics and checks health; those
     // calls get an empty answer rather than counting as a stray request
