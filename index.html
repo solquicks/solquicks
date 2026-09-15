@@ -4292,8 +4292,29 @@
       });
     }
 
+    /// A plain SOL transfer, written out by hand. web3.js 1.98's browser build
+    /// encodes the u64 lamport amount in SystemProgram.transfer through a helper
+    /// that reaches for Node's global Buffer, which browsers do not have — so it
+    /// threw "Buffer is not defined" and no cleanup could ever be sent.
+    /// Layout: u32 instruction index 2 (Transfer), then u64 lamports, little-endian.
+    function systemTransferIx(from, to, lamports) {
+      const { PublicKey, TransactionInstruction } = w3();
+      const data = new Uint8Array(12);
+      const view = new DataView(data.buffer);
+      view.setUint32(0, 2, true);
+      view.setBigUint64(4, BigInt(lamports), true);
+      return new TransactionInstruction({
+        programId: new PublicKey('11111111111111111111111111111111'),
+        keys: [
+          { pubkey: new PublicKey(from), isSigner: true, isWritable: true },
+          { pubkey: new PublicKey(to), isSigner: false, isWritable: true }
+        ],
+        data: data
+      });
+    }
+
     async function sendCleanupBatch(instructions, feeLamports) {
-      const { PublicKey, Transaction, SystemProgram } = w3();
+      const { PublicKey, Transaction } = w3();
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
       const connection = rpc();
@@ -4304,11 +4325,7 @@
       // the fee rides in the same transaction as the closes that fund it, so it
       // is impossible to take a cut of rent that was never reclaimed
       if (feeLamports > 0 && clScan.treasury) {
-        tx.add(SystemProgram.transfer({
-          fromPubkey: from,
-          toPubkey: new PublicKey(clScan.treasury),
-          lamports: feeLamports
-        }));
+        tx.add(systemTransferIx(Wallet.pubkey, clScan.treasury, feeLamports));
       }
       tx.feePayer = from;
       const latest = await connection.getLatestBlockhash('confirmed');
