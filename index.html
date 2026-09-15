@@ -3862,35 +3862,30 @@
       ];
       if (reference) keys.push({ pubkey: new PublicKey(reference), isSigner: false, isWritable: false });
 
-      const tx = new Transaction().add(new TransactionInstruction({
+      return sendInstructions([new TransactionInstruction({
         programId: new PublicKey(TOKEN_PROGRAM), keys: keys, data: data
-      }));
-      tx.feePayer = from;
-      const latest = await connection.getLatestBlockhash('confirmed');
-      tx.recentBlockhash = latest.blockhash;
+      })]);
+    }
 
-      let signature;
-      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
-        const res = await provider.w.signAndSendTransaction(tx);
-        signature = signatureOf(res.signature || res);
-      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
-        const signed = await provider.w.signTransaction(tx);
-        signature = await connection.sendRawTransaction(signed.serialize());
-      } else if (provider.kind === 'standard') {
-        const feat = provider.w.features['solana:signAndSendTransaction'];
-        if (!feat) throw new Error('This wallet cannot send transactions.');
-        const out = await feat.signAndSendTransaction({
-          account: provider.w.accounts[0],
-          chain: 'solana:mainnet',
-          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
-        });
-        signature = signatureOf(out[0].signature);
-      } else {
-        throw new Error('This wallet cannot send transactions.');
-      }
-
-      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
-      return signature;
+    /// Turns the page's own instructions into a versioned transaction and sends
+    /// it through sendVersionedTx — the path swaps take, which already works with
+    /// the wallets people use here. Cleanup and USDC payments used to hand wallets
+    /// a legacy Transaction object through a separate copy of the send logic, and
+    /// cleanup still failed with "Buffer is not defined" after the page's own use
+    /// of Buffer was removed. One format and one send path takes that difference away.
+    async function sendInstructions(instructions) {
+      const { PublicKey, TransactionMessage, VersionedTransaction } = w3();
+      if (!Wallet.active) throw new Error('Connect a wallet first.');
+      const latest = await rpc().getLatestBlockhash('confirmed');
+      const message = new TransactionMessage({
+        payerKey: new PublicKey(Wallet.pubkey),
+        recentBlockhash: latest.blockhash,
+        instructions: instructions
+      }).compileToV0Message();
+      const bytes = new VersionedTransaction(message).serialize();
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return sendVersionedTx(btoa(binary), latest.lastValidBlockHeight);
     }
 
     /// web3.js stamps every request with a `solana-client` header. The RPC proxy
@@ -4314,45 +4309,13 @@
     }
 
     async function sendCleanupBatch(instructions, feeLamports) {
-      const { PublicKey, Transaction } = w3();
-      const provider = Wallet.active;
-      if (!provider) throw new Error('Connect a wallet first.');
-      const connection = rpc();
-      const from = new PublicKey(Wallet.pubkey);
-
-      const tx = new Transaction();
-      instructions.forEach(function (ix) { tx.add(ix); });
+      const all = instructions.slice();
       // the fee rides in the same transaction as the closes that fund it, so it
       // is impossible to take a cut of rent that was never reclaimed
       if (feeLamports > 0 && clScan.treasury) {
-        tx.add(systemTransferIx(Wallet.pubkey, clScan.treasury, feeLamports));
+        all.push(systemTransferIx(Wallet.pubkey, clScan.treasury, feeLamports));
       }
-      tx.feePayer = from;
-      const latest = await connection.getLatestBlockhash('confirmed');
-      tx.recentBlockhash = latest.blockhash;
-
-      let signature;
-      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
-        const res = await provider.w.signAndSendTransaction(tx);
-        signature = signatureOf(res.signature || res);
-      } else if (provider.kind === 'injected' && provider.w.signTransaction) {
-        const signed = await provider.w.signTransaction(tx);
-        signature = await connection.sendRawTransaction(signed.serialize());
-      } else if (provider.kind === 'standard') {
-        const feat = provider.w.features['solana:signAndSendTransaction'];
-        if (!feat) throw new Error('This wallet cannot send transactions.');
-        const out = await feat.signAndSendTransaction({
-          account: provider.w.accounts[0],
-          chain: 'solana:mainnet',
-          transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
-        });
-        signature = signatureOf(out[0].signature);
-      } else {
-        throw new Error('This wallet cannot send transactions.');
-      }
-
-      await confirmSignature(connection, signature, latest.lastValidBlockHeight);
-      return signature;
+      return sendInstructions(all);
     }
 
     /// Points are worked out server-side from the instructions in the confirmed
@@ -4370,6 +4333,22 @@
         else if (msg && r.cappedOut) msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Daily points cap reached.</span>';
         renderLeaderboard();
       } catch (e) { /* the close succeeded; points are a bonus */ }
+    }
+
+    /// A cleanup that fails in someone's wallet cannot be reproduced from here, so
+    /// the error and where it was thrown are logged. "Buffer is not defined" had
+    /// to be chased blind; the stack would have named the file at once.
+    function reportCleanupFailure(e) {
+      const m = String((e && e.message) || e || '');
+      if (/reject|denied|cancell?ed/i.test(m)) return;
+      const at = String((e && e.stack) || '').split('\n').slice(1, 3).map(function (l) { return l.trim(); }).join(' < ');
+      try {
+        fetch(POINTS_API + '/api/swap/failed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: ('cleanup: ' + m + (at ? ' @ ' + at : '')).slice(0, 300), wallet: Wallet.pubkey || null })
+        });
+      } catch (err) { /* never let reporting break the page */ }
     }
 
     async function closeEmpty() {
@@ -4403,6 +4382,7 @@
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = (done ? 'Closed ' + done + ' before stopping. ' : '') + friendlySwapError(e);
+        reportCleanupFailure(e);
         btn.disabled = false;
         btn.textContent = 'Try again';
       }
@@ -4431,6 +4411,7 @@
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = friendlySwapError(e);
+        reportCleanupFailure(e);
         btn.disabled = false;
       }
     }
@@ -4468,6 +4449,7 @@
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = (done ? 'Finished ' + done + ' before stopping. ' : '') + friendlySwapError(e);
+        reportCleanupFailure(e);
         btn.disabled = false;
         btn.textContent = 'Burn and close';
       }
