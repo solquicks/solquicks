@@ -270,18 +270,10 @@ signing; swap history (read off the chain, with points, older swaps backfilled).
 Hiding spam tokens (#6) was skipped by choice, so airdropped junk appears at the
 bottom of "Your tokens", marked unverified.
 
-**19. Limit orders and recurring buys — PARKED 2026-09-15 (your decision).**
-Researched against Jupiter's live docs and API before building:
-- *Trigger v2* (current; limit orders and recurring buys in one API): **no
-  integrator fee** — Jupiter's docs say "Not currently, and there is no timeline
-  for adding them" — and **custodial**: each wallet's tokens move into a vault
-  managed by Privy for Jupiter. Needs the API key (#17) plus a sign-in step.
-- *Trigger v1* (legacy limit orders): still live and removed from Jupiter's docs.
-  Builds orders with a fee account attached, but collection happens when a
-  keeper fills the order, which cannot be simulated — only a real filled order
-  would prove it, and a wrong fee setting could stop orders filling. Recurring
-  v1 no longer answers. $5 minimum.
-Revisit when Jupiter adds integrator fees to Trigger v2.
+**19. Limit orders and recurring buys — DROPPED 2026-09-15 (your decision).**
+Jupiter pays sites nothing on them (Trigger v2 has no integrator fee) and holds
+users' tokens in its own vault. Titan's order API does allow a platform fee, but
+it is custodial in the same way and needs partner onboarding.
 
 **20. Round four — shipped 2026-09-15** (ideas taken from Titan while its API is
 pending): Moon Rangers pay half the fee (10 bps), checked against the signing
@@ -291,6 +283,26 @@ token's liquidity; token details (market cap, liquidity, holders, 24h move);
 share links and receipt images; a weekly volume leaderboard paying 500 / 250 / 100
 Fox Points to the top three wallets with at least $25 swapped (Monday to Monday
 UTC). Prize amounts and the minimum are constants in the worker.
+
+**22. Spam hidden in the token picker — shipped 2026-09-15.** "Your tokens" hides a
+token only when it is unverified *and* worth under a cent (no price counts as no
+value). Unverified tokens with a real price stay. "Show N unverified tokens with
+no value" brings them back, and search still finds everything.
+
+**23. Browser test — added 2026-09-15.** `test/browser/site.test.mjs` loads the
+page in Chromium with a stand-in wallet and stand-in servers and clicks through
+it: every tab, a swap quote, spam hiding, a normal swap and a bot-protected one,
+settings surviving a reload, no page errors and nothing blocked by the page's
+security policy. Runs in the Site CI job. Checked by breaking the site three ways
+(Sender removed from the security policy, the spam rule disabled, a script error
+in the swap tab); each one failed the test.
+
+**24. Titan — how to get access (researched 2026-09-15).** API tokens come from
+Triton or QuickNode, not Titan directly. Charging our fee through Titan needs the
+Titan team to approve the fee account ("Only validated users can specify a
+feeAccount"). The token must stay server-side, so it would go in the worker like
+the Jupiter key. The free DART endpoint needs no key but covers only 20 major
+pairs at 1 request a second, with no fee of ours.
 
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with

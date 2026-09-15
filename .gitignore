@@ -18,3 +18,6 @@ program/migration/upload-state.json
 
 # generated at cutover from live D1 data, never committed
 program/migration/settle.sql
+
+# written by a failed browser test run
+test/browser/failure.png

@@ -1,0 +1,294 @@
+// The site in a real browser: Chromium loads index.html from a local server and
+// is clicked through the way a visitor would. The worker, the RPC proxy and
+// Helius Sender are stood in for at the network layer, and a Wallet Standard
+// wallet is registered that signs nothing real. web3.js still loads from the
+// CDN with its integrity hash, and the page's own Content-Security-Policy is in
+// force, so a blocked connection fails here the way it would for a visitor.
+//
+// Run: cd test/browser && npm ci && npx playwright install chromium && npm test
+
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { chromium } from 'playwright';
+
+const ROOT = path.resolve(new URL('../../', import.meta.url).pathname);
+const WORKER = 'https://solquicks-points.solquicks-45c.workers.dev';
+const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
+const SENDER = 'https://sender.helius-rpc.com/';
+const WALLET = '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd';
+const SOL = 'So11111111111111111111111111111111111111112';
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+// ── assertions ───────────────────────────────────────────────────────────────
+let pass = 0, fail = 0;
+const ok = (name, cond, detail = '') => {
+  if (cond) { pass++; console.log('PASS ' + name); }
+  else { fail++; console.log('FAIL ' + name + (detail ? '  — ' + detail : '')); }
+};
+const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+const section = (s) => console.log('\n── ' + s + ' ──');
+
+// ── the site, served as files ────────────────────────────────────────────────
+const TYPES = { '.html': 'text/html', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const server = http.createServer((req, res) => {
+  const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);
+  if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
+  fs.createReadStream(file).pipe(res);
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const SITE = 'http://127.0.0.1:' + server.address().port + '/';
+
+// ── stand-ins ────────────────────────────────────────────────────────────────
+const net = { worker: [], rpc: [], sender: [], built: null };
+
+const HOLDINGS = [
+  { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9, verified: true, amount: 2, price: 100, usd: 200 },
+  { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6, verified: true, amount: 50, price: 1, usd: 50 },
+  // unverified, but it trades: must stay visible
+  { mint: 'HYPEaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'HYPE', name: 'Unverified with a price', decimals: 6, verified: false, amount: 3, price: 4, usd: 12 },
+  // airdropped junk: no price at all, and a price worth a fraction of a cent
+  { mint: 'SPAMaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'CLAIMNOW', name: 'Visit claim-site', decimals: 6, verified: false, amount: 1000, price: null, usd: null },
+  { mint: 'DUSTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'DUST', name: 'Worth almost nothing', decimals: 6, verified: false, amount: 5, price: 0.0001, usd: 0.0005 }
+];
+
+function workerAnswer(p) {
+  if (p === '/api/swap/tokens') return { tokens: [
+    { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9 },
+    { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
+  ] };
+  if (p === '/api/swap/holdings') return { wallet: WALLET, tokens: HOLDINGS, totalUsd: 262, more: 0 };
+  if (p === '/api/swap/quote') return {
+    quote: {
+      inputMint: SOL, outputMint: USDC, inAmount: '1000000000', outAmount: '99800000', otherAmountThreshold: '99300000',
+      priceImpactPct: '0.0001', swapUsdValue: '100',
+      platformFee: { amount: '200000', feeBps: 20 },
+      routePlan: [{ percent: 100, swapInfo: { label: 'Meteora DLMM' } }]
+    },
+    feeBps: 20, fullFeeBps: 20, holder: false, feeMint: SOL, slippageBps: 50, autoSlippage: true
+  };
+  if (p === '/api/swap/build') return { swapTransaction: net.built, lastValidBlockHeight: 1e12 };
+  if (p === '/api/swap/history') return { swaps: [], savedUsd: 0, discountedSwaps: 0 };
+  return {};
+}
+
+function rpcAnswer(method) {
+  const ctx = { slot: 1 };
+  switch (method) {
+    case 'getBalance': return { context: ctx, value: 2e9 };
+    case 'getParsedTokenAccountsByOwner':
+    case 'getTokenAccountsByOwner': return { context: ctx, value: [] };
+    case 'getLatestBlockhash': return { context: ctx, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1e12 } };
+    case 'getSignatureStatuses': return { context: ctx, value: [{ slot: 1, confirmations: null, err: null, confirmationStatus: 'confirmed' }] };
+    case 'getBlockHeight': return 1;
+    case 'searchAssets': return { total: 0, items: [] };
+    default: return null;
+  }
+}
+
+const json = (route, body) => route.fulfill({
+  status: 200, contentType: 'application/json',
+  headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' },
+  body: JSON.stringify(body)
+});
+
+async function standIns(context) {
+  await context.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.startsWith(SITE) || url.startsWith('https://cdn.jsdelivr.net/')) return route.continue();
+    if (req.method() === 'OPTIONS') return json(route, {});
+    if (url.startsWith(WORKER)) {
+      const p = new URL(url).pathname;
+      net.worker.push(p);
+      return json(route, workerAnswer(p));
+    }
+    if (url.startsWith(RPC)) {
+      const body = JSON.parse(req.postData() || '{}');
+      const calls = Array.isArray(body) ? body : [body];
+      const out = calls.map((c) => { net.rpc.push(c.method); return { jsonrpc: '2.0', id: c.id, result: rpcAnswer(c.method) }; });
+      return json(route, Array.isArray(body) ? out : out[0]);
+    }
+    if (url.startsWith(SENDER)) {
+      net.sender.push({ url, body: JSON.parse(req.postData()) });
+      return json(route, { jsonrpc: '2.0', id: '1', result: 'accepted' });
+    }
+    return route.abort();   // fonts, images, embeds: not what this test is about
+  });
+}
+
+// A Wallet Standard wallet that answers like a real one and signs nothing real.
+function testWallet(address) {
+  window.__wallet = { signAndSend: 0, signOnly: 0 };
+  const account = {
+    address, publicKey: new Uint8Array(32), chains: ['solana:mainnet'], label: 'Test',
+    features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
+  };
+  const wallet = {
+    version: '1.0.0', name: 'Test Wallet', chains: ['solana:mainnet'], accounts: [account],
+    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+    features: {
+      'standard:connect': { version: '1.0.0', connect: async () => ({ accounts: [account] }) },
+      'standard:disconnect': { version: '1.0.0', disconnect: async () => {} },
+      'standard:events': { version: '1.0.0', on: () => () => {} },
+      'solana:signAndSendTransaction': {
+        version: '1.0.0', supportedTransactionVersions: ['legacy', 0],
+        signAndSendTransaction: async (...inputs) => {
+          window.__wallet.signAndSend++;
+          return inputs.map(() => ({ signature: new Uint8Array(64).fill(1) }));
+        }
+      },
+      'solana:signTransaction': {
+        version: '1.0.0', supportedTransactionVersions: ['legacy', 0],
+        signTransaction: async (...inputs) => {
+          window.__wallet.signOnly++;
+          return inputs.map((i) => {
+            const signed = new Uint8Array(i.transaction);
+            signed.set(new Uint8Array(64).fill(2), 1);   // one signature, right after its count byte
+            return { signedTransaction: signed };
+          });
+        }
+      },
+      'solana:signMessage': {
+        version: '1.0.0',
+        signMessage: async (...inputs) => inputs.map((i) => ({ signedMessage: i.message, signature: new Uint8Array(64).fill(3) }))
+      }
+    }
+  };
+  window.addEventListener('wallet-standard:app-ready', (e) => e.detail.register(wallet));
+}
+
+// ── run ──────────────────────────────────────────────────────────────────────
+const browser = await chromium.launch();
+const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+await standIns(context);
+await context.addInitScript(testWallet, WALLET);
+const page = await context.newPage();
+const pageErrors = [];
+page.on('pageerror', (e) => pageErrors.push(e.message));
+const cspBlocks = [];
+page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspBlocks.push(m.text()); });
+
+try {
+  section('the landing page');
+  await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+  eq('the tab title', await page.title(), '@solquicks | The Most Famous Fox');
+  eq('Calendly links to the booking page',
+    await page.locator('a.link-card', { hasText: 'Calendly' }).getAttribute('href'), 'https://calendly.com/solquicks/30min');
+  ok('WhatsApp is gone', !/whatsapp/i.test(await page.content()));
+
+  section('every tab opens');
+  const tabs = await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab));
+  ok('the menu lists the tabs', tabs.length >= 6, tabs.join(','));
+  for (const tab of tabs) {
+    await page.click('#nav-trigger');
+    await page.click('.nav-item[data-tab="' + tab + '"]');
+    ok('the ' + tab + ' tab shows its panel', await page.locator('#panel-' + tab).evaluate((p) => p.classList.contains('active')));
+  }
+
+  section('swap: quote');
+  await page.click('#nav-trigger');
+  await page.click('.nav-item[data-tab="swap"]');
+  await page.waitForFunction(() => document.getElementById('sw-in-token').textContent.trim() === 'SOL');
+  await page.click('#wallet-chip');
+  await page.click('.wm-option:has-text("Test Wallet")');
+  await page.waitForFunction((w) => typeof Wallet !== "undefined" && Wallet.pubkey === w, WALLET);
+  ok('the test wallet connects', true);
+  await page.waitForFunction(() => /Balance 2 SOL/.test(document.getElementById('sw-bal').textContent), null, { timeout: 10000 });
+  ok('the SOL balance is read from the chain', true);
+
+  await page.fill('#sw-in-amount', '1');
+  await page.waitForSelector('#sw-detail:not([hidden])', { timeout: 10000 });
+  ok('the fee line shows 0.2%', /0\.2%/.test(await page.textContent('#sw-fee')));
+  eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
+  ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
+  ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+
+  section('swap: token picker hides worthless spam');
+  await page.click('#sw-in-token');
+  await page.waitForSelector('.sw-result-sym');
+  const listed = async () => page.$$eval('#sw-results .sw-result-sym', (els) => els.map((e) => e.textContent.replace('✓', '').trim()));
+  let syms = await listed();
+  ok('verified holdings are listed', syms.includes('SOL') && syms.includes('USDC'), syms.join(','));
+  ok('an unverified token with a real price stays visible', syms.includes('HYPE'));
+  ok('an unverified token with no price is hidden', !syms.includes('CLAIMNOW'));
+  ok('an unverified token worth under a cent is hidden', !syms.includes('DUST'));
+  const toggle = page.locator('.sw-hidden-toggle');
+  eq('the hidden count is offered', (await toggle.textContent()).trim(), 'Show 2 unverified tokens with no value');
+  await toggle.click();
+  syms = await listed();
+  ok('showing them brings both back', syms.includes('CLAIMNOW') && syms.includes('DUST'));
+  eq('and the button now hides them', (await page.locator('.sw-hidden-toggle').textContent()).trim(), 'Hide 2 unverified tokens with no value');
+  await page.fill('#sw-search', '');
+  await page.evaluate(() => closeTokenPicker());
+
+  // what Jupiter hands back, in shape: a versioned transaction paid by this wallet
+  net.built = await page.evaluate((w) => {
+    const { PublicKey, TransactionMessage, VersionedTransaction } = solanaWeb3;
+    const msg = new TransactionMessage({
+      payerKey: new PublicKey(w), recentBlockhash: '11111111111111111111111111111111',
+      instructions: [systemTransferIx(w, 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp', 1000)]
+    }).compileToV0Message();
+    let bin = ''; for (const b of new VersionedTransaction(msg).serialize()) bin += String.fromCharCode(b);
+    return btoa(bin);
+  }, WALLET);
+
+  section('swap: normal send');
+  eq('bot protection starts off', await page.evaluate(() => swapProtect), false);
+  await page.click('#sw-go');
+  await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
+  ok('the success message appears', /Swapped\./.test(await page.textContent('#sw-msg')));
+  eq('the wallet was asked to sign and send once', await page.evaluate(() => __wallet.signAndSend), 1);
+  eq('nothing went to Sender', net.sender.length, 0);
+  await page.waitForFunction(() => true);
+  ok('the swap was reported for history', net.worker.includes('/api/swap/record'));
+
+  section('swap: bot protection');
+  await page.fill('#sw-in-amount', '1');
+  await page.waitForSelector('#sw-detail:not([hidden])', { timeout: 10000 });
+  await page.click('.sw-protect button[data-protect="on"]');
+  eq('the toggle turns on', await page.evaluate(() => localStorage.getItem('sq.swap.protect')), 'on');
+  await page.waitForFunction(() => !document.getElementById('sw-go').disabled);
+  await page.click('#sw-go');
+  await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
+  ok('the protected swap succeeds', /Swapped\./.test(await page.textContent('#sw-msg')));
+  eq('the wallet was asked only to sign', await page.evaluate(() => [__wallet.signOnly, __wallet.signAndSend].join('/')), '1/1');
+  ok('it went to Sender with mev-protect', net.sender.length >= 1 && /mev-protect=true/.test(net.sender[0].url),
+    'Sender requests: ' + net.sender.length + (cspBlocks.length ? '; CSP: ' + cspBlocks[0] : ''));
+  if (net.sender.length) {
+    const sent = net.sender[0].body;
+    eq('sent without preflight or Sender retries', JSON.stringify(sent.params[1]), JSON.stringify({ encoding: 'base64', skipPreflight: true, maxRetries: 0 }));
+    const tip = await page.evaluate((b64) => {
+      const tx = solanaWeb3.VersionedTransaction.deserialize(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+      const last = tx.message.compiledInstructions.at(-1);
+      const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+      const lamports = Number(new DataView(last.data.buffer, last.data.byteOffset).getBigUint64(4, true));
+      return { to: keys[last.accountKeyIndexes[1]], from: keys[last.accountKeyIndexes[0]], lamports, onList: SENDER_TIP_ACCOUNTS.includes(keys[last.accountKeyIndexes[1]]), signed: tx.signatures[0][0] === 2 };
+    }, sent.params[0]);
+    ok('the transaction carries a tip to a Helius tip account', tip.onList, JSON.stringify(tip));
+    eq('the tip is 5000 lamports', tip.lamports, 5000);
+    eq('paid by the connected wallet', tip.from, WALLET);
+    ok('what was sent is what the wallet signed', tip.signed);
+  }
+
+  section('settings survive a reload');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+  await page.click('#nav-trigger');
+  await page.click('.nav-item[data-tab="swap"]');
+  await page.waitForSelector('.sw-protect button.on', { state: 'attached' });
+  eq('bot protection is still on', (await page.textContent('.sw-protect button.on')).trim(), 'On');
+} catch (e) {
+  ok('the run finished without an exception', false, e.message.split('\n')[0]);
+  await page.screenshot({ path: path.join(ROOT, 'test/browser/failure.png') }).catch(() => {});
+}
+
+ok('no uncaught errors in the page', pageErrors.length === 0, pageErrors.join(' | '));
+ok('the Content-Security-Policy blocked nothing the site needs', cspBlocks.length === 0, cspBlocks.join(' | '));
+await browser.close();
+server.close();
+console.log(`\n${pass}/${pass + fail} passed`);
+process.exit(fail ? 1 : 0);

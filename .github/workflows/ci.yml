@@ -236,3 +236,15 @@ jobs:
             exit 1
           fi
           echo "No absolute local paths."
+
+      # Loads the page in Chromium and clicks through it the way a visitor would:
+      # every tab, a swap quote, spam hiding in the token picker, and a normal and
+      # a bot-protected swap with a stand-in wallet. The page's own security policy
+      # is in force, so a connection it blocks fails here too.
+      - name: Install the browser test
+        working-directory: test/browser
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Site in a real browser
+        working-directory: test/browser
+        run: npm test
