@@ -6351,7 +6351,7 @@
       list.innerHTML = adCard + d.types.map(function (t) {
         const label = t.mode === 'enquiry' ? 'Ask about a date'
           : t.mode === 'async' ? 'Order this' : 'Pick a time';
-        const meta = t.mode === 'enquiry' ? 'In person · flat fee'
+        const meta = t.mode === 'enquiry' ? 'In person · travel included'
           : t.mode === 'async' ? 'No calendar needed · made for you'
           : t.minutes + ' minutes · ' + (t.format || 'live');
         const yours = d.holder ? t.price * (1 - d.holderDiscountPct / 100) : t.price;
@@ -6543,7 +6543,7 @@
         '<div class="bk-tick">' + (isEnquiry ? '📬' : '🦊') + '</div>' +
         '<div class="bk-lead">' + (isEnquiry ? 'Enquiry sent' : 'Booked') + '</div>' +
         '<p class="bk-sub">' + (isEnquiry
-          ? 'I\'ll come back to you about dates, travel and the fee before anything is paid.'
+          ? 'I\'ll come back to you to agree the date and venue before anything is paid.'
           : 'Paid and in the diary. I\'ll be in touch to confirm the details.') + '</p>' +
         '<div class="bk-ref">' + escapeHtml(d.ref) + '</div>' +
         '<p class="bk-hint">Keep that reference.' +

@@ -489,7 +489,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-round4-c-9';
+const BUILD = 'mc-travel-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1598,7 +1598,7 @@ async function verifyInvoice(env, wallet, signature, minUsdc, purpose) {
 // Three booking modes, because they are genuinely different transactions:
 //   slot    — pick a time, pay now (Space, podcast, stream)
 //   async   — no calendar, pay now, delivered on a turnaround (custom content)
-//   enquiry — in-person work. Dates, travel and venue get agreed first, so
+//   enquiry — in-person work, travel included. Date and venue get agreed first, so
 //             nobody pays before there is something to pay for.
 
 const RUSH_HOURS = 48;
@@ -1676,11 +1676,11 @@ const BOOKING_TYPES = [
   },
   {
     id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1000,
-    blurb: 'In person only — MC an event, speak on stage, or host a fireside chat.',
+    blurb: 'I MC your event, speak on stage, or host a fireside chat.',
     includes: [
-      'Flat fee, in person',
       'MCing, speaking slots and fireside chats',
-      'Dates, travel and venue agreed before anything is paid'
+      'My travel is included in the fee',
+      'Date and venue agreed before anything is paid'
     ]
   }
 ];
