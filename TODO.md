@@ -297,12 +297,9 @@ security policy. Runs in the Site CI job. Checked by breaking the site three way
 (Sender removed from the security policy, the spam rule disabled, a script error
 in the swap tab); each one failed the test.
 
-**24. Titan — how to get access (researched 2026-09-15).** API tokens come from
-Triton or QuickNode, not Titan directly. Charging our fee through Titan needs the
-Titan team to approve the fee account ("Only validated users can specify a
-feeAccount"). The token must stay server-side, so it would go in the worker like
-the Jupiter key. The free DART endpoint needs no key but covers only 20 major
-pairs at 1 request a second, with no fee of ours.
+**24. Titan — DROPPED 2026-09-15 (your decision).** Charging our fee through Titan
+needs the Titan team to approve the fee account, on top of a paid Triton or
+QuickNode plan. Swaps stay on Jupiter, which pays the fee with no approval.
 
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
