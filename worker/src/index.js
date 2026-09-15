@@ -488,7 +488,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'jup-key-fallback-6';
+const BUILD = 'cleanup-fresh-7';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1259,8 +1259,10 @@ async function recordSwap(env, signature) {
 async function scanWallet(env, wallet) {
   const rows = [];
   for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    // "confirmed", not the RPC default "finalized": a close the page has just
+    // watched confirm would otherwise still be listed for several seconds
     const res = await rpcCall(env, 'getTokenAccountsByOwner',
-      [wallet, { programId: programId }, { encoding: 'jsonParsed' }]);
+      [wallet, { programId: programId }, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
     for (const item of (res && res.value) || []) {
       const info = item.account.data.parsed.info;
       const amountRaw = info.tokenAmount.amount;
@@ -2425,8 +2427,12 @@ export default {
         // computed for this caller. Replaying a stored response would hand back
         // whichever origin populated the cache - a miss from a foreign origin
         // would then be served, header-less, to the real site.
-        const hit = await cache.match(cacheKey);
-        if (hit) return json(request, env, await hit.json());
+        // After closing or burning, the page asks for a fresh read. Serving the
+        // cached one showed the accounts it had just closed as still there.
+        if (url.searchParams.get('fresh') !== '1') {
+          const hit = await cache.match(cacheKey);
+          if (hit) return json(request, env, await hit.json());
+        }
 
         if (await rateLimited(request, env, 'scan:global', null)) {
           return json(request, env, {

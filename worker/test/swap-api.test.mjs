@@ -235,4 +235,34 @@ section('points still check who signed the swap');
   eq('your own $150 swap earns 150 points', r2.body.awarded, 150);
 }
 
+section('cleanup scan after closing accounts');
+{
+  // Closing accounts, then re-scanning, used to show the closed accounts again:
+  // the scan was cached for 60 seconds and read the finalized chain state.
+  const owner = wallet(7);
+  let empties = 5;
+  const commitments = [];
+  chain.rpc.getTokenAccountsByOwner = ([who, filter, opts]) => {
+    commitments.push(opts && opts.commitment);
+    if (filter.programId === TOKEN22) return { value: [] };
+    return { value: Array.from({ length: empties }, (_, i) => ({
+      pubkey: 'empty' + i,
+      account: { lamports: 2039280, data: { parsed: { info: { mint: USDC, owner, state: 'initialized', tokenAmount: { amount: '0', decimals: 6, uiAmount: 0 } } } } }
+    })) };
+  };
+  chain.rpc.getAssetBatch = () => [];
+  const env = freshEnv();
+  // the scan also shows a SOL price, cached for five minutes; start with one cached
+  env._db.prepare("INSERT INTO kv_cache (k, n, ts) VALUES ('solusd', 1500000, ?)").run(Date.now());
+  const scan = (fresh) => call(env, 'GET', '/api/cleanup/scan?wallet=' + owner + (fresh ? '&fresh=1' : ''));
+  const emptyCount = (r) => (r.body.accounts || []).filter((a) => a.empty).length;
+
+  eq('a first scan finds the 5 empty accounts', emptyCount(await scan()), 5);
+  empties = 0; // the person closes them
+  eq('an ordinary re-scan within a minute is the cached one', emptyCount(await scan()), 5);
+  eq('the re-scan the page makes after closing asks for fresh numbers, and gets 0', emptyCount(await scan(true)), 0);
+  ok('and every token-account read uses confirmed, not finalized, state',
+    commitments.length > 0 && commitments.every((c) => c === 'confirmed'), JSON.stringify(commitments));
+}
+
 finish();

@@ -3020,7 +3020,7 @@
         if (provider.kind === 'standard') {
           const feat = provider.w.features['solana:signMessage'];
           if (!feat) throw new Error('this wallet cannot sign messages');
-          const out = await feat.signMessage({ account: provider.w.accounts[0], message: encoded });
+          const out = await feat.signMessage({ account: walletAccount(provider, wallet), message: encoded });
           sigBytes = out[0].signature;
         } else {
           const out = await provider.w.signMessage(encoded, 'utf8');
@@ -3213,7 +3213,8 @@
         }
         this.active = target;
         this.pubkey = key;
-        try { localStorage.setItem('wallet_last', key); } catch (e) {}
+        rememberWallet(target, key);
+        watchWalletAccount(target);
         this.render();
         return key;
       },
@@ -3257,6 +3258,64 @@
         if (typeof refreshSwapBalance === 'function') refreshSwapBalance();
       }
     };
+
+    /// Which wallet app and address were connected, so a reload reconnects that
+    /// one. Older visits stored just the address as a plain string.
+    function rememberWallet(target, address) {
+      try { localStorage.setItem('wallet_last', JSON.stringify({ name: target.name, address: address })); } catch (e) {}
+    }
+    function rememberedWallet() {
+      try {
+        const raw = localStorage.getItem('wallet_last');
+        if (!raw) return null;
+        if (raw.charAt(0) !== '{') return { name: null, address: raw };
+        const v = JSON.parse(raw);
+        return v && v.address ? v : null;
+      } catch (e) { return null; }
+    }
+
+    /// The account a Wallet Standard wallet should act for: the one this site is
+    /// connected as. A wallet holding several accounts lists them all, and asking
+    /// accounts[0] to sign could put the wrong account in front of the person.
+    function walletAccount(provider, address) {
+      const want = address || Wallet.pubkey;
+      const accounts = (provider && provider.w && provider.w.accounts) || [];
+      const match = accounts.find(function (a) { return a.address === want; });
+      if (!match) throw new Error('Your wallet is on a different account from the one connected here. Reconnect to continue.');
+      return match;
+    }
+
+    /// Follows the connected wallet when its account changes. If the account this
+    /// site is connected as is still offered, nothing happens — a wallet listing
+    /// or reordering its accounts is not a reason to switch.
+    function watchWalletAccount(target) {
+      if (!target || target._watched) return;
+      target._watched = true;
+      try {
+        const events = target.kind === 'standard' && target.w.features['standard:events'];
+        if (events) {
+          events.on('change', function (props) {
+            if (props && props.accounts) walletAccountsChanged(target, props.accounts.map(function (a) { return a.address; }));
+          });
+        } else if (target.kind === 'injected' && typeof target.w.on === 'function') {
+          target.w.on('accountChanged', function (pk) { walletAccountsChanged(target, pk ? [pk.toString()] : []); });
+        }
+      } catch (e) { /* a wallet without events simply is not followed */ }
+    }
+
+    function walletAccountsChanged(target, addresses) {
+      if (Wallet.active !== target || !Wallet.pubkey) return;
+      if (addresses.indexOf(Wallet.pubkey) >= 0) return;
+      // the Fox Points sign-in was proven for the previous account, not this one
+      FoxPoints.clearToken();
+      if (!addresses.length) { Wallet.disconnect(); return; }
+      Wallet.pubkey = addresses[0];
+      rememberWallet(target, addresses[0]);
+      Wallet.render();
+      renderStaking();
+      renderLeaderboard();
+      refreshRangers();
+    }
 
     function closeWalletModal() {
       const el = document.getElementById('wm-backdrop');
@@ -3393,18 +3452,27 @@
       Wallet.discover();
       setTimeout(async function() {
         Wallet.discover();
-        const prior = (function() { try { return localStorage.getItem('wallet_last'); } catch (e) { return null; } })();
+        const prior = rememberedWallet();
         if (!prior) { Wallet.render(); return; }
-        for (const w of Wallet.list) {
+        // Reconnect only the wallet that was connected, as the same address. This
+        // used to take the first wallet that had ever approved the site, so with
+        // two wallets installed a reload could quietly switch to the other one.
+        const offers = function (w) {
           try {
-            if (w.kind === 'injected' && w.w.isConnected && w.w.publicKey) {
-              Wallet.active = w; Wallet.pubkey = w.w.publicKey.toString(); break;
-            }
-            if (w.kind === 'standard' && w.w.accounts && w.w.accounts.length) {
-              Wallet.active = w; Wallet.pubkey = w.w.accounts[0].address; break;
-            }
-          } catch (e) {}
+            if (w.kind === 'injected') return !!(w.w.isConnected && w.w.publicKey && w.w.publicKey.toString() === prior.address);
+            return (w.w.accounts || []).some(function (a) { return a.address === prior.address; });
+          } catch (e) { return false; }
+        };
+        const candidates = Wallet.list.filter(offers);
+        const pick = candidates.find(function (w) { return w.name === prior.name; }) || candidates[0];
+        if (pick) {
+          Wallet.active = pick;
+          Wallet.pubkey = prior.address;
+          watchWalletAccount(pick);
         }
+        // a saved Fox Points sign-in belongs to one wallet; never show it under another
+        const session = FoxPoints.loadToken();
+        if (session && session.wallet && session.wallet !== Wallet.pubkey) FoxPoints.clearToken();
         Wallet.render();
         renderStaking();
         renderLeaderboard();
@@ -3554,7 +3622,7 @@
         const feat = provider.w.features['solana:signAndSendTransaction'];
         if (!feat) throw new Error('This wallet cannot send transactions.');
         const out = await feat.signAndSendTransaction({
-          account: provider.w.accounts[0],
+          account: walletAccount(provider),
           chain: 'solana:devnet',
           transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false })
         });
@@ -3984,7 +4052,7 @@
     const CLOSE_PER_TX = 18;
     const BURN_PER_TX = 8;
 
-    async function scanCleanup() {
+    async function scanCleanup(fresh) {
       const btn = document.getElementById('cl-scan');
       const msg = document.getElementById('cl-msg');
       if (!Wallet.pubkey) {
@@ -3994,7 +4062,9 @@
       btn.disabled = true;
       btn.textContent = 'Reading your wallet…';
       try {
-        const res = await fetch(POINTS_API + '/api/cleanup/scan?wallet=' + encodeURIComponent(Wallet.pubkey));
+        // fresh after closing or burning, or the result from before the action comes back
+        const res = await fetch(POINTS_API + '/api/cleanup/scan?wallet=' + encodeURIComponent(Wallet.pubkey) +
+          (fresh === true ? '&fresh=1' : ''));
         const d = await res.json();
         if (d.error) throw new Error(d.error);
         clScan = d;
@@ -4378,7 +4448,7 @@
         msg.className = 'sw-msg good';
         msg.textContent = 'Closed ' + done + ' accounts. The rent is back in your wallet.';
         if (lastSig) awardCleanupPoints(lastSig, msg);
-        await scanCleanup();
+        await scanCleanup(true);
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = (done ? 'Closed ' + done + ' before stopping. ' : '') + friendlySwapError(e);
@@ -4407,7 +4477,7 @@
         await sendCleanupBatch(ixs, Math.floor(rent * clScan.feePct / 100));
         msg.className = 'sw-msg good';
         msg.textContent = 'Unwrapped. The SOL is back in your wallet.';
-        await scanCleanup();
+        await scanCleanup(true);
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = friendlySwapError(e);
@@ -4445,7 +4515,7 @@
         msg.className = 'sw-msg good';
         msg.textContent = 'Burned and closed ' + done + '. Rent is back in your wallet.';
         document.getElementById('cl-confirm-input').value = '';
-        await scanCleanup();
+        await scanCleanup(true);
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = (done ? 'Finished ' + done + ' before stopping. ' : '') + friendlySwapError(e);
@@ -5261,7 +5331,7 @@
         const feat = provider.w.features['solana:signAndSendTransaction'];
         if (!feat) throw new Error('This wallet cannot send transactions.');
         const out = await feat.signAndSendTransaction({
-          account: provider.w.accounts[0],
+          account: walletAccount(provider),
           chain: 'solana:mainnet',
           transaction: tx.serialize()
         });
