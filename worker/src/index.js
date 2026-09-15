@@ -488,7 +488,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-upgrade-5';
+const BUILD = 'jup-key-fallback-6';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -950,11 +950,21 @@ async function findPaymentByReference(env, reference) {
 /// only about one request every two seconds — shared by every visitor, since
 /// all calls leave from this worker. So calls move there only once a key is set
 /// (`wrangler secret put JUPITER_API_KEY`), and stay on lite-api until then.
-function jupFetch(env, path, init) {
+///
+/// A key Jupiter rejects must never take the swap down with it — that happened
+/// on 2026-09-15, when a key pasted into the secret was refused with 401 and
+/// every quote failed until it was removed. So a 401 or 403 is logged and the
+/// call is retried on lite-api.
+async function jupFetch(env, path, init) {
   const key = env && env.JUPITER_API_KEY;
-  const opts = Object.assign({}, init || {});
-  if (key) opts.headers = Object.assign({}, opts.headers || {}, { 'x-api-key': key });
-  return fetch((key ? 'https://api.jup.ag' : 'https://lite-api.jup.ag') + path, opts);
+  if (key) {
+    const opts = Object.assign({}, init || {});
+    opts.headers = Object.assign({}, opts.headers || {}, { 'x-api-key': key });
+    const res = await fetch('https://api.jup.ag' + path, opts);
+    if (res.status !== 401 && res.status !== 403) return res;
+    await logError(env, 'jupiter.key', res.status + ' from api.jup.ag — JUPITER_API_KEY rejected, fell back to lite-api');
+  }
+  return fetch('https://lite-api.jup.ag' + path, init);
 }
 
 const SWAP_FEE_BPS = 20;

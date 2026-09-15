@@ -102,6 +102,19 @@ section('which Jupiter address is used');
   const keyed = chain.jupCalls[0];
   ok('with a key: api.jup.ag, ahead of lite-api being retired', keyed.url.startsWith('https://api.jup.ag/'), keyed.url);
   eq('and the key goes in the header', keyed.key, 'jup-test-key');
+
+  // a key Jupiter refuses, as happened in production on 2026-09-15
+  const answer = chain.jup;
+  chain.jup = (u, init) => (u.host === 'api.jup.ag' ? new Response('{"code":401,"message":"Unauthorized"}', { status: 401 }) : answer(u, init));
+  chain.jupCalls.length = 0;
+  const env = freshEnv({ JUPITER_API_KEY: 'a-rejected-key' });
+  const r = await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${USDC}&amount=1000000&slippage=50`);
+  eq('a rejected key does not break quotes', r.status, 200);
+  ok('the call is retried on lite-api', chain.jupCalls.some((c) => c.url.startsWith('https://lite-api.jup.ag/')));
+  eq('without sending the rejected key there', chain.jupCalls.filter((c) => c.url.startsWith('https://lite-api.jup.ag/')).every((c) => c.key === null), true);
+  ok('and the rejection is logged so it gets noticed',
+    env._db.prepare("SELECT COUNT(*) AS n FROM error_log WHERE route = 'jupiter.key'").get().n > 0);
+  chain.jup = answer;
 }
 
 section('your tokens');
