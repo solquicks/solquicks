@@ -4499,7 +4499,7 @@
     function fmtAmount(n) {
       if (n === null || n === undefined || !isFinite(n)) return '–';
       if (Math.abs(n) >= 1e6) return n.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 2 });
-      return n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n) >= 1 ? 4 : 6 });
+      return n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n) >= 1000 ? 2 : Math.abs(n) >= 1 ? 4 : 6 });
     }
     function fmtUsd(n) {
       return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });

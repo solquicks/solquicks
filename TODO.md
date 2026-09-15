@@ -242,6 +242,49 @@ Still untested: the site itself has no browser test.
 
 ---
 
+## Swap — shipped 2026-09-14
+
+**16. The fee now lands on most swaps.** It used to be collected only on swaps
+*into* SOL, USDC or PYUSD, so SOL into any other token earned nothing. It can
+also be taken from the token being *sold*: proven by simulating on mainnet
+(exactly 0.2% of the SOL sold reached the fee account, the buyer received 99.8%
+of the no-fee amount, so charged once), and again on the live server after
+deploy. Now any swap with SOL or USDC on either side, or PYUSD as the output,
+earns. Still earns nothing: swaps between two tokens neither of which is SOL,
+USDC or PYUSD-out (e.g. BONK → WIF).
+
+**17. ← ACTION FOR YOU: get a Jupiter API key.** Jupiter is retiring
+`lite-api.jup.ag`, which the swap uses, by cutting its rate limit step by step
+(no date given). The replacement allows keyless callers about one request every
+two seconds, shared by every visitor — too little for a busy swap. The worker
+switches over automatically the moment a key exists:
+1. Create a free key at portal.jup.ag.
+2. In `worker/`, run `npx wrangler secret put JUPITER_API_KEY` and paste it.
+Nothing needs redeploying.
+
+**18. Shipped:** PYUSD / Token-2022 balances; "Your tokens" with dollar values at
+the top of the token picker; Favourites, Recent and Popular sections; 25% / 50% /
+Max; "After this swap" preview; recent pair chips; the price refreshes every 15
+seconds, warns when it has moved, and a stale price is re-checked before
+signing; swap history (read off the chain, with points, older swaps backfilled).
+Hiding spam tokens (#6) was skipped by choice, so airdropped junk appears at the
+bottom of "Your tokens", marked unverified.
+
+**19. Limit orders and recurring buys — PARKED 2026-09-15 (your decision).**
+Researched against Jupiter's live docs and API before building:
+- *Trigger v2* (current; limit orders and recurring buys in one API): **no
+  integrator fee** — Jupiter's docs say "Not currently, and there is no timeline
+  for adding them" — and **custodial**: each wallet's tokens move into a vault
+  managed by Privy for Jupiter. Needs the API key (#17) plus a sign-in step.
+- *Trigger v1* (legacy limit orders): still live and removed from Jupiter's docs.
+  Builds orders with a fee account attached, but collection happens when a
+  keeper fills the order, which cannot be simulated — only a real filled order
+  would prove it, and a wrong fee setting could stop orders filling. Recurring
+  v1 no longer answers. $5 minimum.
+Revisit when Jupiter adds integrator fees to Trigger v2.
+
+---
+
 ## Blocked
 
 **11. moon-stake mainnet.**

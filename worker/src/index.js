@@ -488,7 +488,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-upgrade-4';
+const BUILD = 'swap-upgrade-5';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1193,7 +1193,8 @@ async function walletHoldings(env, wallet) {
     return {
       mint: t.mint,
       symbol: m.symbol || (t.mint === SOL ? 'SOL' : t.mint.slice(0, 4) + '…'),
-      name: m.name || '',
+      // this entry is native SOL; Jupiter's metadata names the mint "Wrapped SOL"
+      name: t.mint === SOL ? 'Solana' : (m.name || ''),
       icon: m.icon || null,
       decimals: t.decimals,
       verified: !!m.isVerified,
