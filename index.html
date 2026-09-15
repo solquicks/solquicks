@@ -1396,6 +1396,19 @@
     .sw-hmeta a { color: var(--muted); }
     .sw-hright { text-align: right; white-space: nowrap; font-size: 0.8rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
     .sw-hpts { display: block; font-size: 0.72rem; color: var(--green); font-weight: 800; }
+    .sw-saving { display: block; font-size: 0.72rem; font-weight: 800; color: var(--green); text-align: right; }
+    .sw-history-title .sw-saving { display: inline; margin-left: 8px; font-family: inherit; text-align: left; }
+    .sw-route { text-align: right; max-width: 65%; font-size: 0.76rem; overflow-wrap: anywhere; }
+    .sw-token { background: var(--cream); border: 2px solid #E7DFD2; border-radius: 12px; padding: 10px 13px; margin-top: 12px; }
+    .sw-token-head { display: flex; align-items: center; gap: 6px; font-size: 0.86rem; color: var(--ink); }
+    .sw-token-head img { width: 20px; height: 20px; border-radius: 50%; }
+    .sw-token-price { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; font-size: 0.8rem; }
+    .sw-up { color: var(--green); margin-left: 4px; }
+    .sw-down { color: var(--crimson); margin-left: 4px; }
+    .sw-token-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+    .sw-token-stats div { display: flex; flex-direction: column; }
+    .sw-token-stats span { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+    .sw-token-stats b { font-size: 0.86rem; color: var(--ink); font-variant-numeric: tabular-nums; }
 
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
@@ -2306,18 +2319,29 @@
         <div class="sw-detail" id="sw-detail" hidden>
           <div class="sw-line"><span>Rate<button class="sw-refresh" id="sw-refresh" onclick="quoteSwap()" title="Refresh the price now"></button></span><span id="sw-rate">–</span></div>
           <div class="sw-line"><span>Price impact</span><span id="sw-impact">–</span></div>
+          <div class="sw-line" id="sw-route-line" hidden><span>Route</span><span class="sw-route" id="sw-route">–</span></div>
           <div class="sw-line"><span>Minimum received</span><span id="sw-min">–</span></div>
           <div class="sw-line" id="sw-after-line" hidden><span>After this swap</span><span id="sw-after">–</span></div>
           <div class="sw-line"><span>Fee</span><span id="sw-fee">–</span></div>
           <div class="sw-line"><span>Fox Points</span><span id="sw-points">–</span></div>
           <div class="sw-line"><span>Max slippage</span>
             <span class="sw-slip">
+              <button data-bps="auto" id="sw-slip-auto" onclick="setSlippage('auto')" title="Set from how liquid the two tokens are">Auto</button>
               <button data-bps="50" onclick="setSlippage(50)">0.5%</button>
               <button data-bps="100" onclick="setSlippage(100)">1%</button>
               <button data-bps="300" onclick="setSlippage(300)">3%</button>
             </span>
           </div>
+          <div class="sw-line"><span>Speed</span>
+            <span class="sw-slip sw-speed">
+              <button data-speed="normal" onclick="setSwapSpeed('normal')" title="Standard priority fee">Normal</button>
+              <button data-speed="fast" onclick="setSwapSpeed('fast')" title="Higher priority fee, at most 0.0005 SOL">Fast</button>
+              <button data-speed="turbo" onclick="setSwapSpeed('turbo')" title="Highest priority fee, at most 0.001 SOL">Turbo</button>
+            </span>
+          </div>
         </div>
+
+        <div class="sw-token" id="sw-token" hidden></div>
 
         <div class="sw-warnbox" id="sw-warnbox" hidden></div>
         <button class="sw-go" id="sw-go" onclick="doSwap()" disabled>Enter an amount</button>
@@ -4531,7 +4555,9 @@
     // talks to Jupiter directly and the CSP stays as tight as it is.
     var swapTokens = null;
     var swapQuote = null;
-    var swapSlippage = 50;
+    var swapSlippage = 'auto';   // or a number of basis points the person picked
+    var swapSpeed = (function () { try { return localStorage.getItem('sq.swap.speed') || 'normal'; } catch (e) { return 'normal'; } })();
+    var swapTokenSeq = 0;
     var swapDebounce = null;
     var swapSeq = 0;
     var swapPair = { in: null, out: null };
@@ -4586,6 +4612,7 @@
       swapPair.out = swapTokens[1];  // USDC
       paintPair();
       setSlippage(swapSlippage);
+      setSwapSpeed(swapSpeed);
       paintRecentPairs();
 
       const amt = document.getElementById('sw-in-amount');
@@ -4612,6 +4639,7 @@
       document.getElementById('sw-in-token').textContent = swapPair.in.symbol;
       document.getElementById('sw-out-token').textContent = swapPair.out.symbol;
       renderTokenWarnings();
+      loadTokenPanel();
     }
 
     /// Warnings travel with the token, so they show while it is selected — not
@@ -4782,6 +4810,58 @@
       quoteSwap();
     }
 
+    /// Where the swap actually goes, e.g. "Raydium → Orca" or "Meteora 60% + Orca 40%".
+    function routeText(plan) {
+      const steps = (plan || []).map(function (st) {
+        const label = (st.swapInfo && st.swapInfo.label) || '?';
+        return st.percent && st.percent < 100 ? label + ' ' + st.percent + '%' : label;
+      });
+      return steps.join(' → ');
+    }
+
+    function setSwapSpeed(speed) {
+      swapSpeed = ['normal', 'fast', 'turbo'].indexOf(speed) >= 0 ? speed : 'normal';
+      try { localStorage.setItem('sq.swap.speed', swapSpeed); } catch (e) {}
+      document.querySelectorAll('.sw-speed button').forEach(function (b) {
+        b.classList.toggle('on', b.dataset.speed === swapSpeed);
+      });
+    }
+
+    function fmtCompactUsd(n) {
+      if (n === null || n === undefined || !isFinite(n)) return '–';
+      return '$' + Number(n).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+    }
+
+    /// Market cap, liquidity, holders and the day's move for the token being bought.
+    async function loadTokenPanel() {
+      const box = document.getElementById('sw-token');
+      const t = swapPair.out;
+      if (!box || !t) return;
+      const seq = ++swapTokenSeq;
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/token?mint=' + t.mint);
+        const d = await res.json();
+        if (seq !== swapTokenSeq) return;
+        if (!d.token) { box.hidden = true; return; }
+        const k = d.token;
+        const change = k.change24h === null ? '' :
+          '<span class="' + (k.change24h >= 0 ? 'sw-up' : 'sw-down') + '">' +
+          (k.change24h >= 0 ? '+' : '') + k.change24h.toFixed(2) + '% 24h</span>';
+        const price = k.price ? '$' + Number(k.price).toLocaleString(undefined, { maximumSignificantDigits: 4 }) : '–';
+        box.innerHTML =
+          '<div class="sw-token-head">' + (k.icon ? '<img src="' + escapeHtml(k.icon) + '" alt="" loading="lazy">' : '') +
+          '<strong>' + escapeHtml(k.symbol || t.symbol) + '</strong>' +
+          (k.verified ? '<span class="sw-tick" title="On Jupiter’s verified list">✓</span>' : '') +
+          '<span class="sw-token-price">' + price + ' ' + change + '</span></div>' +
+          '<div class="sw-token-stats">' +
+          '<div><span>Market cap</span><b>' + fmtCompactUsd(k.mcap) + '</b></div>' +
+          '<div><span>Liquidity</span><b>' + fmtCompactUsd(k.liquidity) + '</b></div>' +
+          '<div><span>Holders</span><b>' + (k.holders ? Number(k.holders).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 }) : '–') + '</b></div>' +
+          '</div>';
+        box.hidden = false;
+      } catch (e) { if (seq === swapTokenSeq) box.hidden = true; }
+    }
+
     function tokenBy(mint) {
       if (swapPair.in && swapPair.in.mint === mint) return swapPair.in;
       if (swapPair.out && swapPair.out.mint === mint) return swapPair.out;
@@ -4790,9 +4870,10 @@
 
     function setSlippage(bps) {
       swapSlippage = bps;
-      document.querySelectorAll('.sw-slip button').forEach(function (b) {
-        b.classList.toggle('on', Number(b.dataset.bps) === bps);
+      document.querySelectorAll('.sw-slip button[data-bps]').forEach(function (b) {
+        b.classList.toggle('on', b.dataset.bps === String(bps));
       });
+      if (bps !== 'auto') document.getElementById('sw-slip-auto').textContent = 'Auto';
       if (swapQuote) quoteSwap();
     }
 
@@ -4970,6 +5051,14 @@
         if (owner !== Wallet.pubkey) return;
         const rows = d.swaps || [];
         box.hidden = !rows.length;
+        const title = box.querySelector('.sw-history-title');
+        title.textContent = 'Your swaps';
+        if (d.savedUsd > 0) {
+          const saved = document.createElement('span');
+          saved.className = 'sw-saving';
+          saved.textContent = 'Saved ' + fmtUsd(d.savedUsd) + ' with your Moon Ranger discount';
+          title.appendChild(saved);
+        }
         const label = function (sym, mint) { return escapeHtml(sym || mint.slice(0, 4) + '…'); };
         list.innerHTML = rows.map(function (s) {
           const at = new Date(s.ts);
@@ -5035,7 +5124,8 @@
 
       try {
         const res = await fetch(POINTS_API + '/api/swap/quote?in=' + tIn.mint + '&out=' + tOut.mint +
-          '&amount=' + amount + '&slippage=' + swapSlippage);
+          '&amount=' + amount + '&slippage=' + swapSlippage +
+          (Wallet.pubkey ? '&wallet=' + Wallet.pubkey : ''));
         const d = await res.json();
         if (seq !== swapSeq) return;   // a newer keystroke already won
         document.getElementById('sw-quoting').textContent = '';
@@ -5055,7 +5145,7 @@
 
         const rate = out / raw;
         document.getElementById('sw-rate').textContent =
-          '1 ' + tIn.symbol + ' ≈ ' + rate.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + tOut.symbol;
+          '1 ' + tIn.symbol + ' ≈ ' + rate.toLocaleString(undefined, places(rate)) + ' ' + tOut.symbol;
 
         const impact = Number(d.quote.priceImpactPct) * 100;
         const impactEl = document.getElementById('sw-impact');
@@ -5068,6 +5158,7 @@
         // The quote always prices the fee in the output token, but it can be taken
         // from the token being sold instead — the server says which.
         const pf = d.quote.platformFee;
+        const feeEl = document.getElementById('sw-fee');
         let feeText = 'none on this pair';
         if (pf && d.feeMint) {
           feeText = (d.feeMint === tIn.mint
@@ -5075,7 +5166,20 @@
             : fmtAmount(Number(pf.amount) / Math.pow(10, tOut.decimals)) + ' ' + tOut.symbol) +
             ' (' + (pf.feeBps / 100) + '%)';
         }
-        document.getElementById('sw-fee').textContent = feeText;
+        feeEl.textContent = feeText;
+        // what a Moon Ranger saves on this swap, from the dollar value Jupiter reports
+        if (d.holder && d.feeBps < d.fullFeeBps) {
+          const savedUsd = Number(d.quote.swapUsdValue || 0) * (d.fullFeeBps - d.feeBps) / 10000;
+          const note = document.createElement('span');
+          note.className = 'sw-saving';
+          note.textContent = 'Moon Ranger half off' + (savedUsd > 0
+            ? ', saving ' + (savedUsd < 0.01 ? 'under $0.01' : fmtUsd(savedUsd)) : '');
+          feeEl.appendChild(note);
+        }
+
+        document.getElementById('sw-route').textContent = routeText(d.quote.routePlan);
+        document.getElementById('sw-route-line').hidden = !(d.quote.routePlan || []).length;
+        if (d.autoSlippage) document.getElementById('sw-slip-auto').textContent = 'Auto · ' + (d.slippageBps / 100) + '%';
 
         paintSwapPoints();
         paintAfterSwap();
@@ -5241,9 +5345,18 @@
         const res = await fetch(POINTS_API + '/api/swap/build', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ quote: swapQuote, user: Wallet.pubkey })
+          body: JSON.stringify({ quote: swapQuote, user: Wallet.pubkey, speed: swapSpeed })
         });
         const d = await res.json();
+        if (d.requote) {
+          // the quote was made for a different fee rate than this wallet gets —
+          // typically a Moon Ranger discount picked up after connecting
+          await quoteSwap();
+          msg.className = 'sw-msg sw-moved';
+          msg.dataset.kind = 'moved';
+          msg.textContent = 'The price was refreshed with your fee rate. Check it and tap swap again.';
+          return;
+        }
         if (d.error) throw new Error(d.error);
 
         go.textContent = 'Check your wallet…';

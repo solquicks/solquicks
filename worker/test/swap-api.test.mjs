@@ -19,12 +19,19 @@ const FEE = {
 const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const PRICES = { [SOL]: 150, [USDC]: 1, [PYUSD]: 1, [BONK]: 0.00002, [WIF]: 2 };
+const USDT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const RUG = wallet(77); // a validly formed address; the routes reject anything else
+const HYPE = wallet(78); // unverified, but with deep liquidity
 const META = {
-  [SOL]: { symbol: 'SOL', name: 'Wrapped SOL', isVerified: true },
-  [USDC]: { symbol: 'USDC', name: 'USD Coin', isVerified: true },
-  [PYUSD]: { symbol: 'PYUSD', name: 'PayPal USD', isVerified: true },
-  [BONK]: { symbol: 'BONK', name: 'Bonk', isVerified: true },
-  [WIF]: { symbol: 'WIF', name: 'dogwifhat', isVerified: true }
+  [SOL]: { symbol: 'SOL', name: 'Wrapped SOL', isVerified: true, liquidity: 900000000 },
+  [USDC]: { symbol: 'USDC', name: 'USD Coin', isVerified: true, liquidity: 800000000 },
+  [USDT]: { symbol: 'USDT', name: 'Tether', isVerified: true, liquidity: 300000000 },
+  [PYUSD]: { symbol: 'PYUSD', name: 'PayPal USD', isVerified: true, liquidity: 20000000 },
+  [BONK]: { symbol: 'BONK', name: 'Bonk', isVerified: true, liquidity: 1000000, mcap: 231826835, holderCount: 1019467,
+    usdPrice: 0.0000026, stats24h: { priceChange: -3.25 }, audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 30 }, organicScoreLabel: 'high' },
+  [WIF]: { symbol: 'WIF', name: 'dogwifhat', isVerified: true, liquidity: 6000000 },
+  [HYPE]: { symbol: 'HYPE', name: 'Loud But Unverified', isVerified: false, liquidity: 50000000 },
+  [RUG]: { symbol: 'RUG', name: 'Totally Safe', isVerified: false, liquidity: 9000, audit: { mintAuthorityDisabled: false, freezeAuthorityDisabled: false, topHoldersPercentage: 80 } }
 };
 
 // Jupiter, as far as the worker uses it
@@ -221,6 +228,92 @@ section('swap history');
   eq('with the points it earned', old && old.points, 20);
   eq('and its pair', old && old.in_symbol + ' → ' + old.out_symbol, 'USDC → WIF');
   eq('another wallet sees none of it', (await call(env, 'GET', '/api/swap/history?wallet=' + wallet(4))).body.swaps.length, 0);
+}
+
+section('Moon Ranger holders pay half');
+{
+  const env = freshEnv();
+  const holder = wallet(20), regular = wallet(21);
+  env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 1, 1, 1)').run(holder);
+  const q = async (who) => {
+    const r = await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${BONK}&amount=1000000&slippage=50` + (who ? '&wallet=' + who : ''));
+    return { r, sent: new URL(chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).pop().url).searchParams.get('platformFeeBps') };
+  };
+  const buildAs = async (user, quote) => call(env, 'POST', '/api/swap/build', { body: { quote, user } });
+
+  const h = await q(holder);
+  eq('a holder is quoted 0.1%', h.r.body.feeBps, 10);
+  eq('Jupiter is asked for 10 bps', h.sent, '10');
+  eq('and told the full rate, to show the saving', h.r.body.fullFeeBps + ' holder=' + h.r.body.holder, '20 holder=true');
+  const n = await q(regular);
+  eq('anyone else is quoted 0.2%', n.r.body.feeBps, 20);
+  eq('a staked Ranger counts as held', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?)').run(wallet(22), 'm1', 1), (await q(wallet(22))).r.body.feeBps), 10);
+
+  eq('a holder swapping at the holder rate is built', (await buildAs(holder, h.r.body.quote)).status, 200);
+  eq('a holder quote used by a different wallet is refused', (await buildAs(regular, h.r.body.quote)).status, 409);
+  eq('and asks the page to re-quote', (await buildAs(regular, h.r.body.quote)).body.requote, true);
+  const stripped = Object.assign({}, n.r.body.quote, { platformFee: null });
+  eq('a quote with the fee stripped out is refused', (await buildAs(regular, stripped)).status, 409);
+  eq('a pair with no fee needs no fee check', (await buildAs(regular, (await call(env, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50`)).body.quote)).status, 200);
+}
+
+section('speed setting');
+{
+  const env = freshEnv();
+  const base = (await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${USDC}&amount=1000000&slippage=50`)).body.quote;
+  const priority = async (speed) => {
+    await call(env, 'POST', '/api/swap/build', { body: { quote: base, user: wallet(1), speed } });
+    return chain.jupCalls.filter((c) => c.url.includes('/swap/v1/swap')).pop().body.prioritizationFeeLamports.priorityLevelWithMaxLamports;
+  };
+  eq('normal is medium priority, at most 0.0002 SOL', JSON.stringify(await priority('normal')), JSON.stringify({ priorityLevel: 'medium', maxLamports: 200000 }));
+  eq('fast is high, at most 0.0005 SOL', JSON.stringify(await priority('fast')), JSON.stringify({ priorityLevel: 'high', maxLamports: 500000 }));
+  eq('turbo is very high, capped at 0.001 SOL', JSON.stringify(await priority('turbo')), JSON.stringify({ priorityLevel: 'veryHigh', maxLamports: 1000000 }));
+  eq('anything else falls back to normal', (await priority('ludicrous')).priorityLevel, 'medium');
+}
+
+section('auto slippage');
+{
+  const env = freshEnv();
+  const auto = async (a, b) => {
+    const r = await call(env, 'GET', `/api/swap/quote?in=${a}&out=${b}&amount=1000000&slippage=auto`);
+    const sent = new URL(chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).pop().url).searchParams.get('slippageBps');
+    return r.body.slippageBps + '/' + sent + (r.body.autoSlippage ? ' auto' : '');
+  };
+  eq('two dollar stablecoins: 0.2%', await auto(USDC, USDT), '20/20 auto');
+  eq('two deep, verified tokens: 0.5%', await auto(SOL, USDC), '50/50 auto');
+  eq('one side with about $1M of liquidity: 1%', await auto(SOL, BONK), '100/100 auto');
+  eq('an unverified token with thin liquidity: 3%', await auto(SOL, RUG), '300/300 auto');
+  eq('an unverified token is 3% however deep its liquidity looks', await auto(SOL, HYPE), '300/300 auto');
+  eq('a manual choice is still honoured', (await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${BONK}&amount=1000000&slippage=300`)).body.slippageBps, 300);
+}
+
+section('token details');
+{
+  const env = freshEnv();
+  const bonk = (await call(env, 'GET', '/api/swap/token?mint=' + BONK)).body.token;
+  eq('market cap, liquidity, holders and the day\'s move', [bonk.mcap, bonk.liquidity, bonk.holders, bonk.change24h].join(' '), '231826835 1000000 1019467 -3.25');
+  eq('a clean token has no warnings', bonk.warnings.length, 0);
+  const rug = (await call(env, 'GET', '/api/swap/token?mint=' + RUG)).body.token;
+  eq('a risky one carries every warning that applies', rug.warnings.length, 5);
+  const before = chain.jupCalls.length;
+  await call(env, 'GET', '/api/swap/token?mint=' + BONK);
+  eq('details are cached rather than fetched every time', chain.jupCalls.length, before);
+  eq('an unknown token', (await call(env, 'GET', '/api/swap/token?mint=' + wallet(30))).status, 404);
+}
+
+section('what a holder saved, in history');
+{
+  const env = freshEnv();
+  const me = wallet(31);
+  swapTx('H'.repeat(88), me, { solSpent: 1, get: { mint: USDC, amount: 149.85 }, fee: { account: FEE[USDC], mint: USDC, amount: 0.15 } });  // 0.1% of what would have been received
+  swapTx('J'.repeat(88), me, { spend: { mint: USDC, amount: 100 }, get: { mint: BONK, amount: 38000000 }, fee: { account: FEE[USDC], mint: USDC, amount: 0.2 } }); // 0.2% of what was spent
+  const a = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'H'.repeat(88) } })).body.swap;
+  eq('a discounted swap reads back as 10 bps', a.fee_bps, 10);
+  eq('and saved what it paid: $0.15', a.saved_usd, 0.15);
+  const b = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'J'.repeat(88) } })).body.swap;
+  eq('a full-rate swap reads back as 20 bps, saving nothing', b.fee_bps + ' ' + b.saved_usd, '20 0');
+  const hist = (await call(env, 'GET', '/api/swap/history?wallet=' + me)).body;
+  eq('history totals what was saved', hist.savedUsd + ' over ' + hist.discountedSwaps, '0.15 over 1');
 }
 
 section('points still check who signed the swap');

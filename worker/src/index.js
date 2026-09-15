@@ -338,7 +338,7 @@ const RATE_RULES = [
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
-  { match: ['/api/swap/search', '/api/swap/prices'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/swap/record'], name: 'swaprecord', by: 'ip', limit: 20, windowMs: 60000 },
@@ -488,7 +488,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'cleanup-fresh-7';
+const BUILD = 'swap-round4-a-8';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1019,6 +1019,93 @@ function swapFee(inputMint, outputMint) {
   return null;
 }
 
+// Moon Ranger holders pay half. A wallet that holds or has staked a Ranger is
+// quoted and charged 10 bps instead of 20.
+const HOLDER_SWAP_FEE_BPS = 10;
+function swapFeeBpsFor(isHolder) {
+  return isHolder ? HOLDER_SWAP_FEE_BPS : SWAP_FEE_BPS;
+}
+
+// Speed choices map to Jupiter's priority levels, each with a ceiling so a busy
+// network can never make one swap cost more than a sliver of SOL in fees.
+const SWAP_SPEEDS = {
+  normal: { priorityLevel: 'medium', maxLamports: 200000 },   // at most 0.0002 SOL
+  fast: { priorityLevel: 'high', maxLamports: 500000 },       // at most 0.0005 SOL
+  turbo: { priorityLevel: 'veryHigh', maxLamports: 1000000 }  // at most 0.001 SOL
+};
+function swapPriority(speed) {
+  return { priorityLevelWithMaxLamports: SWAP_SPEEDS[speed] || SWAP_SPEEDS.normal };
+}
+
+// Dollar stablecoins, for choosing a tight slippage when both sides hold their peg.
+const STABLE_MINTS = DOLLAR_MINTS.concat([
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+  '2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH', // USDG
+  'USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB'  // USD1
+]);
+
+/// Jupiter's token metadata for a set of mints, each cached for ten minutes —
+/// liquidity and holder counts do not need to be fresher than that to pick a
+/// slippage or describe a token.
+async function tokenInfo(env, mints) {
+  const cache = caches.default;
+  const out = {}, missing = [];
+  for (const mint of mints) {
+    const hit = await cache.match(new Request('https://token-info.cache/' + mint));
+    if (hit) out[mint] = await hit.json();
+    else missing.push(mint);
+  }
+  if (missing.length) {
+    const res = await jupFetch(env, '/tokens/v2/search?query=' + missing.join(','));
+    const found = res.ok ? await res.json().catch(function () { return []; }) : [];
+    for (const t of Array.isArray(found) ? found : []) {
+      if (missing.indexOf(t.id) < 0) continue;
+      out[t.id] = t;
+      await cache.put(new Request('https://token-info.cache/' + t.id),
+        new Response(JSON.stringify(t), { headers: { 'Cache-Control': 'public, max-age=600' } }));
+    }
+  }
+  return out;
+}
+
+/// Plain-English warnings for a token, shared by search and the token panel.
+function tokenWarnings(t) {
+  const a = t.audit || {};
+  const warnings = [];
+  if (!t.isVerified) warnings.push('Not on Jupiter’s verified list');
+  if (a.mintAuthorityDisabled === false) warnings.push('The team can still mint more');
+  if (a.freezeAuthorityDisabled === false) warnings.push('The team can freeze your tokens');
+  if (Number(a.topHoldersPercentage) > 50) warnings.push('Top 10 wallets hold ' + Math.round(a.topHoldersPercentage) + '%');
+  if (Number(t.liquidity) < 25000) warnings.push('Thin liquidity — expect slippage');
+  return warnings;
+}
+
+function tokenCard(t) {
+  const day = t.stats24h || {};
+  return {
+    mint: t.id, symbol: t.symbol, name: t.name, decimals: t.decimals, icon: t.icon || null,
+    verified: !!t.isVerified, score: t.organicScoreLabel || null,
+    price: t.usdPrice || null,
+    change24h: day.priceChange === undefined ? null : Number(day.priceChange),
+    mcap: t.mcap || null, liquidity: t.liquidity || null, holders: t.holderCount || null,
+    createdAt: t.createdAt || null,
+    warnings: tokenWarnings(t)
+  };
+}
+
+/// Slippage chosen from the pair instead of guessed by the person swapping:
+/// tight when both sides are dollar stablecoins, looser as liquidity thins.
+async function autoSlippageBps(env, inputMint, outputMint) {
+  if (STABLE_MINTS.indexOf(inputMint) >= 0 && STABLE_MINTS.indexOf(outputMint) >= 0) return 20;
+  const info = await tokenInfo(env, [inputMint, outputMint]).catch(function () { return {}; });
+  const sides = [info[inputMint], info[outputMint]];
+  if (sides.some(function (t) { return !t || !t.isVerified; })) return 300;
+  const thinnest = Math.min(Number(sides[0].liquidity) || 0, Number(sides[1].liquidity) || 0);
+  if (thinnest >= 5000000) return 50;
+  if (thinnest >= 250000) return 100;
+  return 300;
+}
+
 const SWAP_POINTS_PER_USD = 1;
 const SWAP_POINTS_DAILY_CAP = 500;
 const SWAP_POINTS_MIN_USD = 5;
@@ -1234,6 +1321,19 @@ async function recordSwap(env, signature) {
   const inMint = biggest(s.spent), outMint = biggest(s.received);
   const usd = s.spent[inMint] * price(inMint) || s.received[outMint] * price(outMint) || null;
 
+  // The fee rate actually charged, read back from the chain: taken from what was
+  // spent, or out of what would have been received. A Moon Ranger holder pays
+  // half, so on a discounted swap the saving equals the fee that was paid.
+  let feeBps = null, savedUsd = 0;
+  if (s.feePaid) {
+    const base = s.feePaid.mint === inMint ? s.spent[inMint]
+      : s.feePaid.mint === outMint ? s.received[outMint] + s.feePaid.amount : 0;
+    if (base > 0) feeBps = Math.round(s.feePaid.amount / base * 10000);
+    if (feeBps !== null && feeBps < (HOLDER_SWAP_FEE_BPS + SWAP_FEE_BPS) / 2) {
+      savedUsd = Math.round(s.feePaid.amount * price(s.feePaid.mint) * 10000) / 10000;
+    }
+  }
+
   const symbols = {};
   try {
     const res = await jupFetch(env, '/tokens/v2/search?query=' + inMint + ',' + outMint);
@@ -1246,13 +1346,14 @@ async function recordSwap(env, signature) {
     out_mint: outMint, out_symbol: symbols[outMint] || null, out_amount: s.received[outMint],
     usd: usd === null ? null : Math.round(usd * 100) / 100,
     fee_mint: s.feePaid ? s.feePaid.mint : null, fee_amount: s.feePaid ? s.feePaid.amount : null,
+    fee_bps: feeBps, saved_usd: savedUsd,
     ts: s.ts || Date.now()
   };
   await env.DB.prepare(
-    'INSERT INTO swaps (signature, wallet, in_mint, in_symbol, in_amount, out_mint, out_symbol, out_amount, usd, fee_mint, fee_amount, ts) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
+    'INSERT INTO swaps (signature, wallet, in_mint, in_symbol, in_amount, out_mint, out_symbol, out_amount, usd, fee_mint, fee_amount, fee_bps, saved_usd, ts) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
   ).bind(row.signature, row.wallet, row.in_mint, row.in_symbol, row.in_amount, row.out_mint, row.out_symbol,
-    row.out_amount, row.usd, row.fee_mint, row.fee_amount, row.ts).run();
+    row.out_amount, row.usd, row.fee_mint, row.fee_amount, row.fee_bps, row.saved_usd, row.ts).run();
   return { ok: true, swap: row };
 }
 
@@ -1948,7 +2049,7 @@ export default {
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
           path === '/api/cleanup/scan' ||
           path === '/api/swap/holdings' || path === '/api/swap/record' ||
-          path === '/api/swap/history' ||
+          path === '/api/swap/history' || path === '/api/swap/token' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -2372,15 +2473,7 @@ export default {
         // it. The warnings are the point of this endpoint, not a footnote.
         return json(request, env, {
           tokens: (Array.isArray(list) ? list : []).slice(0, 20).map(function (t) {
-            const a = t.audit || {};
-            const warnings = [];
-            if (!t.isVerified) warnings.push('Not on Jupiter\u2019s verified list');
-            if (a.mintAuthorityDisabled === false) warnings.push('The team can still mint more');
-            if (a.freezeAuthorityDisabled === false) warnings.push('The team can freeze your tokens');
-            if (Number(a.topHoldersPercentage) > 50) {
-              warnings.push('Top 10 wallets hold ' + Math.round(a.topHoldersPercentage) + '%');
-            }
-            if (Number(t.liquidity) < 25000) warnings.push('Thin liquidity — expect slippage');
+            const warnings = tokenWarnings(t);
             return {
               mint: t.id, symbol: t.symbol, name: t.name, decimals: t.decimals,
               icon: t.icon || null, verified: !!t.isVerified,
@@ -2512,10 +2605,17 @@ export default {
         }
         const rows = await env.DB.prepare(
           'SELECT s.signature, s.in_mint, s.in_symbol, s.in_amount, s.out_mint, s.out_symbol, s.out_amount, ' +
-          's.usd, s.ts, a.points FROM swaps s LEFT JOIN swap_awards a ON a.signature = s.signature ' +
+          's.usd, s.fee_bps, s.saved_usd, s.ts, a.points FROM swaps s LEFT JOIN swap_awards a ON a.signature = s.signature ' +
           'WHERE s.wallet = ? ORDER BY s.ts DESC LIMIT 25'
         ).bind(who).all();
-        return json(request, env, { swaps: rows.results || [] });
+        const saved = await env.DB.prepare(
+          'SELECT COALESCE(SUM(saved_usd), 0) AS usd, COUNT(*) AS n FROM swaps WHERE wallet = ? AND saved_usd > 0'
+        ).bind(who).first();
+        return json(request, env, {
+          swaps: rows.results || [],
+          savedUsd: Math.round(((saved && saved.usd) || 0) * 100) / 100,
+          discountedSwaps: (saved && saved.n) || 0
+        });
       }
 
       if (path === '/api/swap/tokens' && request.method === 'GET') {
@@ -2526,7 +2626,8 @@ export default {
         const inputMint = url.searchParams.get('in');
         const outputMint = url.searchParams.get('out');
         const amount = url.searchParams.get('amount');
-        const slippageBps = Math.max(1, Math.min(5000, Number(url.searchParams.get('slippage')) || 50));
+        const slippageParam = url.searchParams.get('slippage');
+        const who = url.searchParams.get('wallet');
         if (!isWallet(inputMint) || !isWallet(outputMint)) {
           return json(request, env, { error: 'pick two tokens' }, 400);
         }
@@ -2535,12 +2636,19 @@ export default {
           return json(request, env, { error: 'enter an amount' }, 400);
         }
 
+        const auto = slippageParam === 'auto';
+        const slippageBps = auto
+          ? await autoSlippageBps(env, inputMint, outputMint)
+          : Math.max(1, Math.min(5000, Number(slippageParam) || 50));
         const fee = swapFee(inputMint, outputMint);
+        // the discount is decided here and enforced again when the swap is built
+        const holder = isWallet(who) ? await isRangerHolder(env, who) : false;
+        const feeBps = fee ? swapFeeBpsFor(holder) : 0;
         const q = new URLSearchParams({
           inputMint: inputMint, outputMint: outputMint,
           amount: String(amount), slippageBps: String(slippageBps)
         });
-        if (fee) q.set('platformFeeBps', String(SWAP_FEE_BPS));
+        if (fee) q.set('platformFeeBps', String(feeBps));
 
         const res = await jupFetch(env, '/swap/v1/quote?' + q.toString());
         if (!res.ok) {
@@ -2552,7 +2660,15 @@ export default {
         if (quote.error) return json(request, env, { error: quote.error }, 400);
         // feeMint says which token the fee is really taken in: the quote always
         // prices it in the output token, even when it comes out of the input
-        return json(request, env, { quote: quote, feeBps: fee ? SWAP_FEE_BPS : 0, feeMint: fee ? fee.mint : null });
+        return json(request, env, {
+          quote: quote,
+          feeBps: feeBps,
+          fullFeeBps: fee ? SWAP_FEE_BPS : 0,
+          holder: holder,
+          feeMint: fee ? fee.mint : null,
+          slippageBps: slippageBps,
+          autoSlippage: auto
+        });
       }
 
       if (path === '/api/swap/build' && request.method === 'POST') {
@@ -2565,12 +2681,25 @@ export default {
         // Rebuild the fee account here rather than trusting the client with it.
         const fee = swapFee(quote.inputMint, quote.outputMint);
 
+        // The quote arrives from the browser, so its fee rate is checked against
+        // what this wallet is actually entitled to. The wallet is the one that
+        // signs, so quoting as a holder's address and swapping from another
+        // wallet does not carry the discount across.
+        if (fee) {
+          const entitled = swapFeeBpsFor(await isRangerHolder(env, user));
+          const quoted = quote.platformFee ? Number(quote.platformFee.feeBps) : 0;
+          if (quoted !== entitled) {
+            return json(request, env, { error: 'that price is out of date — getting a fresh one', requote: true }, 409);
+          }
+        }
+
         const payload = {
           quoteResponse: quote,
           userPublicKey: user,
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
-          dynamicSlippage: false
+          dynamicSlippage: false,
+          prioritizationFeeLamports: swapPriority(body.speed)
         };
         if (fee) payload.feeAccount = fee.account;
 
@@ -2589,6 +2718,16 @@ export default {
           lastValidBlockHeight: out.lastValidBlockHeight,
           prioritizationFeeLamports: out.prioritizationFeeLamports
         });
+      }
+
+      // What someone is about to buy, in numbers: price, market cap, liquidity,
+      // holders and the day's move, alongside the same warnings the search shows.
+      if (path === '/api/swap/token' && request.method === 'GET') {
+        const mint = url.searchParams.get('mint');
+        if (!isWallet(mint)) return json(request, env, { error: 'not a token address' }, 400);
+        const info = (await tokenInfo(env, [mint]))[mint];
+        if (!info) return json(request, env, { error: 'no details for that token' }, 404);
+        return json(request, env, { token: tokenCard(info) });
       }
 
       // What the slot has actually earned, read straight off the fee accounts.

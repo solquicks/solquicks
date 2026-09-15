@@ -132,5 +132,5 @@ CREATE INDEX IF NOT EXISTS idx_swap_awards_wallet ON swap_awards(wallet, ts);
 -- Swap history, one row per swap made through the site. Every column is read
 -- from the chain at record time; symbols and dollar value are kept as they were
 -- then, since both change afterwards. fee_mint is null when no fee was paid.
-CREATE TABLE IF NOT EXISTS swaps (signature TEXT PRIMARY KEY, wallet TEXT NOT NULL, in_mint TEXT NOT NULL, in_symbol TEXT, in_amount REAL NOT NULL, out_mint TEXT NOT NULL, out_symbol TEXT, out_amount REAL NOT NULL, usd REAL, fee_mint TEXT, fee_amount REAL, ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS swaps (signature TEXT PRIMARY KEY, wallet TEXT NOT NULL, in_mint TEXT NOT NULL, in_symbol TEXT, in_amount REAL NOT NULL, out_mint TEXT NOT NULL, out_symbol TEXT, out_amount REAL NOT NULL, usd REAL, fee_mint TEXT, fee_amount REAL, fee_bps INTEGER, saved_usd REAL NOT NULL DEFAULT 0, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet, ts);
