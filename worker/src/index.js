@@ -489,7 +489,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'sol-fee-1';
+const BUILD = 'usdt-fee-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -975,12 +975,16 @@ const SWAP_FEE_BPS = 20;
 // Dollar stablecoins, valued at $1 wherever fees are totted up.
 const DOLLAR_MINTS = [
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo'  // PYUSD
+  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo', // PYUSD
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'  // USDT
 ];
 
 const SWAP_FEE_ACCOUNTS = {
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn',
   'So11111111111111111111111111111111111111112': 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
+  // created 2026-09-15; fee taken from USDT received and from USDT sold both
+  // simulated on mainnet before it was added
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': '7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL',
   // Token-2022, so its referral account lives under that program — which is
   // exactly the mismatch that broke this pair before it existed.
   '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo': '6aypgwsaHJmrVA6gS2EH5d67EmQyoSR2CRtoX33iZ9Yh'
@@ -1005,7 +1009,8 @@ const SWAP_TOKENS = [
 // has not been tested.
 const INPUT_FEE_MINTS = [
   'So11111111111111111111111111111111111111112',
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'   // USDT
 ];
 
 /// Which fee account a swap pays into, and in which token. The output side is

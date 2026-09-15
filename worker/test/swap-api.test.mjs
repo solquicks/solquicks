@@ -14,7 +14,8 @@ const NFT = 'NftNftNftNftNftNftNftNftNftNftNftNftNftNft11';
 const FEE = {
   [USDC]: '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn',
   [SOL]: 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
-  [PYUSD]: '6aypgwsaHJmrVA6gS2EH5d67EmQyoSR2CRtoX33iZ9Yh'
+  [PYUSD]: '6aypgwsaHJmrVA6gS2EH5d67EmQyoSR2CRtoX33iZ9Yh',
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': '7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL'
 };
 const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
@@ -87,6 +88,8 @@ section('which swaps earn the fee, and in which token');
     ['BONK → PYUSD', BONK, PYUSD, PYUSD, 'unchanged: PYUSD as the token received'],
     ['SOL → BONK', SOL, BONK, SOL, 'paid in the SOL sold'],
     ['USDC → WIF', USDC, WIF, USDC, 'paid in the USDC sold'],
+    ['BONK → USDT', BONK, USDT, USDT, 'new: paid in the USDT received'],
+    ['USDT → BONK', USDT, BONK, USDT, 'new: paid in the USDT sold, not in SOL'],
     ['BONK → WIF', BONK, WIF, 'sol', 'new: neither side has a fee account, so it is paid in SOL'],
     ['PYUSD → BONK', PYUSD, BONK, 'sol', 'new: a Token-2022 input is untested, so it is paid in SOL']
   ];
