@@ -286,6 +286,19 @@ in the swap tab); each one failed the test.
 needs the Titan team to approve the fee account, on top of a paid Triton or
 QuickNode plan. Swaps stay on Jupiter, which pays the fee with no approval.
 
+**25. Every swap earns — shipped 2026-09-15.** A pair with no fee account on either
+side (BONK → WIF, ENT → WIF, PYUSD → anything) now pays the same 0.2% (0.1% for
+Moon Rangers) as a SOL transfer to the treasury, added to the transaction the
+wallet signs. The worker sets the amount from Jupiter's dollar value and the SOL
+price; the page skips it if the wallet would be left under 0.005 SOL, and the
+swap still goes through. History, savings and the weekly leaderboard read it
+back from the chain; a transfer well under the holder rate does not count as a
+fee. Proven on mainnet: ENT → WIF with the fee added simulated cleanly, the payer
+paid exactly the fee and the treasury received exactly that.
+← **ACTION FOR YOU: create the USDT fee account** on referral.jup.ag (about 0.002
+SOL rent). Its address will be `7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL`.
+Once it exists, USDT swaps move from the SOL fee to a fee taken inside the swap.
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real

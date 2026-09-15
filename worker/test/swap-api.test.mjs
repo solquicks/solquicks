@@ -2,7 +2,7 @@
 // which token, which Jupiter address is used, wallet holdings across both token
 // programs, and swap history read off the chain. Harness in harness.mjs.
 
-import { chain, freshEnv, call, wallet, signIn, ok, eq, section, finish, runScheduled, setClock, START } from './harness.mjs';
+import { chain, freshEnv as blankEnv, call, wallet, signIn, ok, eq, section, finish, runScheduled, setClock, START, TREASURY, pay } from './harness.mjs';
 
 const SOL = 'So11111111111111111111111111111111111111112';
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -42,7 +42,7 @@ chain.jup = (u, init) => {
     return {
       inputMint: u.searchParams.get('inputMint'), outputMint: u.searchParams.get('outputMint'),
       inAmount: u.searchParams.get('amount'), outAmount: String(out), otherAmountThreshold: String(out * 0.99),
-      priceImpactPct: '0.001', routePlan: [], platformFee: fee ? { amount: String(out * Number(fee) / 10000), feeBps: Number(fee) } : null
+      priceImpactPct: '0.001', routePlan: [], swapUsdValue: '150', platformFee: fee ? { amount: String(out * Number(fee) / 10000), feeBps: Number(fee) } : null
     };
   }
   if (u.pathname === '/swap/v1/swap') return { swapTransaction: 'AAAA', lastValidBlockHeight: 1 };
@@ -66,34 +66,79 @@ const build = async (env, q, extra = {}) => {
   await call(env, 'POST', '/api/swap/build', { body: Object.assign({ quote: q, user: wallet(1) }, extra) });
   return chain.jupCalls.filter((c) => c.url.includes('/swap/v1/swap')).pop().body;
 };
+// SOL at $150, cached the way the worker caches it, so no price feed is called.
+// Any quote for a pair without a fee account prices its SOL fee.
+const withSolPrice = (env) => {
+  env._db.prepare("INSERT OR REPLACE INTO kv_cache (k, n, ts) VALUES ('solusd', 1500000, ?)").run(Date.now());
+  return env;
+};
+const freshEnv = (overrides) => withSolPrice(blankEnv(overrides));
 
 // ═════════════════════════════════════════════════════════════════════════════
 
 section('which swaps earn the fee, and in which token');
 {
-  const env = freshEnv();
+  const env = withSolPrice(freshEnv());
+  // every quote is a $150 swap; 0.2% of it at SOL $150 is 0.002 SOL
   const cases = [
     ['SOL → USDC', SOL, USDC, USDC, 'unchanged: paid in the token received'],
     ['USDC → SOL', USDC, SOL, SOL, 'unchanged: paid in the token received'],
     ['BONK → USDC', BONK, USDC, USDC, 'unchanged: paid in the token received'],
     ['BONK → PYUSD', BONK, PYUSD, PYUSD, 'unchanged: PYUSD as the token received'],
-    ['SOL → BONK', SOL, BONK, SOL, 'new: paid in the SOL sold'],
-    ['USDC → WIF', USDC, WIF, USDC, 'new: paid in the USDC sold'],
-    ['BONK → WIF', BONK, WIF, null, 'no fee: neither side has a fee account'],
-    ['PYUSD → BONK', PYUSD, BONK, null, 'no fee: taking it from a Token-2022 input is untested']
+    ['SOL → BONK', SOL, BONK, SOL, 'paid in the SOL sold'],
+    ['USDC → WIF', USDC, WIF, USDC, 'paid in the USDC sold'],
+    ['BONK → WIF', BONK, WIF, 'sol', 'new: neither side has a fee account, so it is paid in SOL'],
+    ['PYUSD → BONK', PYUSD, BONK, 'sol', 'new: a Token-2022 input is untested, so it is paid in SOL']
   ];
   for (const [label, inMint, outMint, feeMint, why] of cases) {
+    const inSwap = feeMint !== 'sol';
     const { r, sentFee } = await quote(env, inMint, outMint);
-    eq(`${label} — ${why}`, r.body.feeMint, feeMint);
-    eq(`${label}: Jupiter is asked for ${feeMint ? '20 bps' : 'no fee'}`, sentFee, feeMint ? '20' : null);
-    const body = await build(env, r.body.quote);
-    eq(`${label}: the swap is built with ${feeMint ? 'that token’s fee account' : 'no fee account'}`,
-      body.feeAccount, feeMint ? FEE[feeMint] : undefined);
+    eq(`${label} — ${why}`, r.body.feeMint, inSwap ? feeMint : SOL);
+    eq(`${label}: Jupiter is asked for ${inSwap ? '20 bps' : 'no fee'}`, sentFee, inSwap ? '20' : null);
+    eq(`${label}: quoted at 0.2%`, r.body.feeBps, 20);
+    const res = await call(env, 'POST', '/api/swap/build', { body: { quote: r.body.quote, user: wallet(1) } });
+    const body = chain.jupCalls.filter((c) => c.url.includes('/swap/v1/swap')).pop().body;
+    eq(`${label}: the swap is built with ${inSwap ? 'that token’s fee account' : 'no fee account'}`,
+      body.feeAccount, inSwap ? FEE[feeMint] : undefined);
+    eq(`${label}: ${inSwap ? 'no separate SOL payment' : 'a 0.002 SOL payment to the treasury is added'}`,
+      JSON.stringify(res.body.feeTransfer), inSwap ? 'null' : JSON.stringify({ to: TREASURY, lamports: 2000000 }));
   }
 
   const { r } = await quote(env, SOL, BONK);
   const body = await build(env, r.body.quote, { feeAccount: wallet(66) });
   eq('a fee account sent by the client is ignored', body.feeAccount, FEE[SOL]);
+}
+
+section('pairs with no fee account pay in SOL');
+{
+  const env = withSolPrice(freshEnv());
+  const holder = wallet(90);
+  env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 1, 1, 1)').run(holder);
+  const q = (who) => call(env, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50` + (who ? '&wallet=' + who : ''));
+
+  const plain = (await q()).body;
+  eq('the quote shows the fee in lamports', plain.feeLamports, 2000000);
+  const h = (await q(holder)).body;
+  eq('a Moon Ranger is quoted half', h.feeLamports + ' at ' + h.feeBps + ' bps, full ' + h.fullFeeBps, '1000000 at 10 bps, full 20');
+  const built = await call(env, 'POST', '/api/swap/build', { body: { quote: h.quote, user: holder } });
+  eq('and built at half', built.body.feeTransfer && built.body.feeTransfer.lamports, 1000000);
+  const other = await call(env, 'POST', '/api/swap/build', { body: { quote: h.quote, user: wallet(91) } });
+  eq('the holder\'s quote used by another wallet is charged in full', other.body.feeTransfer && other.body.feeTransfer.lamports, 2000000);
+
+  const answer = chain.jup;
+  chain.jup = (u, init) => {
+    const out = answer(u, init);
+    if (u.pathname === '/swap/v1/quote') out.swapUsdValue = u.searchParams.get('amount') === '1' ? '0.0001' : undefined;
+    return out;
+  };
+  const noValue = (await q()).body;
+  eq('no dollar value on the quote: no fee rather than a guess', noValue.feeLamports + ' ' + noValue.feeMint + ' ' + noValue.feeBps, '0 null 0');
+  const dust = (await call(env, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1&slippage=50`)).body;
+  eq('a fee under 1000 lamports is skipped', dust.feeLamports, 0);
+  chain.jup = answer;
+
+  const noTreasury = withSolPrice(freshEnv({ TREASURY_WALLET: undefined }));
+  eq('with no treasury configured, nothing is charged', (await call(noTreasury, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50`)).body.feeLamports, 0);
 }
 
 section('which Jupiter address is used');
@@ -168,8 +213,8 @@ section('your tokens');
 
 // A finished swap as getTransaction reports it: `who` sells `spend`, receives
 // `get`, and optionally pays a fee into one of the site's fee accounts.
-function swapTx(sig, who, { solSpent = 0, spend = null, get, fee = null, failed = false }) {
-  const keys = [who, 'tokIn', 'tokOut'].concat(fee ? [fee.account] : []);
+function swapTx(sig, who, { solSpent = 0, spend = null, get, fee = null, solFee = 0, failed = false }) {
+  const keys = [who, 'tokIn', 'tokOut'].concat(fee ? [fee.account] : []).concat(solFee ? [TREASURY] : []);
   // shaped like jsonParsed token balances: whole base units plus decimals
   const DEC = { [SOL]: 9, [USDC]: 6, [PYUSD]: 6, [BONK]: 5, [WIF]: 6 };
   const bal = (accountIndex, mint, owner, ui) => ({ accountIndex, mint, owner,
@@ -189,7 +234,8 @@ function swapTx(sig, who, { solSpent = 0, spend = null, get, fee = null, failed 
     transaction: { message: { accountKeys: keys.map((pubkey) => ({ pubkey })) } },
     meta: {
       err: failed ? { InstructionError: [0, 'Custom'] } : null, fee: 5000,
-      preBalances: [10e9, 0, 0, 0], postBalances: [10e9 - solSpent * 1e9 - 5000, 0, 0, 0],
+      preBalances: [10e9, 0, 0].concat(fee ? [0] : [], solFee ? [3e9] : []),
+      postBalances: [10e9 - solSpent * 1e9 - solFee - 5000, 0, 0].concat(fee ? [0] : [], solFee ? [3e9 + solFee] : []),
       preTokenBalances: pre, postTokenBalances: post
     }
   });
@@ -316,6 +362,36 @@ section('what a holder saved, in history');
   eq('history totals what was saved', hist.savedUsd + ' over ' + hist.discountedSwaps, '0.15 over 1');
 }
 
+section('a SOL-paid fee, read back off the chain');
+{
+  const env = freshEnv();
+  const me = wallet(92);
+  // $150 of BONK for WIF, with 0.002 SOL ($0.30, 20 bps) sent to the treasury
+  swapTx('T'.repeat(88), me, { spend: { mint: BONK, amount: 7_500_000 }, get: { mint: WIF, amount: 74.85 }, solFee: 2_000_000 });
+  const a = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'T'.repeat(88) } })).body.swap || {};
+  eq('recorded as paid in SOL', a.fee_mint + ' ' + a.fee_amount, SOL + ' 0.002');
+  eq('at 20 bps of the swap', a.fee_bps, 20);
+  eq('the fee is not mistaken for SOL sold', a.in_symbol + ' ' + a.usd, 'BONK 150');
+  swapTx('U'.repeat(88), me, { spend: { mint: BONK, amount: 7_500_000 }, get: { mint: WIF, amount: 74.85 }, solFee: 1_000_000 });
+  const b = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'U'.repeat(88) } })).body.swap || {};
+  eq('a holder\'s half fee reads back as 10 bps, saving $0.15', b.fee_bps + ' ' + b.saved_usd, '10 0.15');
+  swapTx('V'.repeat(88), me, { spend: { mint: BONK, amount: 7_500_000 }, get: { mint: WIF, amount: 74.85 }, solFee: 1000 });
+  const c = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'V'.repeat(88) } })).body.swap || {};
+  eq('a few lamports sent to the treasury alongside a swap made elsewhere are not a fee', c.fee_mint, null);
+
+  // the scheduled job also watches the treasury, which receives booking payments too
+  const swapSig = swapTx('W'.repeat(80) + 'treasury', wallet(93), { spend: { mint: BONK, amount: 7_500_000 }, get: { mint: WIF, amount: 74.85 }, solFee: 2_000_000 });
+  const paySig = pay({ from: wallet(94), usdc: 250e6 });
+  chain.byRef.set(TREASURY, [{ signature: swapSig, err: null }, { signature: paySig, err: null }]);
+  await runScheduled(env);
+  eq('a SOL-fee swap nobody reported is found through the treasury', env._db.prepare('SELECT fee_mint FROM swaps WHERE signature = ?').get(swapSig)?.fee_mint, SOL);
+  const fetches = () => chain.rpcCalls.filter((m) => m === 'getTransaction').length;
+  const before = fetches();
+  await runScheduled(env);
+  eq('a booking payment is looked at once, then left alone', fetches(), before);
+  chain.byRef.delete(TREASURY);
+}
+
 section('weekly swap leaderboard');
 {
   const env = freshEnv();
@@ -411,7 +487,7 @@ section('cleanup scan after closing accounts');
   chain.rpc.getAssetBatch = () => [];
   const env = freshEnv();
   // the scan also shows a SOL price, cached for five minutes; start with one cached
-  env._db.prepare("INSERT INTO kv_cache (k, n, ts) VALUES ('solusd', 1500000, ?)").run(Date.now());
+  env._db.prepare("INSERT OR REPLACE INTO kv_cache (k, n, ts) VALUES ('solusd', 1500000, ?)").run(Date.now());
   const scan = (fresh) => call(env, 'GET', '/api/cleanup/scan?wallet=' + owner + (fresh ? '&fresh=1' : ''));
   const emptyCount = (r) => (r.body.accounts || []).filter((a) => a.empty).length;
 

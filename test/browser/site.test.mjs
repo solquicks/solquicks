@@ -18,7 +18,17 @@ const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
 const SENDER = 'https://sender.helius-rpc.com/';
 const WALLET = '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd';
 const SOL = 'So11111111111111111111111111111111111111112';
+const SENDER_TIP = [
+  '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE', 'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
+  '9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta', '5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn',
+  '2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD', '2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ',
+  'wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF', '3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT',
+  '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey', '4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or'
+];
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+const WIF = 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
+const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
 
 // ── assertions ───────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -42,7 +52,7 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
-const net = { worker: [], rpc: [], sender: [], built: null };
+const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null };
 
 const HOLDINGS = [
   { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9, verified: true, amount: 2, price: 100, usd: 200 },
@@ -54,12 +64,24 @@ const HOLDINGS = [
   { mint: 'DUSTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'DUST', name: 'Worth almost nothing', decimals: 6, verified: false, amount: 5, price: 0.0001, usd: 0.0005 }
 ];
 
-function workerAnswer(p) {
+function workerAnswer(p, url) {
   if (p === '/api/swap/tokens') return { tokens: [
     { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9 },
     { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
   ] };
   if (p === '/api/swap/holdings') return { wallet: WALLET, tokens: HOLDINGS, totalUsd: 262, more: 0 };
+  // a pair with no fee account on either side: the fee is a SOL payment
+  if (p === '/api/swap/quote' && url.searchParams.get('in') === BONK) return {
+    quote: {
+      inputMint: BONK, outputMint: WIF, inAmount: '100000000000', outAmount: '74850000', otherAmountThreshold: '74000000',
+      priceImpactPct: '0.0001', swapUsdValue: '150', platformFee: null,
+      routePlan: [{ percent: 100, swapInfo: { label: 'Raydium' } }]
+    },
+    feeBps: 20, fullFeeBps: 20, feeLamports: 2000000, holder: false, feeMint: SOL, slippageBps: 50, autoSlippage: true
+  };
+  if (p === '/api/swap/build' && net.lastQuote === BONK) {
+    return { swapTransaction: net.built, lastValidBlockHeight: 1e12, feeTransfer: { to: TREASURY, lamports: 2000000 } };
+  }
   if (p === '/api/swap/quote') return {
     quote: {
       inputMint: SOL, outputMint: USDC, inAmount: '1000000000', outAmount: '99800000', otherAmountThreshold: '99300000',
@@ -77,7 +99,7 @@ function workerAnswer(p) {
 function rpcAnswer(method) {
   const ctx = { slot: 1 };
   switch (method) {
-    case 'getBalance': return { context: ctx, value: 2e9 };
+    case 'getBalance': return { context: ctx, value: net.lamports };
     case 'getParsedTokenAccountsByOwner':
     case 'getTokenAccountsByOwner': return { context: ctx, value: [] };
     case 'getLatestBlockhash': return { context: ctx, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1e12 } };
@@ -101,9 +123,10 @@ async function standIns(context) {
     if (url.startsWith(SITE) || url.startsWith('https://cdn.jsdelivr.net/')) return route.continue();
     if (req.method() === 'OPTIONS') return json(route, {});
     if (url.startsWith(WORKER)) {
-      const p = new URL(url).pathname;
-      net.worker.push(p);
-      return json(route, workerAnswer(p));
+      const u = new URL(url);
+      net.worker.push(u.pathname);
+      if (u.pathname === '/api/swap/quote') net.lastQuote = u.searchParams.get('in');
+      return json(route, workerAnswer(u.pathname, u));
     }
     if (url.startsWith(RPC)) {
       const body = JSON.parse(req.postData() || '{}');
@@ -137,6 +160,7 @@ function testWallet(address) {
         version: '1.0.0', supportedTransactionVersions: ['legacy', 0],
         signAndSendTransaction: async (...inputs) => {
           window.__wallet.signAndSend++;
+          window.__wallet.lastSent = Array.from(inputs[0].transaction);
           return inputs.map(() => ({ signature: new Uint8Array(64).fill(1) }));
         }
       },
@@ -159,6 +183,17 @@ function testWallet(address) {
   };
   window.addEventListener('wallet-standard:app-ready', (e) => e.detail.register(wallet));
 }
+
+// every SOL transfer in a transaction: [from, to, lamports]
+const transfersIn = (page, bytesOrB64) => page.evaluate((input) => {
+  const bytes = typeof input === 'string' ? Uint8Array.from(atob(input), (c) => c.charCodeAt(0)) : Uint8Array.from(input);
+  const tx = solanaWeb3.VersionedTransaction.deserialize(bytes);
+  const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+  return tx.message.compiledInstructions
+    .filter((ix) => keys[ix.programIdIndex] === '11111111111111111111111111111111')
+    .map((ix) => [keys[ix.accountKeyIndexes[0]], keys[ix.accountKeyIndexes[1]],
+      Number(new DataView(ix.data.buffer, ix.data.byteOffset).getBigUint64(4, true))]);
+}, bytesOrB64);
 
 // ── run ──────────────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
@@ -273,6 +308,45 @@ try {
     eq('paid by the connected wallet', tip.from, WALLET);
     ok('what was sent is what the wallet signed', tip.signed);
   }
+
+  section('swap: a pair with no fee account pays in SOL');
+  const bonkForWif = async () => {
+    await page.evaluate(([bonk, wif]) => {
+      swapPair.in = { mint: bonk, symbol: 'BONK', name: 'Bonk', decimals: 5 };
+      swapPair.out = { mint: wif, symbol: 'WIF', name: 'dogwifhat', decimals: 6 };
+      paintPair();
+      document.getElementById('sw-in-amount').value = '';
+    }, [BONK, WIF]);
+    await page.fill('#sw-in-amount', '1000000');
+    await page.waitForFunction(() => /BONK for WIF/.test(document.getElementById('sw-go').textContent) && !document.getElementById('sw-go').disabled, null, { timeout: 10000 });
+  };
+  await bonkForWif();
+  eq('the fee is shown in SOL', (await page.textContent('#sw-fee')).trim(), '0.002 SOL (0.2%)');
+  let sentBefore = net.sender.length;
+  await page.click('#sw-go');
+  await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
+  const protectedSend = net.sender.slice(sentBefore)[0];
+  const withTip = protectedSend ? await transfersIn(page, protectedSend.body.params[0]) : [];
+  ok('with bot protection: the SOL fee goes to the treasury', withTip.some((t) => t[1] === TREASURY && t[2] === 2000000 && t[0] === WALLET), JSON.stringify(withTip));
+  ok('and the tip is still there, last', withTip.length && SENDER_TIP.includes(withTip.at(-1)[1]) && withTip.at(-1)[2] === 5000, JSON.stringify(withTip));
+
+  await bonkForWif();
+  await page.click('.sw-protect button[data-protect="off"]');
+  await page.click('#sw-go');
+  await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
+  const plain = await transfersIn(page, await page.evaluate(() => __wallet.lastSent));
+  ok('without bot protection: the SOL fee is in the transaction the wallet sends', plain.some((t) => t[1] === TREASURY && t[2] === 2000000), JSON.stringify(plain));
+  eq('and nothing else was added', plain.length, 2);
+
+  net.lamports = 4e6;   // 0.004 SOL: not enough for the fee and the network costs
+  await bonkForWif();
+  await page.click('#sw-go');
+  await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
+  const short = await transfersIn(page, await page.evaluate(() => __wallet.lastSent));
+  ok('a wallet short of SOL still swaps, without the fee', !short.some((t) => t[1] === TREASURY), JSON.stringify(short));
+  net.lamports = 2e9;
+  await bonkForWif();
+  await page.click('.sw-protect button[data-protect="on"]');
 
   section('settings survive a reload');
   await page.reload({ waitUntil: 'domcontentloaded' });

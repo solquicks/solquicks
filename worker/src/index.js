@@ -489,7 +489,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'mc-travel-1';
+const BUILD = 'sol-fee-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1020,6 +1020,22 @@ function swapFee(inputMint, outputMint) {
   return null;
 }
 
+// A pair with no fee account on either side (BONK → WIF, say) would otherwise
+// earn nothing. Those pay the same rate as a plain SOL transfer to the treasury,
+// which the page adds to the swap transaction before the wallet signs it. The
+// amount comes from Jupiter's dollar value for the swap and the SOL price, and
+// anything too small to matter is skipped.
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const SOL_FEE_MIN_LAMPORTS = 1000;
+async function solFeeLamports(env, quote, bps) {
+  const usd = Number(quote && quote.swapUsdValue);
+  if (!env.TREASURY_WALLET || !bps || !(usd > 0)) return 0;
+  const sol = await solUsd(env);
+  if (!sol) return 0;
+  const lamports = Math.floor(usd * bps / 10000 / sol * 1e9);
+  return lamports >= SOL_FEE_MIN_LAMPORTS ? lamports : 0;
+}
+
 // Moon Ranger holders pay half. A wallet that holds or has staked a Ranger is
 // quoted and charged 10 bps instead of 20.
 const HOLDER_SWAP_FEE_BPS = 10;
@@ -1163,12 +1179,6 @@ async function inspectSwap(env, signature) {
     if (delta < 0n) spent[mint] = ui(-delta, mint);
     if (delta > 0n) received[mint] = ui(delta, mint);
   }
-  // native SOL, with the network fee excluded so it is not counted as volume
-  const SOL = 'So11111111111111111111111111111111111111112';
-  const solDelta = ((tx.meta.postBalances[0] || 0) - (tx.meta.preBalances[0] || 0) + (tx.meta.fee || 0)) / 1e9;
-  if (solDelta < 0) spent[SOL] = (spent[SOL] || 0) - solDelta;
-  if (solDelta > 0) received[SOL] = (received[SOL] || 0) + solDelta;
-
   // the fee shows as a balance increase on one of this site's fee accounts
   let feePaid = null;
   const feeAccounts = Object.values(SWAP_FEE_ACCOUNTS);
@@ -1178,6 +1188,19 @@ async function inspectSwap(env, signature) {
     const delta = postIdx[r.accountIndex] - (preIdx[r.accountIndex] || 0n);
     if (delta > 0n) feePaid = { mint: r.mint, amount: ui(delta, r.mint) };
   }
+  // or, on a pair with no fee account, as SOL arriving at the treasury
+  let solFee = 0;
+  const treasuryIdx = env.TREASURY_WALLET ? keys.indexOf(env.TREASURY_WALLET) : -1;
+  if (!feePaid && treasuryIdx > 0) {
+    solFee = Math.max(0, (tx.meta.postBalances[treasuryIdx] || 0) - (tx.meta.preBalances[treasuryIdx] || 0));
+    if (solFee) feePaid = { mint: SOL_MINT, amount: solFee / 1e9, native: true };
+  }
+
+  // native SOL, with the network fee and a SOL-paid swap fee excluded so
+  // neither is counted as volume
+  const solDelta = ((tx.meta.postBalances[0] || 0) - (tx.meta.preBalances[0] || 0) + (tx.meta.fee || 0) + solFee) / 1e9;
+  if (solDelta < 0) spent[SOL_MINT] = (spent[SOL_MINT] || 0) - solDelta;
+  if (solDelta > 0) received[SOL_MINT] = (received[SOL_MINT] || 0) + solDelta;
 
   return { ok: true, wallet: wallet, spent: spent, received: received, feePaid: feePaid, ts: (tx.blockTime || 0) * 1000 };
 }
@@ -1314,7 +1337,7 @@ async function recordSwap(env, signature) {
   const spent = Object.keys(s.spent), received = Object.keys(s.received);
   if (!spent.length || !received.length) return { ok: false, error: 'no swap found in that transaction' };
 
-  const prices = await jupPrices(env, spent.concat(received));
+  const prices = await jupPrices(env, spent.concat(received, s.feePaid && s.feePaid.native ? [SOL_MINT] : []));
   const price = function (m) { return (prices[m] && Number(prices[m].usdPrice)) || 0; };
   const biggest = function (legs) {
     return Object.keys(legs).sort(function (a, b) { return legs[b] * price(b) - legs[a] * price(a); })[0];
@@ -1326,7 +1349,19 @@ async function recordSwap(env, signature) {
   // spent, or out of what would have been received. A Moon Ranger holder pays
   // half, so on a discounted swap the saving equals the fee that was paid.
   let feeBps = null, savedUsd = 0;
-  if (s.feePaid) {
+  let feePaid = s.feePaid;
+  if (feePaid && feePaid.native) {
+    // paid in SOL on the side, so the rate is the fee's dollar value over the swap's
+    if (usd) feeBps = Math.round(feePaid.amount * price(SOL_MINT) / usd * 10000);
+    // Anyone can send the treasury a few lamports alongside a swap made elsewhere.
+    // Well short of the holder rate is not this site's fee, and does not count.
+    if (feeBps === null || feeBps < HOLDER_SWAP_FEE_BPS * 0.8) {
+      feePaid = null;
+      feeBps = null;
+    } else if (feeBps < (HOLDER_SWAP_FEE_BPS + SWAP_FEE_BPS) / 2) {
+      savedUsd = Math.round(feePaid.amount * price(SOL_MINT) * 10000) / 10000;
+    }
+  } else if (feePaid) {
     const base = s.feePaid.mint === inMint ? s.spent[inMint]
       : s.feePaid.mint === outMint ? s.received[outMint] + s.feePaid.amount : 0;
     if (base > 0) feeBps = Math.round(s.feePaid.amount / base * 10000);
@@ -1346,7 +1381,7 @@ async function recordSwap(env, signature) {
     in_mint: inMint, in_symbol: symbols[inMint] || null, in_amount: s.spent[inMint],
     out_mint: outMint, out_symbol: symbols[outMint] || null, out_amount: s.received[outMint],
     usd: usd === null ? null : Math.round(usd * 100) / 100,
-    fee_mint: s.feePaid ? s.feePaid.mint : null, fee_amount: s.feePaid ? s.feePaid.amount : null,
+    fee_mint: feePaid ? feePaid.mint : null, fee_amount: feePaid ? feePaid.amount : null,
     fee_bps: feeBps, saved_usd: savedUsd,
     ts: s.ts || Date.now()
   };
@@ -1384,16 +1419,26 @@ async function weeklySwapTop(env, start, limit) {
 /// closed tab would otherwise leave a swap off the leaderboard.
 async function recordFeeAccountSwaps(env) {
   if (!env.HELIUS_API_KEY) return;
-  for (const account of Object.values(SWAP_FEE_ACCOUNTS)) {
+  // the treasury is where SOL-paid fees land, alongside booking and ad payments
+  const watched = Object.values(SWAP_FEE_ACCOUNTS).concat(env.TREASURY_WALLET ? [env.TREASURY_WALLET] : []);
+  for (const account of watched) {
     const list = await rpcCall(env, 'getSignaturesForAddress', [account, { limit: 25 }]).catch(function () { return []; });
     const sigs = (list || []).filter(function (x) { return !x.err; }).map(function (x) { return x.signature; });
     if (!sigs.length) continue;
+    const marks = sigs.map(function () { return '?'; }).join(',');
     const known = await env.DB.prepare(
-      'SELECT signature FROM swaps WHERE signature IN (' + sigs.map(function () { return '?'; }).join(',') + ')'
-    ).bind(...sigs).all();
+      'SELECT signature FROM swaps WHERE signature IN (' + marks + ') ' +
+      "UNION SELECT substr(k, 9) FROM kv_cache WHERE k IN (" + marks + ')'
+    ).bind(...sigs, ...sigs.map(function (s) { return 'notswap:' + s; })).all();
     const seen = new Set((known.results || []).map(function (r) { return r.signature; }));
     for (const sig of sigs) {
-      if (!seen.has(sig)) await recordSwap(env, sig).catch(function () {});
+      if (seen.has(sig)) continue;
+      const r = await recordSwap(env, sig).catch(function () { return null; });
+      // a payment that is not a swap is remembered, so it is not fetched again every run
+      if (r && !r.ok && r.error !== 'swap not found yet') {
+        await env.DB.prepare("INSERT OR IGNORE INTO kv_cache (k, n, ts) VALUES (?, 0, ?)")
+          .bind('notswap:' + sig, Date.now()).run().catch(function () {});
+      }
     }
   }
 }
@@ -2739,14 +2784,17 @@ export default {
         }
         const quote = await res.json();
         if (quote.error) return json(request, env, { error: quote.error }, 400);
+        const feeLamports = fee ? 0 : await solFeeLamports(env, quote, swapFeeBpsFor(holder));
+        const charged = fee || feeLamports > 0;
         // feeMint says which token the fee is really taken in: the quote always
         // prices it in the output token, even when it comes out of the input
         return json(request, env, {
           quote: quote,
-          feeBps: feeBps,
-          fullFeeBps: fee ? SWAP_FEE_BPS : 0,
+          feeBps: charged ? swapFeeBpsFor(holder) : 0,
+          fullFeeBps: charged ? SWAP_FEE_BPS : 0,
+          feeLamports: feeLamports,
           holder: holder,
-          feeMint: fee ? fee.mint : null,
+          feeMint: fee ? fee.mint : feeLamports ? SOL_MINT : null,
           slippageBps: slippageBps,
           autoSlippage: auto
         });
@@ -2766,13 +2814,14 @@ export default {
         // what this wallet is actually entitled to. The wallet is the one that
         // signs, so quoting as a holder's address and swapping from another
         // wallet does not carry the discount across.
+        const entitled = swapFeeBpsFor(await isRangerHolder(env, user));
         if (fee) {
-          const entitled = swapFeeBpsFor(await isRangerHolder(env, user));
           const quoted = quote.platformFee ? Number(quote.platformFee.feeBps) : 0;
           if (quoted !== entitled) {
             return json(request, env, { error: 'that price is out of date — getting a fresh one', requote: true }, 409);
           }
         }
+        const feeLamports = fee ? 0 : await solFeeLamports(env, quote, entitled);
 
         const payload = {
           quoteResponse: quote,
@@ -2797,7 +2846,8 @@ export default {
         return json(request, env, {
           swapTransaction: out.swapTransaction,
           lastValidBlockHeight: out.lastValidBlockHeight,
-          prioritizationFeeLamports: out.prioritizationFeeLamports
+          prioritizationFeeLamports: out.prioritizationFeeLamports,
+          feeTransfer: feeLamports ? { to: env.TREASURY_WALLET, lamports: feeLamports } : null
         });
       }
 

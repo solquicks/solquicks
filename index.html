@@ -5446,7 +5446,9 @@
         const pf = d.quote.platformFee;
         const feeEl = document.getElementById('sw-fee');
         let feeText = 'none on this pair';
-        if (pf && d.feeMint) {
+        if (d.feeLamports) {
+          feeText = fmtAmount(d.feeLamports / 1e9) + ' SOL (' + (d.feeBps / 100) + '%)';
+        } else if (pf && d.feeMint) {
           feeText = (d.feeMint === tIn.mint
             ? fmtAmount(raw * pf.feeBps / 10000) + ' ' + tIn.symbol
             : fmtAmount(Number(pf.amount) / Math.pow(10, tOut.decimals)) + ' ' + tOut.symbol) +
@@ -5649,7 +5651,10 @@
         go.textContent = 'Check your wallet…';
         let sig;
         try {
-          sig = await (swapProtect ? sendProtectedSwap : sendVersionedTx)(d.swapTransaction, d.lastValidBlockHeight);
+          const extras = await swapFeeInstructions(d.feeTransfer);
+          sig = swapProtect
+            ? await sendProtectedSwap(d.swapTransaction, d.lastValidBlockHeight, extras)
+            : await sendVersionedTx(await swapWithFee(d.swapTransaction, extras), d.lastValidBlockHeight);
         } catch (sendErr) {
           // If it reached the network, the swap may well have landed — saying
           // "failed" when the money already moved is the worst outcome here.
@@ -5696,6 +5701,18 @@
         swapBusy = false;
         go.disabled = false;
       }
+    }
+
+    /// A pair with no fee account pays the fee as SOL sent to the treasury. The
+    /// worker sets the amount; the page only checks the wallet can afford it with
+    /// room left for network fees and new token accounts. If not, the swap still
+    /// goes through, without the fee.
+    const SWAP_SOL_RESERVE_LAMPORTS = 5000000;
+    async function swapFeeInstructions(feeTransfer) {
+      if (!feeTransfer || !(feeTransfer.lamports > 0) || !feeTransfer.to) return [];
+      const sol = await tokenBalance(Wallet.pubkey, SOL_MINT).catch(function () { return null; });
+      if (sol === null || sol * 1e9 < feeTransfer.lamports + SWAP_SOL_RESERVE_LAMPORTS) return [];
+      return [systemTransferIx(Wallet.pubkey, feeTransfer.to, feeTransfer.lamports)];
     }
 
     /// Silent failures cannot be fixed. Cancellations are not failures, so they
@@ -5822,31 +5839,47 @@
       return tables.some(function (t) { return !t; }) ? null : tables;
     }
 
-    /// Unpacks Jupiter's transaction, appends the tip transfer and packs it again.
-    /// Returns null when it cannot be done safely.
-    async function withSenderTip(base64) {
+    /// Unpacks Jupiter's transaction, appends instructions of our own (a SOL fee,
+    /// a Sender tip) and packs it again. Returns null when it cannot be done safely.
+    async function withInstructions(base64, extras) {
       const { TransactionMessage, VersionedTransaction } = w3();
       const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(base64), function (c) { return c.charCodeAt(0); }));
       const tables = await lookupTables(tx.message.addressTableLookups.map(function (l) { return l.accountKey; }));
       if (!tables) return null;
       const message = TransactionMessage.decompile(tx.message, { addressLookupTableAccounts: tables });
       if (message.payerKey.toBase58() !== Wallet.pubkey) return null;
-      const tipTo = SENDER_TIP_ACCOUNTS[Math.floor(Math.random() * SENDER_TIP_ACCOUNTS.length)];
-      message.instructions.push(systemTransferIx(Wallet.pubkey, tipTo, SENDER_TIP_LAMPORTS));
+      for (const ix of extras) message.instructions.push(ix);
       const repacked = new VersionedTransaction(message.compileToV0Message(tables));
       if (repacked.serialize().length > 1232) return null;
       return repacked;
     }
 
-    async function sendProtectedSwap(base64, lastValidBlockHeight) {
+    function txBase64(tx) {
+      let binary = '';
+      for (const b of tx.serialize()) binary += String.fromCharCode(b);
+      return btoa(binary);
+    }
+
+    /// The swap as it goes to the wallet: Jupiter's transaction, plus the SOL fee
+    /// when the pair pays one. If it cannot be added, the swap goes without it.
+    async function swapWithFee(base64, extras) {
+      if (!extras.length) return base64;
+      const tx = await withInstructions(base64, extras).catch(function () { return null; });
+      return tx ? txBase64(tx) : base64;
+    }
+
+    async function sendProtectedSwap(base64, lastValidBlockHeight, extras) {
+      extras = extras || [];
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
       const sign = signOnlyFor(provider);
       let tx = null;
       if (sign) {
-        try { tx = await withSenderTip(base64); } catch (e) { tx = null; }
+        const tipTo = SENDER_TIP_ACCOUNTS[Math.floor(Math.random() * SENDER_TIP_ACCOUNTS.length)];
+        const tip = systemTransferIx(Wallet.pubkey, tipTo, SENDER_TIP_LAMPORTS);
+        try { tx = await withInstructions(base64, extras.concat([tip])); } catch (e) { tx = null; }
       }
-      if (!tx) return sendVersionedTx(base64, lastValidBlockHeight);
+      if (!tx) return sendVersionedTx(await swapWithFee(base64, extras), lastValidBlockHeight);
 
       const signed = await sign(tx);
       const signature = b58encode(w3().VersionedTransaction.deserialize(signed).signatures[0]);
