@@ -253,7 +253,7 @@ deploy. Now any swap with SOL or USDC on either side, or PYUSD as the output,
 earns. Still earns nothing: swaps between two tokens neither of which is SOL,
 USDC or PYUSD-out (e.g. BONK → WIF).
 
-**17. ← ACTION FOR YOU: get a Jupiter API key.** Jupiter is retiring
+**17. Jupiter API key — done 2026-09-15.** Jupiter is retiring
 `lite-api.jup.ag`, which the swap uses, by cutting its rate limit step by step
 (no date given). The replacement allows keyless callers about one request every
 two seconds, shared by every visitor — too little for a busy swap. The worker
@@ -282,6 +282,23 @@ Researched against Jupiter's live docs and API before building:
   would prove it, and a wrong fee setting could stop orders filling. Recurring
   v1 no longer answers. $5 minimum.
 Revisit when Jupiter adds integrator fees to Trigger v2.
+
+**20. Round four — shipped 2026-09-15** (ideas taken from Titan while its API is
+pending): Moon Rangers pay half the fee (10 bps), checked against the signing
+wallet when the swap is built; savings shown per swap and in history; the route
+each swap takes; Normal / Fast / Turbo priority fees; Auto slippage set from each
+token's liquidity; token details (market cap, liquidity, holders, 24h move);
+share links and receipt images; a weekly volume leaderboard paying 500 / 250 / 100
+Fox Points to the top three wallets with at least $25 swapped (Monday to Monday
+UTC). Prize amounts and the minimum are constants in the worker.
+
+**21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
+gets a 0.000005 SOL tip added and is sent through Helius Sender with
+`mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
+swap in the browser and simulating on mainnet: it costs the payer exactly the tip
+and nothing else changes. Wallets that can only sign-and-send, or a swap too big
+to take the extra instruction, go the normal way. ← Try one real swap with it on;
+if it lands, consider making it the default.
 
 ---
 

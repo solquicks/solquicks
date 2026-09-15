@@ -13,7 +13,7 @@
   <meta property="og:image:height" content="630"/>
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev;"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com;"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
@@ -2358,6 +2358,12 @@
               <button data-speed="turbo" onclick="setSwapSpeed('turbo')" title="Highest priority fee, at most 0.001 SOL">Turbo</button>
             </span>
           </div>
+          <div class="sw-line"><span>Bot protection</span>
+            <span class="sw-slip sw-protect">
+              <button data-protect="off" onclick="setSwapProtect(false)">Off</button>
+              <button data-protect="on" onclick="setSwapProtect(true)" title="Sends the swap privately so sandwich bots cannot see it first. Adds a 0.000005 SOL tip.">On</button>
+            </span>
+          </div>
         </div>
 
         <div class="sw-token" id="sw-token" hidden></div>
@@ -4598,6 +4604,7 @@
     var swapQuote = null;
     var swapSlippage = 'auto';   // or a number of basis points the person picked
     var swapSpeed = (function () { try { return localStorage.getItem('sq.swap.speed') || 'normal'; } catch (e) { return 'normal'; } })();
+    var swapProtect = (function () { try { return localStorage.getItem('sq.swap.protect') === 'on'; } catch (e) { return false; } })();
     var swapTokenSeq = 0;
     var swapDebounce = null;
     var swapSeq = 0;
@@ -4654,6 +4661,7 @@
       paintPair();
       setSlippage(swapSlippage);
       setSwapSpeed(swapSpeed);
+      setSwapProtect(swapProtect);
       paintRecentPairs();
 
       const amt = document.getElementById('sw-in-amount');
@@ -5020,6 +5028,14 @@
       try { localStorage.setItem('sq.swap.speed', swapSpeed); } catch (e) {}
       document.querySelectorAll('.sw-speed button').forEach(function (b) {
         b.classList.toggle('on', b.dataset.speed === swapSpeed);
+      });
+    }
+
+    function setSwapProtect(on) {
+      swapProtect = !!on;
+      try { localStorage.setItem('sq.swap.protect', swapProtect ? 'on' : 'off'); } catch (e) {}
+      document.querySelectorAll('.sw-protect button').forEach(function (b) {
+        b.classList.toggle('on', (b.dataset.protect === 'on') === swapProtect);
       });
     }
 
@@ -5602,7 +5618,7 @@
         go.textContent = 'Check your wallet…';
         let sig;
         try {
-          sig = await sendVersionedTx(d.swapTransaction, d.lastValidBlockHeight);
+          sig = await (swapProtect ? sendProtectedSwap : sendVersionedTx)(d.swapTransaction, d.lastValidBlockHeight);
         } catch (sendErr) {
           // If it reached the network, the swap may well have landed — saying
           // "failed" when the money already moved is the worst outcome here.
@@ -5714,6 +5730,137 @@
       return signature;
     }
 
+    /// Bot protection. A normal send goes out through public RPC, where a sandwich
+    /// bot can see the swap before it lands and trade around it. With protection on,
+    /// the swap gets a small tip added and goes through Helius Sender with
+    /// mev-protect, which only hands it to validators that do not sandwich.
+    /// It needs a wallet that can sign without sending, and the extra instruction
+    /// has to fit; when either fails the swap goes the normal way instead.
+    const SENDER_URL = 'https://sender.helius-rpc.com/fast?swqos_only=true&mev-protect=true';
+    const SENDER_TIP_LAMPORTS = 5000;
+    const SENDER_TIP_ACCOUNTS = [
+      '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE', 'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
+      '9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta', '5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn',
+      '2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD', '2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ',
+      'wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF', '3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT',
+      '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey', '4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or'
+    ];
+
+    function signOnlyFor(provider) {
+      if (provider.kind === 'injected' && provider.w.signTransaction) {
+        return async function (tx) { return (await provider.w.signTransaction(tx)).serialize(); };
+      }
+      const feat = provider.kind === 'standard' && provider.w.features['solana:signTransaction'];
+      if (feat) {
+        return async function (tx) {
+          const out = await feat.signTransaction({
+            account: walletAccount(provider),
+            chain: 'solana:mainnet',
+            transaction: tx.serialize()
+          });
+          return out[0].signedTransaction;
+        };
+      }
+      return null;
+    }
+
+    /// Address lookup tables, decoded by hand: web3.js's own decoder reaches for
+    /// Node's Buffer, which browsers do not have. An account is a 56-byte header
+    /// followed by the addresses, 32 bytes each. Null for anything that is not one.
+    async function lookupTables(keys) {
+      const { AddressLookupTableAccount, PublicKey } = w3();
+      if (!keys.length) return [];
+      const res = await fetch(HELIUS_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 'alt', method: 'getMultipleAccounts',
+          params: [keys.map(function (k) { return k.toBase58(); }), { encoding: 'base64' }]
+        })
+      });
+      const data = await res.json();
+      if (!data.result) return null;
+      const tables = data.result.value.map(function (acct, i) {
+        if (!acct || acct.owner !== 'AddressLookupTab1e1111111111111111111111111') return null;
+        const bytes = Uint8Array.from(atob(acct.data[0]), function (c) { return c.charCodeAt(0); });
+        if (bytes.length < 56 || (bytes.length - 56) % 32 !== 0) return null;
+        const addresses = [];
+        for (let o = 56; o < bytes.length; o += 32) addresses.push(new PublicKey(bytes.slice(o, o + 32)));
+        return new AddressLookupTableAccount({ key: keys[i], state: { addresses: addresses } });
+      });
+      return tables.some(function (t) { return !t; }) ? null : tables;
+    }
+
+    /// Unpacks Jupiter's transaction, appends the tip transfer and packs it again.
+    /// Returns null when it cannot be done safely.
+    async function withSenderTip(base64) {
+      const { TransactionMessage, VersionedTransaction } = w3();
+      const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(base64), function (c) { return c.charCodeAt(0); }));
+      const tables = await lookupTables(tx.message.addressTableLookups.map(function (l) { return l.accountKey; }));
+      if (!tables) return null;
+      const message = TransactionMessage.decompile(tx.message, { addressLookupTableAccounts: tables });
+      if (message.payerKey.toBase58() !== Wallet.pubkey) return null;
+      const tipTo = SENDER_TIP_ACCOUNTS[Math.floor(Math.random() * SENDER_TIP_ACCOUNTS.length)];
+      message.instructions.push(systemTransferIx(Wallet.pubkey, tipTo, SENDER_TIP_LAMPORTS));
+      const repacked = new VersionedTransaction(message.compileToV0Message(tables));
+      if (repacked.serialize().length > 1232) return null;
+      return repacked;
+    }
+
+    async function sendProtectedSwap(base64, lastValidBlockHeight) {
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+      const sign = signOnlyFor(provider);
+      let tx = null;
+      if (sign) {
+        try { tx = await withSenderTip(base64); } catch (e) { tx = null; }
+      }
+      if (!tx) return sendVersionedTx(base64, lastValidBlockHeight);
+
+      const signed = await sign(tx);
+      const signature = b58encode(w3().VersionedTransaction.deserialize(signed).signatures[0]);
+      let binary = '';
+      for (const b of signed) binary += String.fromCharCode(b);
+      const wire = btoa(binary);
+      const toSender = function () {
+        return fetch(SENDER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: '1', method: 'sendTransaction',
+            params: [wire, { encoding: 'base64', skipPreflight: true, maxRetries: 0 }]
+          })
+        }).then(function (r) { return r.json(); });
+      };
+
+      let accepted;
+      try { accepted = !(await toSender()).error; } catch (e) { accepted = false; }
+      if (!accepted) {
+        // already signed, so the same bytes through the normal route cannot land twice
+        await rpc().sendRawTransaction(signed, { maxRetries: 3 });
+      }
+
+      // Sender does not retry on its own; keep offering it until it lands
+      let settled = false;
+      if (accepted) {
+        (async function () {
+          for (let i = 0; i < 15 && !settled; i++) {
+            await new Promise(function (r) { setTimeout(r, 2000); });
+            if (!settled) toSender().catch(function () {});
+          }
+        })();
+      }
+      try {
+        await confirmSignature(rpc(), signature, lastValidBlockHeight);
+      } catch (e) {
+        e.sentSignature = signature;
+        throw e;
+      } finally {
+        settled = true;
+      }
+      return signature;
+    }
+
     /// Swap failures are mostly slippage, and the raw program error says nothing
     /// useful about that.
     function friendlySwapError(e) {
@@ -5725,7 +5872,8 @@
       }
       if (/insufficient|0x1\b/i.test(m)) return 'Not enough balance to cover the swap plus network fees.';
       if (/blockhash|expired|timed out|timeout/i.test(m)) {
-        return 'That took too long and expired before it landed. Nothing was swapped — try again.';
+        return 'That took too long and expired before it landed. Nothing was swapped — try again.' +
+          (swapProtect ? ' If it keeps happening, try with bot protection off.' : '');
       }
       if (/no route/i.test(m)) return 'No route for that pair right now.';
       if (/internal error|unexpected error|unknown/i.test(m)) {
