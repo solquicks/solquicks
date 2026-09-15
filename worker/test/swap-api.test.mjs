@@ -2,7 +2,7 @@
 // which token, which Jupiter address is used, wallet holdings across both token
 // programs, and swap history read off the chain. Harness in harness.mjs.
 
-import { chain, freshEnv, call, wallet, signIn, ok, eq, section, finish } from './harness.mjs';
+import { chain, freshEnv, call, wallet, signIn, ok, eq, section, finish, runScheduled, setClock, START } from './harness.mjs';
 
 const SOL = 'So11111111111111111111111111111111111111112';
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -314,6 +314,71 @@ section('what a holder saved, in history');
   eq('a full-rate swap reads back as 20 bps, saving nothing', b.fee_bps + ' ' + b.saved_usd, '20 0');
   const hist = (await call(env, 'GET', '/api/swap/history?wallet=' + me)).body;
   eq('history totals what was saved', hist.savedUsd + ' over ' + hist.discountedSwaps, '0.15 over 1');
+}
+
+section('weekly swap leaderboard');
+{
+  const env = freshEnv();
+  const DAY = 86400000;
+  const monday = Date.UTC(2026, 8, 14);                 // the harness clock starts on this Monday
+  const [a, b, c, d, e] = [wallet(40), wallet(41), wallet(42), wallet(43), wallet(44)];
+  const put = (sig, who, usd, ts, feePaid = true) => env._db.prepare(
+    'INSERT INTO swaps (signature, wallet, in_mint, in_amount, out_mint, out_amount, usd, fee_mint, fee_amount, ts) VALUES (?, ?, ?, 1, ?, 1, ?, ?, ?, ?)'
+  ).run(sig, who, SOL, USDC, usd, feePaid ? SOL : null, feePaid ? 0.001 : null, ts);
+  put('w1', a, 300, monday + DAY); put('w2', a, 50, monday + 2 * DAY);   // a: 350
+  put('w3', b, 400, monday + DAY);                                          // b: 400
+  put('w4', c, 90, monday + 3 * DAY);                                       // c: 90
+  put('w5', d, 10, monday + 3 * DAY);                                       // d: 10, under the minimum
+  put('w6', e, 5000, monday + DAY, false);                                  // e: no fee paid — not a site swap
+  put('w7', e, 9000, monday - DAY);                                         // e: last week
+
+  const board = (await call(env, 'GET', '/api/swap/leaderboard')).body;
+  eq('the week starts on Monday, UTC', board.weekStart, monday);
+  eq('ranked by volume this week', board.top.map((r) => r.usd).join(','), '400,350,90,10');
+  eq('swaps from two trades add up', board.top[1].swaps, 2);
+  ok('a swap that paid no fee does not count', !board.top.some((r) => r.wallet === e));
+  eq('prizes and minimum are published', board.prizes.join('/') + ' min $' + board.minUsd, '500/250/100 min $25');
+
+  // the week closes: pay out only after the grace period, and only once
+  setClock(monday + 7 * DAY + 3600000);                 // one hour after the week ended
+  await runScheduled(env);
+  eq('nothing is paid during the grace period', env._db.prepare('SELECT COUNT(*) AS n FROM swap_weekly_awards').get().n, 0);
+  setClock(monday + 7 * DAY + 3 * 3600000);
+  await runScheduled(env);
+  const awards = env._db.prepare('SELECT rank, wallet, points FROM swap_weekly_awards ORDER BY rank').all();
+  eq('the top three are paid 500, 250 and 100', awards.map((r) => r.points).join(','), '500,250,100');
+  eq('in the right order', awards.map((r) => r.wallet).join(','), [b, a, c].join(','));
+  eq('and the points land on their balances', env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(b).points, 500);
+  await runScheduled(env);
+  eq('a second run pays nobody twice', env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(b).points, 500);
+  eq('last week\'s winners are shown', (await call(env, 'GET', '/api/swap/leaderboard')).body.lastWeek.length, 3);
+  setClock(START);
+}
+
+section('a quiet week pays below the minimum to no one');
+{
+  const env = freshEnv();
+  const monday = Date.UTC(2026, 8, 14);
+  env._db.prepare('INSERT INTO swaps (signature, wallet, in_mint, in_amount, out_mint, out_amount, usd, fee_mint, fee_amount, ts) VALUES (?, ?, ?, 1, ?, 1, ?, ?, ?, ?)')
+    .run('q1', wallet(45), SOL, USDC, 24.99, SOL, 0.001, monday + 86400000);
+  setClock(monday + 7 * 86400000 + 3 * 3600000);
+  await runScheduled(env);
+  eq('$24.99 of volume wins nothing', env._db.prepare('SELECT COUNT(*) AS n FROM swap_weekly_awards').get().n, 0);
+  setClock(START);
+}
+
+section('site swaps are recorded from the fee accounts');
+{
+  const env = freshEnv();
+  const me = wallet(46);
+  const sig = swapTx('F'.repeat(80) + 'feeacct', me, { solSpent: 0.5, get: { mint: BONK, amount: 1000 }, fee: { account: FEE[SOL], mint: SOL, amount: 0.001 } });
+  chain.byRef.set(FEE[SOL], [{ signature: sig, err: null }]);
+  await runScheduled(env);
+  eq('a swap nobody reported is found and recorded', env._db.prepare('SELECT wallet FROM swaps WHERE signature = ?').get(sig)?.wallet, me);
+  const before = chain.rpcCalls.filter((m) => m === 'getTransaction').length;
+  await runScheduled(env);
+  eq('and not fetched again once known', chain.rpcCalls.filter((m) => m === 'getTransaction').length, before);
+  chain.byRef.delete(FEE[SOL]);
 }
 
 section('points still check who signed the swap');

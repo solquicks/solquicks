@@ -1396,6 +1396,11 @@
     .sw-hmeta a { color: var(--muted); }
     .sw-hright { text-align: right; white-space: nowrap; font-size: 0.8rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
     .sw-hpts { display: block; font-size: 0.72rem; color: var(--green); font-weight: 800; }
+    .sw-board-ends { font-family: inherit; font-size: 0.74rem; font-weight: 700; color: var(--muted); }
+    .sw-board-prizes, .sw-board-last { font-size: 0.74rem; color: var(--muted); font-weight: 600; margin: 2px 0 6px; }
+    .sw-board-last { margin: 8px 0 0; }
+    .sw-board-rank { display: inline-block; min-width: 22px; color: var(--orange-deep); }
+    .sw-board-me { background: var(--orange-soft); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
     .sw-saving { display: block; font-size: 0.72rem; font-weight: 800; color: var(--green); text-align: right; }
     .sw-history-title .sw-saving { display: inline; margin-left: 8px; font-family: inherit; text-align: left; }
     .sw-route { text-align: right; max-width: 65%; font-size: 0.76rem; overflow-wrap: anywhere; }
@@ -2368,6 +2373,13 @@
       <div class="sw-history" id="sw-history" hidden>
         <div class="sw-history-title">Your swaps</div>
         <div id="sw-history-list"></div>
+      </div>
+
+      <div class="sw-history" id="sw-board" hidden>
+        <div class="sw-history-title">Top swappers this week <span class="sw-board-ends" id="sw-board-ends"></span></div>
+        <div class="sw-board-prizes" id="sw-board-prizes"></div>
+        <div id="sw-board-list"></div>
+        <div class="sw-board-last" id="sw-board-last"></div>
       </div>
     </div>
 
@@ -4630,7 +4642,7 @@
     }
 
     async function loadSwap() {
-      if (swapTokens) { loadSwapHistory(); return; }
+      if (swapTokens) { loadSwapHistory(); loadSwapLeaderboard(); return; }
       try {
         const res = await fetch(POINTS_API + '/api/swap/tokens');
         const d = await res.json();
@@ -4663,6 +4675,7 @@
       loadSwapPoints().then(flushSwapPoints);
       if (!swapTicker) swapTicker = setInterval(tickSwapQuote, 1000);
       if (swapLinkPending) applySwapLink();
+      loadSwapLeaderboard();
     }
 
     function paintPair() {
@@ -5228,6 +5241,41 @@
         } catch (e) { /* try again */ }
       }
       loadSwapHistory();
+      loadSwapLeaderboard();
+    }
+
+    /// This week's top swappers by volume through the site, with the prizes for
+    /// the top three and last week's winners.
+    async function loadSwapLeaderboard() {
+      const box = document.getElementById('sw-board');
+      if (!box) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/swap/leaderboard');
+        const d = await res.json();
+        if (!d.top) return;
+        const left = Math.max(0, d.weekEnd - Date.now());
+        const days = Math.floor(left / 86400000), hours = Math.floor(left / 3600000) % 24;
+        document.getElementById('sw-board-ends').textContent = '· ends in ' + (days ? days + 'd ' : '') + hours + 'h';
+        const place = ['1st', '2nd', '3rd'];
+        document.getElementById('sw-board-prizes').textContent =
+          d.prizes.map(function (p, i) { return place[i] + ' ' + p.toLocaleString(); }).join(' · ') +
+          ' Fox Points · at least $' + d.minUsd + ' to place';
+        const list = document.getElementById('sw-board-list');
+        list.innerHTML = d.top.length ? d.top.map(function (r) {
+          const me = Wallet.pubkey && r.wallet === Wallet.pubkey;
+          return '<div class="sw-hrow' + (me ? ' sw-board-me' : '') + '"><div>' +
+            '<div class="sw-hpair"><span class="sw-board-rank">' + r.rank + '</span>' +
+            (me ? 'You' : escapeHtml(r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4))) + '</div>' +
+            '<div class="sw-hmeta">' + r.swaps + ' swap' + (r.swaps === 1 ? '' : 's') + '</div></div>' +
+            '<div class="sw-hright">' + fmtUsd(r.usd) +
+            (r.rank <= d.prizes.length && r.usd >= d.minUsd ? '<span class="sw-hpts">+' + d.prizes[r.rank - 1].toLocaleString() + ' pts</span>' : '') +
+            '</div></div>';
+        }).join('') : '<div class="sw-empty">No swaps yet this week. First place is open.</div>';
+        document.getElementById('sw-board-last').textContent = d.lastWeek.length
+          ? 'Last week: ' + d.lastWeek.map(function (r) { return place[r.rank - 1] + ' ' + r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4); }).join(', ')
+          : '';
+        box.hidden = false;
+      } catch (e) { /* the board is a bonus; swapping is unaffected */ }
     }
 
     async function loadSwapHistory() {

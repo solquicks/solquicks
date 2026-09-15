@@ -134,3 +134,8 @@ CREATE INDEX IF NOT EXISTS idx_swap_awards_wallet ON swap_awards(wallet, ts);
 -- then, since both change afterwards. fee_mint is null when no fee was paid.
 CREATE TABLE IF NOT EXISTS swaps (signature TEXT PRIMARY KEY, wallet TEXT NOT NULL, in_mint TEXT NOT NULL, in_symbol TEXT, in_amount REAL NOT NULL, out_mint TEXT NOT NULL, out_symbol TEXT, out_amount REAL NOT NULL, usd REAL, fee_mint TEXT, fee_amount REAL, fee_bps INTEGER, saved_usd REAL NOT NULL DEFAULT 0, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet, ts);
+
+-- Weekly swap leaderboard prizes, one row per place per week. The primary key is
+-- what stops a second run of the scheduled job paying anyone twice.
+CREATE TABLE IF NOT EXISTS swap_weekly_awards (week TEXT NOT NULL, rank INTEGER NOT NULL, wallet TEXT NOT NULL, usd REAL NOT NULL, points INTEGER NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (week, rank));
+CREATE INDEX IF NOT EXISTS idx_swaps_ts ON swaps(ts);

@@ -343,6 +343,7 @@ const RATE_RULES = [
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/swap/record'], name: 'swaprecord', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/history'], name: 'swaphistory', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/swap/leaderboard'], name: 'swapboard', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/cleanup/scan'], name: 'cleanscan', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/cleanup/award'], name: 'cleanaward', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
@@ -488,7 +489,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'swap-round4-a-8';
+const BUILD = 'swap-round4-c-9';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1357,6 +1358,66 @@ async function recordSwap(env, signature) {
   return { ok: true, swap: row };
 }
 
+// ── WEEKLY SWAP LEADERBOARD ──
+// Volume counts only swaps that paid this site's fee, so a wallet cannot pad its
+// total with swaps made anywhere else. Weeks run Monday 00:00 UTC to Monday.
+const WEEKLY_SWAP_PRIZES = [500, 250, 100];   // Fox Points for 1st, 2nd, 3rd
+const WEEKLY_SWAP_MIN_USD = 25;               // the least a wallet must swap in a week to place
+
+function weekStart(ts) {
+  const d = new Date(ts);
+  const monday = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - ((d.getUTCDay() + 6) % 7) * 86400000;
+  return monday;
+}
+
+async function weeklySwapTop(env, start, limit) {
+  const rows = await env.DB.prepare(
+    'SELECT wallet, ROUND(SUM(usd), 2) AS usd, COUNT(*) AS swaps FROM swaps ' +
+    'WHERE fee_mint IS NOT NULL AND usd IS NOT NULL AND ts >= ? AND ts < ? ' +
+    'GROUP BY wallet ORDER BY SUM(usd) DESC LIMIT ?'
+  ).bind(start, start + WEEK_MS, limit).all();
+  return rows.results || [];
+}
+
+/// Records every swap that paid a fee in the last stretch, read from the fee
+/// accounts themselves. The page records its own swaps as they happen, but a
+/// closed tab would otherwise leave a swap off the leaderboard.
+async function recordFeeAccountSwaps(env) {
+  if (!env.HELIUS_API_KEY) return;
+  for (const account of Object.values(SWAP_FEE_ACCOUNTS)) {
+    const list = await rpcCall(env, 'getSignaturesForAddress', [account, { limit: 25 }]).catch(function () { return []; });
+    const sigs = (list || []).filter(function (x) { return !x.err; }).map(function (x) { return x.signature; });
+    if (!sigs.length) continue;
+    const known = await env.DB.prepare(
+      'SELECT signature FROM swaps WHERE signature IN (' + sigs.map(function () { return '?'; }).join(',') + ')'
+    ).bind(...sigs).all();
+    const seen = new Set((known.results || []).map(function (r) { return r.signature; }));
+    for (const sig of sigs) {
+      if (!seen.has(sig)) await recordSwap(env, sig).catch(function () {});
+    }
+  }
+}
+
+/// Pays last week's top three once the week has closed. Each place is a row
+/// keyed by week and rank, so a second run pays nothing twice. Two hours of grace
+/// lets swaps from the final minutes be recorded first.
+async function awardWeeklySwapPrizes(env) {
+  const start = weekStart(Date.now()) - WEEK_MS;
+  if (Date.now() < start + WEEK_MS + 2 * 3600000) return;
+  const top = (await weeklySwapTop(env, start, WEEKLY_SWAP_PRIZES.length))
+    .filter(function (r) { return r.usd >= WEEKLY_SWAP_MIN_USD; });
+  const week = new Date(start).toISOString().slice(0, 10);
+  for (let i = 0; i < top.length; i++) {
+    const points = WEEKLY_SWAP_PRIZES[i];
+    const res = await env.DB.prepare(
+      'INSERT INTO swap_weekly_awards (week, rank, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(week, rank) DO NOTHING'
+    ).bind(week, i + 1, top[i].wallet, top[i].usd, points, Date.now()).run();
+    if (res.meta.changes !== 1) continue;
+    await ensurePlayer(env, top[i].wallet);
+    await addPoints(env, top[i].wallet, 'swap_weekly', points);
+  }
+}
+
 async function scanWallet(env, wallet) {
   const rows = [];
   for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
@@ -1986,6 +2047,10 @@ export default {
     // analytics first: a failure here is logged, never fatal, and must not
     // stop the health check from running
     ctx.waitUntil(refreshAnalytics(env).catch(function () {}));
+    // record site swaps first, then pay out a closed week from complete numbers
+    ctx.waitUntil(recordFeeAccountSwaps(env).then(function () { return awardWeeklySwapPrizes(env); }).catch(function (e) {
+      return logError(env, 'swapWeekly', e && e.message);
+    }));
     ctx.waitUntil(reconcilePayments(env).catch(function (e) {
       return logError(env, 'reconcilePayments', e && e.message);
     }));
@@ -2050,6 +2115,7 @@ export default {
           path === '/api/cleanup/scan' ||
           path === '/api/swap/holdings' || path === '/api/swap/record' ||
           path === '/api/swap/history' || path === '/api/swap/token' ||
+          path === '/api/swap/leaderboard' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -2615,6 +2681,21 @@ export default {
           swaps: rows.results || [],
           savedUsd: Math.round(((saved && saved.usd) || 0) * 100) / 100,
           discountedSwaps: (saved && saved.n) || 0
+        });
+      }
+
+      if (path === '/api/swap/leaderboard' && request.method === 'GET') {
+        const now = Date.now();
+        const start = weekStart(now);
+        const top = await weeklySwapTop(env, start, 10);
+        const last = await env.DB.prepare(
+          'SELECT rank, wallet, usd, points FROM swap_weekly_awards WHERE week = ? ORDER BY rank'
+        ).bind(new Date(start - WEEK_MS).toISOString().slice(0, 10)).all();
+        return json(request, env, {
+          weekStart: start, weekEnd: start + WEEK_MS,
+          prizes: WEEKLY_SWAP_PRIZES, minUsd: WEEKLY_SWAP_MIN_USD,
+          top: top.map(function (r, i) { return { rank: i + 1, wallet: r.wallet, usd: r.usd, swaps: r.swaps }; }),
+          lastWeek: last.results || []
         });
       }
 
