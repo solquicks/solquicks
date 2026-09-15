@@ -1409,6 +1409,20 @@
     .sw-token-stats div { display: flex; flex-direction: column; }
     .sw-token-stats span { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
     .sw-token-stats b { font-size: 0.86rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .sw-share-row { display: flex; justify-content: center; margin-top: 10px; }
+    .sw-sharelink, .sw-inline {
+      appearance: none; cursor: pointer; background: none; border: none; padding: 0;
+      font-family: inherit; font-size: 0.8rem; font-weight: 800; color: var(--orange-deep); text-decoration: underline;
+    }
+    .sw-sharelink { font-size: 0.78rem; }
+    .rc-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(46, 36, 64, 0.55); display: grid; place-items: center; padding: 16px; }
+    .rc-sheet { background: var(--card); border: var(--line); border-radius: var(--radius); box-shadow: var(--pop-big); padding: 16px; width: min(640px, 100%); }
+    .rc-preview { display: block; width: 100%; border-radius: 12px; }
+    .rc-actions { display: flex; gap: 10px; }
+    .rc-btn { display: block; text-align: center; text-decoration: none; }
+    .rc-ghost { background: var(--cream); color: var(--ink); border: 2px solid var(--ink); }
+    .rc-ghost:hover:not(:disabled) { background: #fff; }
+    .rc-close { appearance: none; cursor: pointer; background: none; border: none; display: block; margin: 10px auto 0; font-family: inherit; font-weight: 800; color: var(--muted); }
 
     /* ── SOLANA PAY ── */
     .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 18px; align-items: start; margin: 14px 0; }
@@ -2346,6 +2360,7 @@
         <div class="sw-warnbox" id="sw-warnbox" hidden></div>
         <button class="sw-go" id="sw-go" onclick="doSwap()" disabled>Enter an amount</button>
         <div class="sw-msg" id="sw-msg"></div>
+        <div class="sw-share-row"><button class="sw-sharelink" type="button" onclick="shareSwapLink()">Share this swap</button></div>
         <p class="sw-foot">Routed by Jupiter across every Solana DEX. Non-custodial —
           the swap happens in your own wallet.</p>
       </div>
@@ -2462,6 +2477,19 @@
     // Devnet mode is opt-in via ?devnet=1. Declared first: anything below may
     // reference it, and a `const` cannot be read before its declaration runs.
     const DEVNET_MODE = new URLSearchParams(location.search).has('devnet');
+
+    /// A shared swap link: ?swap=SOL-BONK, or mint addresses for tokens outside the
+    /// popular list, with an optional &amount=. Read once at load, before switching
+    /// to the Swap tab rewrites the address.
+    var swapLinkPending = (function () {
+      try {
+        const p = new URLSearchParams(location.search);
+        const parts = String(p.get('swap') || '').split('-');
+        if (parts.length !== 2 || !parts.every(function (x) { return /^[A-Za-z0-9]{1,44}$/.test(x); })) return null;
+        const amount = Number(p.get('amount'));
+        return { in: parts[0], out: parts[1], amount: amount > 0 && isFinite(amount) ? amount : null };
+      } catch (e) { return null; }
+    })();
 
     // switchTab can fire during tab restore, before the analytics section's
     // own declarations have run. `var` is deliberate: a `let` here throws when
@@ -2609,6 +2637,7 @@
 
     // Restore the tab from the URL on load.
     (function restoreTab() {
+      if (swapLinkPending) { switchTab('swap', tabButton('swap')); return; }
       const name = location.hash.replace('#', '');
       if (!name) return;
       const btn = tabButton(name);
@@ -4633,6 +4662,7 @@
       refreshSwapPrices();
       loadSwapPoints().then(flushSwapPoints);
       if (!swapTicker) swapTicker = setInterval(tickSwapQuote, 1000);
+      if (swapLinkPending) applySwapLink();
     }
 
     function paintPair() {
@@ -4808,6 +4838,159 @@
       refreshSwapBalance();
       refreshSwapPrices();
       quoteSwap();
+    }
+
+    // ── share links and receipts ──
+    var lastSwap = null;
+
+    function swapLinkFor(tIn, tOut, amount) {
+      const popular = function (t) { return (swapTokens || []).some(function (p) { return p.mint === t.mint; }); };
+      const part = function (t) { return popular(t) ? t.symbol : t.mint; };
+      return 'https://solquicks.com/?swap=' + encodeURIComponent(part(tIn)) + '-' + encodeURIComponent(part(tOut)) +
+        (amount > 0 ? '&amount=' + encodeURIComponent(String(amount)) : '');
+    }
+
+    /// Copies a link that opens this exact pair — and the amount, if one is typed.
+    async function shareSwapLink() {
+      const msg = document.getElementById('sw-msg');
+      if (!swapPair.in || !swapPair.out) return;
+      const link = swapLinkFor(swapPair.in, swapPair.out, parseFloat(document.getElementById('sw-in-amount').value));
+      msg.dataset.kind = '';
+      try {
+        await navigator.clipboard.writeText(link);
+        msg.className = 'sw-msg good';
+        msg.textContent = 'Link copied: ' + link;
+      } catch (e) {
+        msg.className = 'sw-msg';
+        msg.textContent = 'Copy this link: ' + link;
+      }
+    }
+
+    async function swapLinkToken(ref) {
+      const known = (swapTokens || []).find(function (t) { return t.symbol.toUpperCase() === ref.toUpperCase() || t.mint === ref; });
+      if (known) return Object.assign({ verified: true, warnings: [] }, known);
+      if (ref.length < 32) return null;
+      const res = await fetch(POINTS_API + '/api/swap/token?mint=' + encodeURIComponent(ref));
+      const d = await res.json().catch(function () { return {}; });
+      if (!d.token) return null;
+      const k = d.token;
+      return { mint: k.mint, symbol: k.symbol, name: k.name, decimals: k.decimals, icon: k.icon, verified: k.verified, warnings: k.warnings || [] };
+    }
+
+    /// Opens a shared link on the pair it names. Tokens from outside the popular
+    /// list arrive with their warnings, exactly as if they had been searched for.
+    async function applySwapLink() {
+      const link = swapLinkPending;
+      swapLinkPending = null;
+      // drop the link from the address, so a refresh keeps whatever pair is chosen next
+      try { history.replaceState(null, '', location.pathname + '#swap'); } catch (e) {}
+      const msg = document.getElementById('sw-msg');
+      try {
+        const both = await Promise.all([swapLinkToken(link.in), swapLinkToken(link.out)]);
+        if (!both[0] || !both[1] || both[0].mint === both[1].mint) throw new Error('bad link');
+        swapPair.in = both[0];
+        swapPair.out = both[1];
+        paintPair();
+        refreshSwapBalance();
+        refreshSwapPrices();
+        if (link.amount) {
+          document.getElementById('sw-in-amount').value = String(link.amount);
+          quoteSwap();
+        }
+      } catch (e) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = 'That swap link names a token that could not be found.';
+      }
+    }
+
+    /// A card to post: what was swapped, its value, and any Fox Points earned.
+    async function openSwapReceipt() {
+      if (!lastSwap) return;
+      const r = lastSwap;
+      const W = 1200, H = 630;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const g = canvas.getContext('2d');
+      const css = getComputedStyle(document.documentElement);
+      const color = function (name, fallback) { return (css.getPropertyValue(name) || '').trim() || fallback; };
+      try { await document.fonts.ready; } catch (e) {}
+
+      g.fillStyle = color('--cream', '#F7F1E8');
+      g.fillRect(0, 0, W, H);
+      g.fillStyle = color('--card', '#FFFFFF');
+      g.strokeStyle = color('--ink', '#2E2440');
+      g.lineWidth = 6;
+      const x0 = 50, y0 = 50, w = W - 100, h = H - 100, rad = 40;
+      g.beginPath();
+      g.moveTo(x0 + rad, y0); g.arcTo(x0 + w, y0, x0 + w, y0 + h, rad); g.arcTo(x0 + w, y0 + h, x0, y0 + h, rad);
+      g.arcTo(x0, y0 + h, x0, y0, rad); g.arcTo(x0, y0, x0 + w, y0, rad); g.closePath();
+      g.fill(); g.stroke();
+
+      const avatar = await new Promise(function (resolve) {
+        const img = new Image();
+        img.onload = function () { resolve(img); };
+        img.onerror = function () { resolve(null); };
+        img.src = 'avatar.png';
+      });
+      if (avatar) {
+        g.save(); g.beginPath(); g.arc(200, 225, 90, 0, Math.PI * 2); g.clip();
+        g.drawImage(avatar, 110, 135, 180, 180); g.restore();
+      }
+      const display = '"Baloo 2", system-ui, sans-serif';
+      g.fillStyle = color('--orange', '#E3883A');
+      g.font = '800 34px ' + display;
+      g.fillText('SWAPPED ON SOLQUICKS.COM', 330, 190);
+      g.fillStyle = color('--ink', '#2E2440');
+      g.font = '800 64px ' + display;
+      const line = fmtAmount(r.in.amount) + ' ' + r.in.symbol + '  →  ' + fmtAmount(r.out.amount) + ' ' + r.out.symbol;
+      let size = 64;
+      while (g.measureText(line).width > W - 420 && size > 30) { size -= 2; g.font = '800 ' + size + 'px ' + display; }
+      g.fillText(line, 330, 275);
+      g.fillStyle = color('--ink-soft', '#5B5170');
+      g.font = '700 32px system-ui, sans-serif';
+      if (r.usd) g.fillText('≈ ' + fmtUsd(r.usd), 330, 330);
+      if (r.points > 0) {
+        g.fillStyle = color('--green', '#3F9A5A');
+        g.font = '800 44px ' + display;
+        g.fillText('+' + r.points.toLocaleString() + ' Fox Points', 110, 450);
+      }
+      g.fillStyle = color('--muted', '#8B819D');
+      g.font = '700 28px system-ui, sans-serif';
+      g.fillText(new Date(r.at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) + '  ·  @solquicks', 110, 530);
+
+      const text = 'Just swapped ' + fmtAmount(r.in.amount) + ' ' + r.in.symbol + ' for ' + fmtAmount(r.out.amount) + ' ' + r.out.symbol +
+        ' on solquicks.com' + (r.points > 0 ? ' and earned ' + r.points.toLocaleString() + ' Fox Points' : '') + ' 🦊';
+      const backdrop = document.createElement('div');
+      backdrop.className = 'rc-backdrop';
+      backdrop.onclick = function (e) { if (e.target === backdrop) backdrop.remove(); };
+      const sheet = document.createElement('div');
+      sheet.className = 'rc-sheet';
+      const preview = document.createElement('img');
+      preview.src = canvas.toDataURL('image/png');
+      preview.alt = text;
+      preview.className = 'rc-preview';
+      const row = document.createElement('div');
+      row.className = 'rc-actions';
+      const post = document.createElement('a');
+      post.className = 'sw-go rc-btn';
+      post.textContent = 'Post on X';
+      post.target = '_blank';
+      post.rel = 'noopener noreferrer';
+      post.href = 'https://x.com/intent/post?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(r.link);
+      const save = document.createElement('a');
+      save.className = 'sw-go rc-btn rc-ghost';
+      save.textContent = 'Save image';
+      save.download = 'solquicks-swap.png';
+      save.href = preview.src;
+      const close = document.createElement('button');
+      close.className = 'rc-close';
+      close.type = 'button';
+      close.textContent = 'Close';
+      close.onclick = function () { backdrop.remove(); };
+      row.appendChild(post); row.appendChild(save);
+      sheet.appendChild(preview); sheet.appendChild(row); sheet.appendChild(close);
+      backdrop.appendChild(sheet);
+      document.body.appendChild(backdrop);
     }
 
     /// Where the swap actually goes, e.g. "Raydium → Orca" or "Meteora 60% + Orca 40%".
@@ -5033,7 +5216,15 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ signature: signature })
           });
-          if (res.status !== 404) break;
+          if (res.status !== 404) {
+            const d = await res.json().catch(function () { return null; });
+            if (d && d.swap && lastSwap && lastSwap.signature === signature) {
+              lastSwap.in.amount = d.swap.in_amount;
+              lastSwap.out.amount = d.swap.out_amount;
+              if (d.swap.usd) lastSwap.usd = d.swap.usd;
+            }
+            break;
+          }
         } catch (e) { /* try again */ }
       }
       loadSwapHistory();
@@ -5300,6 +5491,7 @@
         await loadSwapPoints();
         paintSwapPoints();
         if (r.awarded > 0) {
+          if (lastSwap && lastSwap.signature === signature) lastSwap.points = r.awarded;
           msg.innerHTML += ' <strong>+' + r.awarded + ' Fox Points</strong>';
         } else if (r.cappedOut) {
           msg.innerHTML += ' <span style="color:var(--muted);font-weight:600">Daily points cap reached.</span>';
@@ -5379,9 +5571,17 @@
           }
           throw sendErr;
         }
+        lastSwap = {
+          signature: sig, at: Date.now(), points: 0,
+          in: { symbol: swapPair.in.symbol, amount: parseFloat(document.getElementById('sw-in-amount').value) },
+          out: { symbol: swapPair.out.symbol, amount: Number(swapQuote.outAmount) / Math.pow(10, swapPair.out.decimals) },
+          usd: Number(swapQuote.swapUsdValue) || null,
+          link: swapLinkFor(swapPair.in, swapPair.out)
+        };
         msg.className = 'sw-msg good';
         msg.innerHTML = 'Swapped. <a href="https://solscan.io/tx/' + encodeURIComponent(sig) +
-          '" target="_blank" rel="noopener noreferrer">View it</a>';
+          '" target="_blank" rel="noopener noreferrer">View it</a> · ' +
+          '<button class="sw-inline" type="button" onclick="openSwapReceipt()">Share receipt</button>';
         awardSwapPoints(sig, msg);
         recordSwap(sig);
         rememberPair();
