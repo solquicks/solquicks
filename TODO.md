@@ -299,6 +299,21 @@ USDT fee account `7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL` created by you a
 live 2026-09-15: USDT swaps pay inside the swap (from USDT received or sold, both
 simulated first), not in SOL.
 
+**26. Moon Rangers page, round two — shipped 2026-09-16.** Trait and rarity
+explorer (all 219, filterable, each trait showing how many share it, rarity rank
+from the usual sum of 1/frequency); recent sales from Magic Eden; holders over
+time from snapshots the worker had been keeping for a year and never showing;
+the minted/burned/named line; days staked and points earned on each of your own
+Rangers. Two cached endpoints: `/api/collection` (6h) and `/api/collection/sales`
+(10 min), both covered by `worker/test/collection.test.mjs`.
+
+**A bug worth remembering:** a link straight to `#moon` restores that tab near the
+top of the script, *before* `const POINTS_API` runs, so anything loading data
+there threw "cannot access before initialization" — silently, inside a catch.
+POINTS_API now sits at the top of the script. The browser test loads the page
+fresh at `#moon` to keep it that way, and hash-only navigation in a test does not
+reload the page, so it has to use a different URL.
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
