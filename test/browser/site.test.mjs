@@ -93,6 +93,13 @@ function workerAnswer(p, url) {
   };
   if (p === '/api/swap/build') return { swapTransaction: net.built, lastValidBlockHeight: 1e12 };
   if (p === '/api/swap/history') return { swaps: [], savedUsd: 0, discountedSwaps: 0 };
+  if (p === '/api/analytics') return {
+    holders: { total: 133, supply: 219, whales: 1, mid: 19, small: 113, top10Pct: 27.4, avg: 1.65, updatedAt: Date.now() - 60000 },
+    floor: { lamports: 724870000, sol: 0.725, listed: 24, volume7d: 500000000, change24h: 0, change7d: 45,
+      source: 'magiceden', updatedAt: Date.now() - 60000, collectingSince: Date.now() - 9 * 86400000,
+      history: Array.from({ length: 9 }, (_, i) => ({ t: Date.now() - (9 - i) * 86400000, sol: i < 3 ? 0.5 : 0.725 })) },
+    participation: { stakingWallets: 1, rangersStaked: 5, shareOfHolders: 0.8, top: [{ wallet: WALLET, rangers: 5, since: Date.now() }] }
+  };
   return {};
 }
 
@@ -223,6 +230,30 @@ try {
     await page.click('.nav-item[data-tab="' + tab + '"]');
     ok('the ' + tab + ' tab shows its panel', await page.locator('#panel-' + tab).evaluate((p) => p.classList.contains('active')));
   }
+
+  section('the Moon Rangers page');
+  await page.click('#nav-trigger');
+  await page.click('.nav-item[data-tab="moon"]');
+  await page.waitForSelector('#an-wrap:not([hidden])', { timeout: 10000 });
+  const moon = await page.evaluate(() => ({
+    perks: [...document.querySelectorAll('.moon-perk')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()),
+    market: document.getElementById('an-market').innerText.replace(/\s+/g, ' ').trim(),
+    buy: document.querySelector('.an-buy a') && document.querySelector('.an-buy a').href,
+    sparkTitle: document.getElementById('an-spark-title').textContent,
+    part: document.getElementById('an-part-sub').textContent,
+    stakers: document.getElementById('an-stakers').textContent.trim(),
+    teaser: !document.getElementById('moon-teaser').hidden
+  }));
+  eq('the page says what a Ranger gets you', moon.perks.length, 4);
+  ok('including the half-price swaps', /Half price swaps/.test(moon.perks.join(' ')), moon.perks.join(' | '));
+  ok('and the booking discount', /15% off Book The Fox/.test(moon.perks.join(' ')));
+  ok('how many are listed, out of the collection', moon.market.includes('24 listed for sale — 11% of the collection'), moon.market);
+  ok('and what has traded this week', /0\.50 ◎ traded in the last 7 days/.test(moon.market), moon.market);
+  ok('with somewhere to buy one', (moon.buy || '').includes('magiceden.io/marketplace/moonrangers'), moon.buy);
+  eq('the chart is honest about how much history it has', moon.sparkTitle, 'Floor since tracking began');
+  eq('staking is shown against the whole collection', moon.part, 'Taking part — 5 of 219 Rangers staked, by 0.8% of holders');
+  ok('a leaderboard of one is a count instead of a list', /1 wallet staking so far/.test(moon.stakers), moon.stakers);
+  ok('missions are explained before one is running', moon.teaser);
 
   section('swap: quote');
   await page.click('#nav-trigger');

@@ -1772,6 +1772,33 @@
     .moon-unstake-btn:hover { border-color: #F3EFFA; color: #F3EFFA; }
     .moon-note { font-size: 0.72rem; font-weight: 700; color: #8F84A8; margin-top: 16px; }
 
+    /* ── WHAT A RANGER GETS YOU ── */
+    .moon-perks { background: rgba(0,0,0,0.2); border-radius: 14px; padding: 16px 16px 14px; margin-top: 18px; text-align: left; }
+    .moon-perks-title {
+      font-family: 'Baloo 2', sans-serif; font-size: 0.95rem; font-weight: 800; color: #F3EFFA;
+      margin-bottom: 10px; text-align: center;
+    }
+    .moon-perk { display: flex; gap: 9px; align-items: baseline; font-size: 0.82rem; color: #CFC6DA; line-height: 1.45; padding: 5px 0; }
+    .moon-perk b { color: #FFD98A; font-weight: 800; }
+    .moon-perk-mark { color: #F0821E; font-weight: 800; flex-shrink: 0; }
+    .moon-perk button {
+      appearance: none; background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+      color: #F0821E; font-weight: 800; text-decoration: underline;
+    }
+    .moon-teaser { background: rgba(0,0,0,0.2); border-radius: 14px; padding: 14px 16px; margin-top: 14px; text-align: left; }
+    .moon-teaser-title { font-family: 'Baloo 2', sans-serif; font-size: 0.9rem; font-weight: 800; color: #F3EFFA; }
+    .moon-teaser p { font-size: 0.79rem; color: #9E94B6; line-height: 1.5; margin-top: 4px; }
+
+    /* ── ON THE MARKET ── */
+    .an-market { font-size: 0.8rem; color: #CFC6DA; line-height: 1.5; }
+    .an-buy { display: flex; gap: 8px; margin-top: 10px; }
+    .an-buy a {
+      flex: 1; text-align: center; padding: 9px 10px; border-radius: 10px; text-decoration: none;
+      background: rgba(240,130,30,0.14); border: 1px solid rgba(240,130,30,0.4);
+      color: #FFD98A; font-size: 0.8rem; font-weight: 800;
+    }
+    .an-buy a:hover { background: rgba(240,130,30,0.24); }
+
     /* ── RANGER PICKER ── */
     .rg-grid {
       display: grid;
@@ -2424,6 +2451,22 @@
           </div>
         </div>
 
+        <div class="moon-perks">
+          <div class="moon-perks-title">What a Ranger gets you</div>
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>100 Fox Points a day</b>, for every Ranger you stake.</span></div>
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>Half price swaps</b> — 0.1% instead of 0.2%, on every pair.
+            <button type="button" onclick="switchTab('swap', tabButton('swap'))">Try the swap</button></span></div>
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>15% off Book The Fox</b> — every service, and the advertising space.
+            <button type="button" onclick="switchTab('book', tabButton('book'))">See the rates</button></span></div>
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>Mission entries</b> — every day a Ranger stays staked builds entries for the quarterly draw.</span></div>
+        </div>
+
+        <div class="moon-teaser" id="moon-teaser">
+          <div class="moon-teaser-title">Quarterly missions</div>
+          <p>Staked Rangers collect entries for a prize draw each quarter, and a longer streak counts for more.
+            The first mission is planned for Q1 2027 — days staked before then still count.</p>
+        </div>
+
         <div class="mission-card" id="mission-card" hidden>
           <div class="mission-head">
             <div class="mission-name" id="mission-name">Quarterly Mission</div>
@@ -2467,7 +2510,15 @@
           </div>
 
           <div class="an-panel">
-            <div class="an-sub">Floor, last 90 days</div>
+            <div class="an-sub">On the market</div>
+            <div class="an-market" id="an-market">–</div>
+            <div class="an-buy">
+              <a href="https://magiceden.io/marketplace/moonrangers" target="_blank" rel="noopener noreferrer">Buy on Magic Eden</a>
+            </div>
+          </div>
+
+          <div class="an-panel">
+            <div class="an-sub" id="an-spark-title">Floor price</div>
             <svg class="an-spark" id="an-spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Floor price history"></svg>
             <div class="an-empty" id="an-spark-note"></div>
           </div>
@@ -6636,17 +6687,31 @@
           d.textContent = (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + Math.abs(ch) + '% 24h';
           d.className = 'an-delta ' + (ch > 0 ? 'an-up' : ch < 0 ? 'an-down' : 'an-flat');
         }
+        const listed = a.floor.listed, supply = a.holders && a.holders.supply;
+        const vol = a.floor.volume7d ? a.floor.volume7d / 1e9 : 0;
+        document.getElementById('an-market').innerHTML =
+          (listed ? '<strong>' + listed + '</strong> listed for sale' +
+            (supply ? ' — ' + Math.round((listed / supply) * 100) + '% of the collection' : '')
+            : 'Nothing listed for sale right now') +
+          '<br>' + (vol ? '<strong>' + (vol < 10 ? vol.toFixed(2) : Math.round(vol)) + ' ◎</strong> traded in the last 7 days'
+            : 'Nothing traded in the last 7 days');
         drawSpark(a.floor);
       }
 
       const p = a.participation || {};
-      document.getElementById('an-part-sub').textContent =
-        p.shareOfHolders !== null && p.shareOfHolders !== undefined
-          ? 'Taking part — ' + p.shareOfHolders + '% of holders have Rangers staked'
-          : 'Taking part';
+      const staked = p.rangersStaked || 0;
+      const supply = (a.holders && a.holders.supply) || 0;
+      document.getElementById('an-part-sub').textContent = 'Taking part' + (supply
+        ? ' — ' + staked + ' of ' + supply + ' Rangers staked' +
+          (p.shareOfHolders !== null && p.shareOfHolders !== undefined ? ', by ' + p.shareOfHolders + '% of holders' : '')
+        : '');
       const list = document.getElementById('an-stakers');
+      // a leaderboard of one or two names reads as nobody is here; say the number instead
       list.innerHTML = (p.top || []).length === 0
         ? '<div class="an-empty">Nobody has locked a Ranger yet. Be first.</div>'
+        : (p.top || []).length < 3
+        ? '<div class="an-empty">' + (p.stakingWallets || 0) + ' wallet' + ((p.stakingWallets || 0) === 1 ? '' : 's') +
+          ' staking so far. The list opens up once a few more join.</div>'
         : p.top.map(function (r, i) {
             return '<div class="an-row"><span class="an-pos">' + (i + 1) + '</span>' +
               '<span class="an-who">' + escapeHtml(shortWallet(r.wallet)) + '</span>' +
@@ -6699,6 +6764,9 @@
         'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
         '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + y(last.sol).toFixed(1) + '" r="3" fill="#FFD98A"/>';
 
+      document.getElementById('an-spark-title').textContent = pts.length >= 60
+        ? 'Floor, last 90 days'
+        : 'Floor since tracking began';
       note.textContent = pts.length + ' days recorded · low ' + lo + ' ◎ · high ' + hi + ' ◎' +
         (floor.change7d !== null && floor.change7d !== undefined ? ' · ' + floor.change7d + '% over 7 days' : '');
     }
@@ -6741,9 +6809,11 @@
     async function loadMission() {
       const card = document.getElementById('mission-card');
       if (!card) return;
-      if (!FoxPoints.token || !FoxPoints.server) { card.hidden = true; return; }
+      // with no live mission to show, the teaser explains what is coming
+      const teaser = function (on) { document.getElementById('moon-teaser').hidden = !on; };
+      if (!FoxPoints.token || !FoxPoints.server) { card.hidden = true; teaser(true); return; }
       const r = await FoxPoints.api('/api/mission');
-      if (!r || !r.standing) { card.hidden = true; return; }
+      if (!r || !r.standing) { card.hidden = true; teaser(true); return; }
       renderMission(r);
     }
 
@@ -6751,6 +6821,7 @@
       const s = r.standing;
       const card = document.getElementById('mission-card');
       card.hidden = false;
+      document.getElementById('moon-teaser').hidden = true;
 
       document.getElementById('mission-name').textContent = s.label + ' Mission';
       const upcoming = s.status === 'upcoming';
