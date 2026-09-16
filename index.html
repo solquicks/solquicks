@@ -1790,6 +1790,57 @@
     .moon-teaser p { font-size: 0.79rem; color: #9E94B6; line-height: 1.5; margin-top: 4px; }
 
     /* ── ON THE MARKET ── */
+    .rg-stat { font-size: 0.62rem; font-weight: 700; color: #FFD98A; margin-top: 2px; }
+    .an-filters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .an-filters select {
+      width: 100%; appearance: none; background: rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238F84A8'/></svg>") no-repeat right 10px center;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 9px; padding: 8px 26px 8px 10px;
+      color: #F3EFFA; font-family: inherit; font-size: 0.76rem; font-weight: 700;
+    }
+    .an-explore-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.74rem; font-weight: 700; color: #8F84A8; margin: 10px 0 8px;
+    }
+    .an-explore-bar button {
+      appearance: none; background: none; border: none; cursor: pointer; font: inherit;
+      color: #F0821E; font-weight: 800; text-decoration: underline; padding: 0;
+    }
+    .an-explore-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    @media (max-width: 520px) { .an-explore-grid { grid-template-columns: repeat(3, 1fr); } }
+    .an-rgr { cursor: pointer; border-radius: 10px; overflow: hidden; background: rgba(0,0,0,0.25); border: 2px solid transparent; }
+    .an-rgr.on { border-color: #F0821E; }
+    .an-rgr img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: rgba(255,255,255,0.05); }
+    .an-rgr-name { font-size: 0.64rem; font-weight: 800; color: #CFC6DA; padding: 4px 4px 1px; text-align: center; }
+    .an-rgr-rank { font-size: 0.6rem; font-weight: 700; color: #8F84A8; padding: 0 4px 5px; text-align: center; }
+    .an-detail { margin-top: 10px; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 12px; }
+    .an-detail-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .an-detail-name { font-family: 'Baloo 2', sans-serif; font-size: 1rem; font-weight: 800; color: #F3EFFA; }
+    .an-detail-rank { font-size: 0.72rem; font-weight: 800; color: #FFD98A; }
+    .an-trait { display: flex; justify-content: space-between; gap: 10px; font-size: 0.76rem; padding: 3px 0; }
+    .an-trait-key { color: #8F84A8; font-weight: 700; }
+    .an-trait-val { color: #CFC6DA; font-weight: 700; text-align: right; }
+    .an-trait-val small { color: #8F84A8; font-weight: 700; }
+    .an-detail a {
+      display: block; text-align: center; margin-top: 10px; padding: 8px; border-radius: 9px;
+      background: rgba(240,130,30,0.14); border: 1px solid rgba(240,130,30,0.4);
+      color: #FFD98A; font-size: 0.76rem; font-weight: 800; text-decoration: none;
+    }
+    .an-more {
+      appearance: none; width: 100%; margin-top: 10px; padding: 9px; cursor: pointer;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+      color: #CFC6DA; font-family: inherit; font-size: 0.78rem; font-weight: 800;
+    }
+    .an-more:hover { background: rgba(255,255,255,0.1); }
+    .an-story {
+      font-size: 0.75rem; font-weight: 700; color: #8F84A8; text-align: center;
+      margin-top: 10px; line-height: 1.5;
+    }
+    .an-story strong { color: #CFC6DA; }
+    .an-sales { display: flex; flex-direction: column; gap: 2px; }
+    .an-sale { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; padding: 5px 0; }
+    .an-sale-name { flex: 1; min-width: 0; color: #CFC6DA; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .an-sale-price { color: #FFD98A; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .an-sale-when { color: #8F84A8; font-size: 0.72rem; font-weight: 700; width: 74px; text-align: right; }
     .an-market { font-size: 0.8rem; color: #CFC6DA; line-height: 1.5; }
     .an-buy { display: flex; gap: 8px; margin-top: 10px; }
     .an-buy a {
@@ -2499,6 +2550,8 @@
             <div class="an-cell"><div class="an-val" id="an-avg">–</div><div class="an-key">Avg held</div></div>
           </div>
 
+          <div class="an-story" id="an-story" hidden></div>
+
           <div class="an-panel">
             <div class="an-sub">Who holds them</div>
             <div class="an-bar">
@@ -2517,15 +2570,38 @@
             </div>
           </div>
 
+          <div class="an-panel" id="an-sales-panel" hidden>
+            <div class="an-sub">Recent sales</div>
+            <div class="an-sales" id="an-sales"></div>
+          </div>
+
           <div class="an-panel">
             <div class="an-sub" id="an-spark-title">Floor price</div>
             <svg class="an-spark" id="an-spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Floor price history"></svg>
             <div class="an-empty" id="an-spark-note"></div>
           </div>
 
+          <div class="an-panel" id="an-hold-panel" hidden>
+            <div class="an-sub" id="an-hold-title">Holders</div>
+            <svg class="an-spark" id="an-hold-spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Holder count history"></svg>
+            <div class="an-empty" id="an-hold-note"></div>
+          </div>
+
           <div class="an-panel">
             <div class="an-sub" id="an-part-sub">Taking part</div>
             <div class="an-rank" id="an-stakers"></div>
+          </div>
+
+          <div class="an-panel" id="an-explore-panel" hidden>
+            <div class="an-sub">Explore the collection</div>
+            <div class="an-filters" id="an-filters"></div>
+            <div class="an-explore-bar">
+              <span id="an-explore-count"></span>
+              <button type="button" id="an-explore-reset" onclick="clearTraitFilters()">Clear filters</button>
+            </div>
+            <div class="an-explore-grid" id="an-explore-grid"></div>
+            <div class="an-detail" id="an-detail" hidden></div>
+            <button class="an-more" id="an-explore-more" hidden onclick="showMoreRangers()">Show more</button>
           </div>
 
           <div class="an-panel">
@@ -2692,6 +2768,7 @@
       if (tab === 'book' && !bkData && typeof loadBooking === 'function') loadBooking();
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
       if (tab === 'moon') {
+        if (typeof loadCollection === 'function') loadCollection();
         if (typeof loadAnalytics === 'function') {
           loadAnalytics();
           if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
@@ -3833,16 +3910,18 @@
     // Players choose which Rangers to stake rather than staking everything.
     let rangerList = [];      // [{mint, name, image}]
     let stakedMints = [];     // mints currently staked, per the server
+    let stakedAt = {};        // mint → when it was locked, for days and points earned
     let picked = new Set();   // mints ticked in the UI
     let stakeFeeLamports = 0;
     let treasuryWallet = null;
 
     async function loadRangers() {
-      if (!FoxPoints.token) { rangerList = []; stakedMints = []; renderPicker(); return; }
+      if (!FoxPoints.token) { rangerList = []; stakedMints = []; stakedAt = {}; renderPicker(); return; }
       const r = await FoxPoints.api('/api/rangers');
-      if (!r || !r.verified) { rangerList = []; stakedMints = []; renderPicker(); return; }
+      if (!r || !r.verified) { rangerList = []; stakedMints = []; stakedAt = {}; renderPicker(); return; }
       rangerList = r.rangers || [];
       stakedMints = r.staked || [];
+      stakedAt = r.stakedAt || {};
       stakeFeeLamports = r.feeLamports || 0;
       treasuryWallet = r.treasury || null;
       picked = new Set(rangerList
@@ -3870,9 +3949,15 @@
         const img = '<img class="rg-img" src="' + escapeHtml(chain[0] || '') + '" alt="" loading="lazy" ' +
           'data-fallbacks="' + escapeHtml(JSON.stringify(chain.slice(1))) + '" ' +
           'onerror="rgImgFallback(this)"/>';
+        // a locked Ranger says how long it has been earning, and how much
+        const since = stakedAt[r.mint];
+        const days = locked && since ? Math.floor((Date.now() - since) / 86400000) : null;
+        const stat = days === null ? ''
+          : '<div class="rg-stat">' + (days === 0 ? 'staked today' : days + ' day' + (days === 1 ? '' : 's')) +
+            ' · ' + (days * STAKE_RATE_PER_DAY).toLocaleString() + ' pts</div>';
         return '<div class="' + cls + '" data-mint="' + escapeHtml(r.mint) + '" ' +
           (locked ? '' : 'onclick="togglePick(this)"') + '>' +
-          img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' +
+          img + '<div class="rg-name">' + escapeHtml(r.name) + '</div>' + stat +
           '<div class="rg-tick">' + (locked ? '✓' : '✓') + '</div></div>';
       }).join('');
 
@@ -6698,6 +6783,19 @@
         drawSpark(a.floor);
       }
 
+      const c = a.collection;
+      const story = document.getElementById('an-story');
+      if (c && c.minted && c.alive) {
+        story.hidden = false;
+        story.innerHTML = '<strong>' + c.minted + '</strong> minted · <strong>' + c.burned + '</strong> burned · ' +
+          '<strong>' + c.alive + '</strong> still here' + (c.named ? ' · <strong>' + c.named + '</strong> named' : '');
+      } else {
+        story.hidden = true;
+      }
+
+      drawHolders(a.holders);
+      loadSales();
+
       const p = a.participation || {};
       const staked = p.rangersStaked || 0;
       const supply = (a.holders && a.holders.supply) || 0;
@@ -6724,6 +6822,42 @@
         '<strong>' + n + '</strong>&nbsp;' + label + '</span>';
     }
 
+    /// The line itself, given values in order. Both charts on this page use it.
+    function sparkPath(svg, vals, stroke) {
+      const lo = Math.min.apply(null, vals);
+      const hi = Math.max.apply(null, vals);
+      const span = hi - lo || 1;
+      const W = 300, H = 64, pad = 6;
+      const x = function (i) { return (i / (vals.length - 1)) * W; };
+      const y = function (v) { return H - pad - ((v - lo) / span) * (H - pad * 2); };
+      const line = vals.map(function (v, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
+      const id = 'fade-' + svg.id;
+      svg.innerHTML =
+        '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="#F0821E" stop-opacity="0.35"/>' +
+        '<stop offset="100%" stop-color="#F0821E" stop-opacity="0"/></linearGradient></defs>' +
+        '<path d="' + line + ' L' + W + ' ' + H + ' L0 ' + H + ' Z" fill="url(#' + id + ')"/>' +
+        '<path d="' + line + '" fill="none" stroke="' + stroke + '" stroke-width="2" ' +
+        'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+        '<circle cx="' + x(vals.length - 1).toFixed(1) + '" cy="' + y(vals[vals.length - 1]).toFixed(1) + '" r="3" fill="' + stroke + '"/>';
+      return { lo: lo, hi: hi };
+    }
+
+    /// Holders over time, from snapshots the worker has been keeping all along.
+    function drawHolders(h) {
+      const panel = document.getElementById('an-hold-panel');
+      const pts = (h && h.history) || [];
+      if (pts.length < 2) { panel.hidden = true; return; }
+      panel.hidden = false;
+      const vals = pts.map(function (p) { return p.n; });
+      const range = sparkPath(document.getElementById('an-hold-spark'), vals, '#9C8BE0');
+      document.getElementById('an-hold-title').textContent = pts.length >= 60 ? 'Holders, last 90 days' : 'Holders since tracking began';
+      const change = vals[vals.length - 1] - vals[0];
+      document.getElementById('an-hold-note').textContent =
+        pts.length + ' days recorded · low ' + range.lo + ' · high ' + range.hi + ' · ' +
+        (change === 0 ? 'flat over that stretch' : (change > 0 ? '+' : '') + change + ' holders');
+    }
+
     // A line needs at least two readings. Until then say so plainly rather
     // than drawing a flat line that looks like data.
     function drawSpark(floor) {
@@ -6743,32 +6877,135 @@
       }
 
       svg.style.display = 'block';
-      const vals = pts.map(function (p) { return p.sol; });
-      const lo = Math.min.apply(null, vals);
-      const hi = Math.max.apply(null, vals);
-      const span = hi - lo || 1;
-      const W = 300, H = 64, pad = 6;
-      const x = function (i) { return (i / (pts.length - 1)) * W; };
-      const y = function (v) { return H - pad - ((v - lo) / span) * (H - pad * 2); };
-
-      const line = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.sol).toFixed(1); }).join(' ');
-      const area = line + ' L' + W + ' ' + H + ' L0 ' + H + ' Z';
-      const last = pts[pts.length - 1];
-
-      svg.innerHTML =
-        '<defs><linearGradient id="an-fade" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0%" stop-color="#F0821E" stop-opacity="0.35"/>' +
-        '<stop offset="100%" stop-color="#F0821E" stop-opacity="0"/></linearGradient></defs>' +
-        '<path d="' + area + '" fill="url(#an-fade)"/>' +
-        '<path d="' + line + '" fill="none" stroke="#FFD98A" stroke-width="2" ' +
-        'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
-        '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + y(last.sol).toFixed(1) + '" r="3" fill="#FFD98A"/>';
+      const range = sparkPath(svg, pts.map(function (p) { return p.sol; }), '#FFD98A');
+      const lo = range.lo, hi = range.hi;
 
       document.getElementById('an-spark-title').textContent = pts.length >= 60
         ? 'Floor, last 90 days'
         : 'Floor since tracking began';
       note.textContent = pts.length + ' days recorded · low ' + lo + ' ◎ · high ' + hi + ' ◎' +
         (floor.change7d !== null && floor.change7d !== undefined ? ' · ' + floor.change7d + '% over 7 days' : '');
+    }
+
+    /// What Rangers have actually changed hands for. Quiet if the marketplace
+    /// has nothing to say, rather than an empty box with an error in it.
+    async function loadSales() {
+      const panel = document.getElementById('an-sales-panel');
+      try {
+        const res = await fetch(POINTS_API + '/api/collection/sales');
+        const d = await res.json();
+        const sales = (d && d.sales) || [];
+        if (!sales.length) { panel.hidden = true; return; }
+        document.getElementById('an-sales').innerHTML = sales.map(function (s) {
+          return '<div class="an-sale">' +
+            '<span class="an-sale-name">' + escapeHtml(s.name || shortWallet(s.mint)) + '</span>' +
+            '<span class="an-sale-price">' + s.sol + ' ◎</span>' +
+            '<span class="an-sale-when">' + escapeHtml(ago(s.ts)) + '</span></div>';
+        }).join('');
+        panel.hidden = false;
+      } catch (e) {
+        panel.hidden = true;
+      }
+    }
+
+    // ── EXPLORE THE COLLECTION ──
+    // Every living Ranger, its traits, and how rare each one is. Fetched once per
+    // visit; the worker caches the heavy read for everyone else.
+    var collection = null;
+    var traitFilters = {};
+    var exploreShown = 24;
+
+    async function loadCollection() {
+      if (collection) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/collection');
+        const d = await res.json();
+        if (!d || !d.rangers || !d.rangers.length) return;
+        collection = d;
+        collection.rangers.sort(function (a, b) { return a.rank - b.rank; });
+        renderTraitFilters();
+        renderExplore();
+        document.getElementById('an-explore-panel').hidden = false;
+      } catch (e) { /* the rest of the page does not depend on this */ }
+    }
+
+    function renderTraitFilters() {
+      const types = Object.keys(collection.traits).sort();
+      document.getElementById('an-filters').innerHTML = types.map(function (type) {
+        const values = Object.keys(collection.traits[type]).sort(function (a, b) {
+          return collection.traits[type][b] - collection.traits[type][a];
+        });
+        return '<select data-trait="' + escapeHtml(type) + '" onchange="setTraitFilter(this)">' +
+          '<option value="">' + escapeHtml(type) + ' — any</option>' +
+          values.map(function (v) {
+            return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + ' (' + collection.traits[type][v] + ')</option>';
+          }).join('') + '</select>';
+      }).join('');
+    }
+
+    function setTraitFilter(sel) {
+      const type = sel.dataset.trait;
+      if (sel.value) traitFilters[type] = sel.value;
+      else delete traitFilters[type];
+      exploreShown = 24;
+      renderExplore();
+    }
+
+    function clearTraitFilters() {
+      traitFilters = {};
+      exploreShown = 24;
+      document.querySelectorAll('#an-filters select').forEach(function (s) { s.value = ''; });
+      document.getElementById('an-detail').hidden = true;
+      renderExplore();
+    }
+
+    function matchingRangers() {
+      const types = Object.keys(traitFilters);
+      return collection.rangers.filter(function (r) {
+        return types.every(function (t) { return r.traits[t] === traitFilters[t]; });
+      });
+    }
+
+    function renderExplore() {
+      const matches = matchingRangers();
+      const shown = matches.slice(0, exploreShown);
+      document.getElementById('an-explore-count').textContent = matches.length === collection.rangers.length
+        ? 'All ' + matches.length + ' Rangers, rarest first'
+        : matches.length + ' of ' + collection.rangers.length + ' match';
+      document.getElementById('an-explore-grid').innerHTML = shown.map(function (r) {
+        return '<div class="an-rgr" data-mint="' + escapeHtml(r.mint) + '" onclick="showRanger(this.dataset.mint)">' +
+          '<img src="' + escapeHtml(r.image || '') + '" alt="" loading="lazy">' +
+          '<div class="an-rgr-name">' + escapeHtml(r.name || 'Unnamed') + '</div>' +
+          '<div class="an-rgr-rank">rank ' + r.rank + '</div></div>';
+      }).join('') || '<div class="an-empty">No Ranger has all of those traits.</div>';
+      document.getElementById('an-explore-more').hidden = matches.length <= exploreShown;
+    }
+
+    function showMoreRangers() {
+      exploreShown += 24;
+      renderExplore();
+    }
+
+    /// One Ranger, with how many others share each of its traits — which is what
+    /// rarity actually means, rather than a number on its own.
+    function showRanger(mint) {
+      const r = collection.rangers.find(function (x) { return x.mint === mint; });
+      if (!r) return;
+      document.querySelectorAll('.an-rgr').forEach(function (el) { el.classList.toggle('on', el.dataset.mint === mint); });
+      const total = collection.total;
+      const rows = Object.keys(r.traits).sort().map(function (type) {
+        const value = r.traits[type];
+        const n = (collection.traits[type] || {})[value] || 0;
+        const pct = total ? Math.round((n / total) * 1000) / 10 : 0;
+        return '<div class="an-trait"><span class="an-trait-key">' + escapeHtml(type) + '</span>' +
+          '<span class="an-trait-val">' + escapeHtml(value) + ' <small>' + n + ' of ' + total + ' · ' + pct + '%</small></span></div>';
+      }).join('');
+      const box = document.getElementById('an-detail');
+      box.hidden = false;
+      box.innerHTML = '<div class="an-detail-top"><span class="an-detail-name">' + escapeHtml(r.name || 'Unnamed') + '</span>' +
+        '<span class="an-detail-rank">rarity rank ' + r.rank + ' of ' + total + '</span></div>' + rows +
+        '<a href="https://magiceden.io/item-details/' + encodeURIComponent(r.mint) + '" target="_blank" rel="noopener noreferrer">View on Magic Eden</a>';
+      box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
 
     async function lookupWallet() {

@@ -179,6 +179,11 @@ jobs:
         working-directory: worker
         run: node test/swap-api.test.mjs
 
+      # Traits, rarity ranking and the sales feed the Moon Rangers page reads.
+      - name: Collection API
+        working-directory: worker
+        run: node test/collection.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest

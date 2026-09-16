@@ -94,12 +94,29 @@ function workerAnswer(p, url) {
   if (p === '/api/swap/build') return { swapTransaction: net.built, lastValidBlockHeight: 1e12 };
   if (p === '/api/swap/history') return { swaps: [], savedUsd: 0, discountedSwaps: 0 };
   if (p === '/api/analytics') return {
-    holders: { total: 133, supply: 219, whales: 1, mid: 19, small: 113, top10Pct: 27.4, avg: 1.65, updatedAt: Date.now() - 60000 },
+    holders: { total: 133, supply: 219, whales: 1, mid: 19, small: 113, top10Pct: 27.4, avg: 1.65, updatedAt: Date.now() - 60000,
+      collectingSince: Date.now() - 9 * 86400000,
+      history: Array.from({ length: 9 }, (_, i) => ({ t: Date.now() - (9 - i) * 86400000, n: 125 + i })) },
     floor: { lamports: 724870000, sol: 0.725, listed: 24, volume7d: 500000000, change24h: 0, change7d: 45,
       source: 'magiceden', updatedAt: Date.now() - 60000, collectingSince: Date.now() - 9 * 86400000,
       history: Array.from({ length: 9 }, (_, i) => ({ t: Date.now() - (9 - i) * 86400000, sol: i < 3 ? 0.5 : 0.725 })) },
-    participation: { stakingWallets: 1, rangersStaked: 5, shareOfHolders: 0.8, top: [{ wallet: WALLET, rangers: 5, since: Date.now() }] }
+    participation: { stakingWallets: 1, rangersStaked: 5, shareOfHolders: 0.8, top: [{ wallet: WALLET, rangers: 5, since: Date.now() }] },
+    collection: { minted: 256, burned: 37, alive: 219, named: 217 }
   };
+  if (p === '/api/collection') return {
+    total: 4,
+    traits: { Background: { Turtle: 2, Nebula: 2 }, Fur: { Green: 3, Gold: 1 } },
+    rangers: [
+      { mint: 'm1', name: 'Ranger #1', image: 'https://cdn.test/1', rank: 1, traits: { Background: 'Turtle', Fur: 'Gold' } },
+      { mint: 'm2', name: 'Ranger #2', image: 'https://cdn.test/2', rank: 2, traits: { Background: 'Turtle', Fur: 'Green' } },
+      { mint: 'm3', name: 'Ranger #3', image: 'https://cdn.test/3', rank: 3, traits: { Background: 'Nebula', Fur: 'Green' } },
+      { mint: 'm4', name: 'Ranger #4', image: 'https://cdn.test/4', rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
+    ]
+  };
+  if (p === '/api/collection/sales') return { sales: [
+    { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
+    { mint: 'm3', name: 'Ranger #3', sol: 0.41, ts: Date.now() - 86400000, buyer: WALLET, seller: 'y' }
+  ] };
   return {};
 }
 
@@ -254,6 +271,53 @@ try {
   eq('staking is shown against the whole collection', moon.part, 'Taking part — 5 of 219 Rangers staked, by 0.8% of holders');
   ok('a leaderboard of one is a count instead of a list', /1 wallet staking so far/.test(moon.stakers), moon.stakers);
   ok('missions are explained before one is running', moon.teaser);
+
+  const extras = await page.evaluate(() => ({
+    story: document.getElementById('an-story').textContent.replace(/\s+/g, ' ').trim(),
+    storyShown: !document.getElementById('an-story').hidden,
+    salesShown: !document.getElementById('an-sales-panel').hidden,
+    sales: [...document.querySelectorAll('.an-sale')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
+    holdersShown: !document.getElementById('an-hold-panel').hidden,
+    holdersTitle: document.getElementById('an-hold-title').textContent,
+    holdersNote: document.getElementById('an-hold-note').textContent
+  }));
+  ok('the collection\'s story is told in numbers', extras.storyShown && /256 minted · 37 burned · 219 still here · 217 named/.test(extras.story), extras.story);
+  ok('recent sales are listed', extras.salesShown && extras.sales.length === 2, JSON.stringify(extras.sales));
+  ok('with price and how long ago', extras.sales[0].includes('0.5 ◎') && extras.sales[0].includes('ago'), extras.sales[0]);
+  ok('holders over time is drawn', extras.holdersShown && extras.holdersTitle === 'Holders since tracking began', extras.holdersTitle);
+  ok('and says how many holders were gained', /9 days recorded · low 125 · high 133 · \+8 holders/.test(extras.holdersNote), extras.holdersNote);
+
+  section('the Moon Rangers page: explore the collection');
+  await page.waitForSelector('#an-explore-panel:not([hidden])', { timeout: 10000 });
+  const count = () => page.textContent('#an-explore-count');
+  eq('every Ranger is listed, rarest first', (await count()).trim(), 'All 4 Rangers, rarest first');
+  eq('the rarest is first in the grid', (await page.textContent('.an-rgr .an-rgr-name')).trim(), 'Ranger #1');
+  await page.selectOption('select[data-trait="Fur"]', 'Green');
+  eq('filtering by a trait narrows it down', (await count()).trim(), '3 of 4 match');
+  await page.selectOption('select[data-trait="Background"]', 'Turtle');
+  eq('two filters together narrow it further', (await count()).trim(), '1 of 4 match');
+  eq('and the right one is left', (await page.textContent('.an-rgr .an-rgr-name')).trim(), 'Ranger #2');
+  await page.click('.an-rgr');
+  const detail = await page.evaluate(() => document.getElementById('an-detail').innerText.replace(/\s+/g, ' '));
+  ok('a Ranger opens with its rank', /rarity rank 2 of 4/.test(detail), detail);
+  ok('and how rare each trait is', /Green 3 of 4 · 75%/.test(detail), detail);
+  ok('with a link to buy it', /View on Magic Eden/.test(detail));
+  await page.click('#an-explore-reset');
+  eq('clearing the filters brings everyone back', (await count()).trim(), 'All 4 Rangers, rarest first');
+
+  section('the Moon Rangers page: your own Rangers');
+  const mine = await page.evaluate(() => {
+    rangerList = [
+      { mint: 'a1', name: 'Ranger #7', image: 'https://cdn.test/7' },
+      { mint: 'a2', name: 'Ranger #8', image: 'https://cdn.test/8' }
+    ];
+    stakedMints = ['a1'];
+    stakedAt = { a1: Date.now() - 3 * 86400000 };
+    renderPicker();
+    return [...document.querySelectorAll('.rg-card')].map((c) => c.textContent.replace(/\s+/g, ' ').trim());
+  });
+  ok('a staked Ranger shows its days and points', /3 days · 300 pts/.test(mine[0]), JSON.stringify(mine));
+  ok('an unstaked one shows no earnings', !/pts/.test(mine[1]), JSON.stringify(mine));
 
   section('swap: quote');
   await page.click('#nav-trigger');

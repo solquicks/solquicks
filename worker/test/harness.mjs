@@ -62,7 +62,8 @@ export const chain = {
   txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, lookupsFor: {}, alerts: [], inScheduled: false,
   rpc: {},        // extra RPC methods a test answers: { method: (params) => result }
   jup: null,      // a test's Jupiter stand-in: (url, init) => body object, or a Response
-  rpcCalls: [], jupCalls: []
+  me: null,        // a test's Magic Eden stand-in: (url) => body
+  rpcCalls: [], jupCalls: [], meCalls: []
 };
 
 // usdc and sol are in base units: micro-USDC and lamports
@@ -112,6 +113,12 @@ globalThis.fetch = async (url, init) => {
     if (chain.inScheduled) return new Response('', { status: 503 });
     chain.unexpected.push(u);
     return new Response('{}', { status: 404 });
+  }
+  if (u.startsWith('https://api-mainnet.magiceden.dev/')) {
+    chain.meCalls.push(u);
+    const out = chain.me ? chain.me(new URL(u)) : null;
+    if (out === null || out === undefined) return new Response('', { status: 503 });
+    return new Response(JSON.stringify(out), { status: 200 });
   }
   if (u.startsWith('https://api.telegram.org/')) {
     chain.alerts.push(JSON.parse(init.body).text);

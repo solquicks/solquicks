@@ -330,6 +330,7 @@ const RATE_RULES = [
   { match: ['/api/mission', '/api/mission/claim'], name: 'mission', by: 'wallet', limit: 40, windowMs: 60000 },
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/analytics'], name: 'analytics', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/collection', '/api/collection/sales'], name: 'collection', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
@@ -489,7 +490,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'usdt-fee-1';
+const BUILD = 'collection-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -758,6 +759,59 @@ async function fetchAllOwners(env) {
   return owners;
 }
 
+/// Every living Ranger with its art, traits and rarity rank. Rarity is the usual
+/// sum of 1/frequency across traits: the fewer Rangers share a trait, the more it
+/// is worth. Read once and cached, because it is one heavy call for 219 pieces.
+async function collectionData(env) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 'c', method: 'searchAssets',
+      params: { grouping: ['collection', env.MOON_RANGERS_COLLECTION], burnt: false, page: 1, limit: 1000 }
+    })
+  });
+  if (!res.ok) throw new Error('das ' + res.status);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'das error');
+  const items = (data.result && data.result.items) || [];
+
+  const counts = {};       // trait type → value → how many Rangers have it
+  const rangers = items.map(function (it) {
+    const meta = (it.content && it.content.metadata) || {};
+    const traits = {};
+    for (const a of meta.attributes || []) {
+      if (!a || !a.trait_type || a.value === undefined || a.value === null || a.value === '') continue;
+      const type = String(a.trait_type), value = String(a.value);
+      traits[type] = value;
+      counts[type] = counts[type] || {};
+      counts[type][value] = (counts[type][value] || 0) + 1;
+    }
+    const files = (it.content && it.content.files) || [];
+    const links = (it.content && it.content.links) || {};
+    return {
+      mint: it.id,
+      name: meta.name || '',
+      image: (files[0] && files[0].cdn_uri) || links.image || (files[0] && files[0].uri) || null,
+      traits: traits
+    };
+  });
+
+  const total = rangers.length;
+  for (const r of rangers) {
+    let score = 0;
+    for (const type of Object.keys(r.traits)) {
+      const n = counts[type][r.traits[type]] || 1;
+      score += total / n;
+    }
+    r.score = Math.round(score * 100) / 100;
+  }
+  const ranked = rangers.slice().sort(function (a, b) { return b.score - a.score; });
+  ranked.forEach(function (r, i) { r.rank = i + 1; });
+
+  return { total: total, traits: counts, rangers: rangers };
+}
+
 async function fetchFloor() {
   const res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL + '/stats', {
     headers: { 'Accept': 'application/json' }
@@ -766,6 +820,34 @@ async function fetchFloor() {
   const s = await res.json();
   if (!s || typeof s.floorPrice !== 'number') return null;
   return { floor: s.floorPrice, listed: s.listedCount || 0, volume7d: s.volume7d || 0 };
+}
+
+/// The last sales, as the marketplace reports them. Bids and listings are left
+/// out: a sale is the only number that says what someone actually paid.
+async function recentSales(env, limit) {
+  const res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL +
+    '/activities?offset=0&limit=100', { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error('me ' + res.status);
+  const rows = await res.json();
+  if (!Array.isArray(rows)) return [];
+  const names = {};
+  try {
+    const col = await collectionData(env);
+    for (const r of col.rangers) names[r.mint] = r.name;
+  } catch (e) { /* a sale without a name is still a sale */ }
+  return rows
+    .filter(function (a) { return a.type === 'buyNow' && a.price > 0; })
+    .slice(0, limit)
+    .map(function (a) {
+      return {
+        mint: a.tokenMint,
+        name: names[a.tokenMint] || null,
+        sol: Math.round(a.price * 1000) / 1000,
+        ts: (a.blockTime || 0) * 1000,
+        buyer: a.buyer || null,
+        seller: a.seller || null
+      };
+    });
 }
 
 /// One pass: who holds what, and what the market says. Either half can fail
@@ -809,6 +891,30 @@ async function refreshAnalytics(env) {
       await env.DB.prepare('DELETE FROM holder_positions WHERE updated_at < ?').bind(now).run();
 
       out.holders = { holders: counts.size, supply: owners.length };
+
+      // what the collection has been through: minted once, some burned since
+      try {
+        const col = await collectionData(env);
+        const named = col.rangers.filter(function (r) { return r.name; }).length;
+        const all = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 'm', method: 'searchAssets',
+            params: { grouping: ['collection', env.MOON_RANGERS_COLLECTION], page: 1, limit: 1 }
+          })
+        });
+        const minted = ((await all.json()).result || {}).total || 0;
+        const put = env.DB.prepare(
+          'INSERT INTO kv_cache (k, n, ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET n = excluded.n, ts = excluded.ts'
+        );
+        await env.DB.batch([
+          put.bind('minted', minted, now),
+          put.bind('named', named, now)
+        ]);
+      } catch (e) {
+        await logError(env, 'analytics.collection', (e && e.message) || e);
+      }
     }
   } catch (e) {
     await logError(env, 'analytics.holders', (e && e.message) || e);
@@ -865,6 +971,20 @@ async function analyticsPayload(env) {
 
   const firstFloor = await env.DB.prepare('SELECT MIN(taken_at) AS t FROM floor_snapshots').first();
 
+  // the same one-a-day treatment for the holder count, which was being stored
+  // for a year and never shown
+  const holderSeries = await env.DB.prepare(
+    'SELECT MIN(taken_at) AS t, holders FROM holder_snapshots ' +
+    'WHERE taken_at > ? GROUP BY date(taken_at / 1000, \'unixepoch\') ORDER BY t'
+  ).bind(now - 90 * 86400000).all();
+  const firstHolders = await env.DB.prepare('SELECT MIN(taken_at) AS t FROM holder_snapshots').first();
+  const countOf = async function (k) {
+    const row = await env.DB.prepare('SELECT n FROM kv_cache WHERE k = ?').bind(k).first();
+    return row ? row.n : null;
+  };
+  const minted = await countOf('minted');
+  const named = await countOf('named');
+
   // who is actually taking part, rather than just holding
   const staking = await env.DB.prepare(
     'SELECT COUNT(DISTINCT wallet) AS wallets, COUNT(*) AS rangers FROM staked_nfts'
@@ -886,7 +1006,15 @@ async function analyticsPayload(env) {
       small: hs.small,
       top10Pct: hs.top10_pct,
       avg: hs.holders ? Math.round((hs.supply / hs.holders) * 100) / 100 : 0,
-      updatedAt: hs.taken_at
+      updatedAt: hs.taken_at,
+      collectingSince: firstHolders ? firstHolders.t : null,
+      history: (holderSeries.results || []).map(function (r) { return { t: r.t, n: r.holders }; })
+    } : null,
+    collection: hs ? {
+      minted: minted,
+      burned: minted ? minted - hs.supply : null,
+      alive: hs.supply,
+      named: named
     } : null,
     floor: fs ? {
       lamports: fs.floor_lamports,
@@ -2152,7 +2280,8 @@ export default {
       // public routes are limited by IP before any work is done
       if (path === '/api/img' || path === '/api/leaderboard' ||
           path === '/api/mission/draw' || path === '/api/analytics' ||
-          path === '/api/analytics/wallet' || path === '/api/booking/types' ||
+          path === '/api/analytics/wallet' || path === '/api/collection' ||
+          path === '/api/collection/sales' || path === '/api/booking/types' ||
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
@@ -2537,6 +2666,58 @@ export default {
       }
 
       // One wallet's standing. Rank is dense over holdings, so ties share it.
+      // The whole collection with traits and rarity, for browsing. One heavy read
+      // behind six hours of cache: the traits only change if the metadata does.
+      if (path === '/api/collection' && request.method === 'GET') {
+        if (!env.HELIUS_API_KEY || !env.MOON_RANGERS_COLLECTION) {
+          return json(request, env, { error: 'collection lookups are not switched on' }, 503);
+        }
+        const cache = caches.default;
+        const key = new Request(new URL('/api/collection?v=' + BUILD, url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        let col;
+        try {
+          col = await collectionData(env);
+        } catch (e) {
+          await logError(env, 'collection', (e && e.message) || e);
+          return json(request, env, { error: 'could not read the collection just now' }, 502);
+        }
+        const res = json(request, env, {
+          total: col.total,
+          traits: col.traits,
+          rangers: col.rangers.map(function (r) {
+            return { mint: r.mint, name: r.name, image: r.image, rank: r.rank, traits: r.traits };
+          })
+        });
+        const cached = new Response(res.body, res);
+        cached.headers.set('Cache-Control', 'public, max-age=21600');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
+      }
+
+      // What Rangers have actually sold for lately, from the marketplace.
+      if (path === '/api/collection/sales' && request.method === 'GET') {
+        const cache = caches.default;
+        const key = new Request(new URL('/api/collection/sales', url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        let sales = [];
+        try {
+          sales = await recentSales(env, 8);
+        } catch (e) {
+          await logError(env, 'collection.sales', (e && e.message) || e);
+          return json(request, env, { sales: [], unavailable: true });
+        }
+        const res = json(request, env, { sales: sales });
+        const cached = new Response(res.body, res);
+        cached.headers.set('Cache-Control', 'public, max-age=600');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
+      }
+
       if (path === '/api/analytics/wallet' && request.method === 'GET') {
         const who = url.searchParams.get('address');
         if (!isWallet(who)) return json(request, env, { error: 'not a wallet address' }, 400);
@@ -3529,9 +3710,17 @@ export default {
             return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
           }));
         }
+        // when each one was locked, so the page can show days staked and what
+        // that Ranger has earned so far
+        const sinceRows = await env.DB.prepare(
+          'SELECT mint, since FROM staked_nfts WHERE wallet = ?'
+        ).bind(wallet).all();
+        const stakedAt = {};
+        for (const r of sinceRows.results || []) stakedAt[r.mint] = r.since;
         return json(request, env, {
           rangers: owned,
           staked: await stakedMints(env, wallet),
+          stakedAt: stakedAt,
           verified: true,
           feeLamports: Number(env.STAKE_FEE_LAMPORTS || 0),
           treasury: env.TREASURY_WALLET || null
