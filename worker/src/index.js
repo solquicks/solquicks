@@ -490,7 +490,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'collection-1';
+const BUILD = 'collection-2';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -793,6 +793,8 @@ async function collectionData(env) {
       mint: it.id,
       name: meta.name || '',
       image: (files[0] && files[0].cdn_uri) || links.image || (files[0] && files[0].uri) || null,
+      // the CDN copy 404s for a few pieces, so the original comes along too
+      imageAlt: links.image || (files[0] && files[0].uri) || null,
       traits: traits
     };
   });
@@ -2688,7 +2690,7 @@ export default {
           total: col.total,
           traits: col.traits,
           rangers: col.rangers.map(function (r) {
-            return { mint: r.mint, name: r.name, image: r.image, rank: r.rank, traits: r.traits };
+            return { mint: r.mint, name: r.name, image: r.image, imageAlt: r.imageAlt, rank: r.rank, traits: r.traits };
           })
         });
         const cached = new Response(res.body, res);

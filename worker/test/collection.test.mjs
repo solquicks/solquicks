@@ -42,6 +42,7 @@ section('the collection, with traits and rarity');
   ok('and the common ones rank below it', [2, 3, 4].every((n) => byName[mint(n)].rank > 1),
     JSON.stringify(r.body.rangers.map((x) => x.rank)));
   eq('artwork prefers the fast copy', byName[mint(1)].image, 'https://cdn.test/' + mint(1));
+  eq('with the original kept as a fallback', byName[mint(1)].imageAlt, 'https://arweave.net/' + mint(1));
 
   const before = chain.rpcCalls.filter((m) => m === 'searchAssets').length;
   await call(env, 'GET', '/api/collection');

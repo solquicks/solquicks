@@ -6989,12 +6989,24 @@
         ? 'All ' + matches.length + ' Rangers, rarest first'
         : matches.length + ' of ' + collection.rangers.length + ' match';
       document.getElementById('an-explore-grid').innerHTML = shown.map(function (r) {
+        const chain = [r.image, r.imageAlt, POINTS_API + '/api/img?mint=' + encodeURIComponent(r.mint)].filter(Boolean);
         return '<div class="an-rgr" data-mint="' + escapeHtml(r.mint) + '" onclick="showRanger(this.dataset.mint)">' +
-          '<img src="' + escapeHtml(r.image || '') + '" alt="" loading="lazy">' +
+          '<img src="' + escapeHtml(chain[0] || '') + '" alt="" loading="lazy" ' +
+          'data-fallbacks="' + escapeHtml(JSON.stringify(chain.slice(1))) + '" onerror="anImgFallback(this)">' +
           '<div class="an-rgr-name">' + escapeHtml(r.name || 'Unnamed') + '</div>' +
           '<div class="an-rgr-rank">rank ' + r.rank + '</div></div>';
       }).join('') || '<div class="an-empty">No Ranger has all of those traits.</div>';
       document.getElementById('an-explore-more').hidden = matches.length <= exploreShown;
+    }
+
+    /// The grid's own fallback: the picker's version swaps in a Ranger glyph sized
+    /// for that card, which is the wrong shape here.
+    function anImgFallback(img) {
+      let left = [];
+      try { left = JSON.parse(img.getAttribute('data-fallbacks') || '[]'); } catch (e) {}
+      if (!left.length) { img.style.visibility = 'hidden'; return; }
+      img.setAttribute('data-fallbacks', JSON.stringify(left.slice(1)));
+      img.src = left[0];
     }
 
     function showMoreRangers() {
