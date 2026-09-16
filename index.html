@@ -1810,6 +1810,10 @@
     .an-rgr { cursor: pointer; border-radius: 10px; overflow: hidden; background: rgba(0,0,0,0.25); border: 2px solid transparent; }
     .an-rgr.on { border-color: #F0821E; }
     .an-rgr img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: rgba(255,255,255,0.05); }
+    .an-rgr-missing {
+      width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.05); color: #6F6689; font-size: 0.62rem; font-weight: 800;
+    }
     .an-rgr-name { font-size: 0.64rem; font-weight: 800; color: #CFC6DA; padding: 4px 4px 1px; text-align: center; }
     .an-rgr-rank { font-size: 0.6rem; font-weight: 700; color: #8F84A8; padding: 0 4px 5px; text-align: center; }
     .an-detail { margin-top: 10px; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 12px; }
@@ -7004,9 +7008,17 @@
     function anImgFallback(img) {
       let left = [];
       try { left = JSON.parse(img.getAttribute('data-fallbacks') || '[]'); } catch (e) {}
-      if (!left.length) { img.style.visibility = 'hidden'; return; }
-      img.setAttribute('data-fallbacks', JSON.stringify(left.slice(1)));
-      img.src = left[0];
+      if (left.length) {
+        img.setAttribute('data-fallbacks', JSON.stringify(left.slice(1)));
+        img.src = left[0];
+        return;
+      }
+      // one Ranger's artwork was lost before the migration and cannot be fetched
+      // from anywhere; an empty square looks like a bug, so say what it is
+      const box = document.createElement('div');
+      box.className = 'an-rgr-missing';
+      box.textContent = 'art lost';
+      if (img.parentNode) img.parentNode.replaceChild(box, img);
     }
 
     function showMoreRangers() {

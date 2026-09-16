@@ -112,7 +112,8 @@ function workerAnswer(p, url) {
       { mint: 'm1', name: 'Ranger #1', image: 'https://cdn.test/1', rank: 1, traits: { Background: 'Turtle', Fur: 'Gold' } },
       { mint: 'm2', name: 'Ranger #2', image: 'https://cdn.test/2', rank: 2, traits: { Background: 'Turtle', Fur: 'Green' } },
       { mint: 'm3', name: 'Ranger #3', image: 'https://cdn.test/3', rank: 3, traits: { Background: 'Nebula', Fur: 'Green' } },
-      { mint: 'm4', name: 'Ranger #4', image: 'https://cdn.test/4', rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
+      // the one whose artwork was lost: every source 404s
+      { mint: 'm4', name: 'Ranger #4', image: 'https://gone.test/4', imageAlt: null, rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
     ]
   };
   if (p === '/api/collection/sales') return { sales: [
@@ -310,6 +311,8 @@ try {
   ok('a Ranger opens with its rank', /rarity rank 2 of 4/.test(detail), detail);
   ok('and how rare each trait is', /Green 3 of 4 · 75%/.test(detail), detail);
   ok('with a link to buy it', /View on Magic Eden/.test(detail));
+  const missing = await page.evaluate(() => document.querySelectorAll('.an-rgr-missing').length);
+  eq('a Ranger with no artwork anywhere says so instead of showing an empty square', missing, 1);
   await page.click('#an-explore-reset');
   eq('clearing the filters brings everyone back', (await count()).trim(), 'All 4 Rangers, rarest first');
 
