@@ -21,6 +21,7 @@ const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const PRICES = { [SOL]: 150, [USDC]: 1, [PYUSD]: 1, [BONK]: 0.00002, [WIF]: 2 };
 const USDT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const BURN_POINTS = 5, CLOSE_POINTS = 2;   // what the worker pays per account
 const RUG = wallet(77); // a validly formed address; the routes reject anything else
 const HYPE = wallet(78); // unverified, but with deep liquidity
 const META = {
@@ -470,6 +471,47 @@ section('points still check who signed the swap');
   const mine = swapTx('R'.repeat(88), wallet(5), { solSpent: 1, get: { mint: USDC, amount: 150 } });
   const r2 = await call(env, 'POST', '/api/swap/award', { token, body: { signature: mine } });
   eq('your own $150 swap earns 150 points', r2.body.awarded, 150);
+}
+
+section('cleanup points are paid once, not twice');
+{
+  const env = freshEnv();
+  const me = wallet(95);
+  const token = signIn(env, me);
+  const sig = 'C'.repeat(88);
+  chain.txs.set(sig, {
+    blockTime: 1789400000,
+    transaction: { message: {
+      accountKeys: [{ pubkey: me }],
+      instructions: [{ parsed: { type: 'burn' } }, { parsed: { type: 'closeAccount' } }, { parsed: { type: 'closeAccount' } }]
+    } },
+    meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [] }
+  });
+  const first = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: sig } });
+  eq('a burn and a spare close are paid', first.body.awarded, BURN_POINTS + CLOSE_POINTS);
+  const again = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: sig } });
+  eq('sending the same one again is not an error', again.status, 200);
+  eq('and pays nothing the second time', again.body.awarded + ' already=' + again.body.already, '0 already=true');
+
+  // Two tabs at once: both get past the "already paid?" check, and the second
+  // insert used to hit the primary key and hand that person a 500 — which is
+  // what production logged.
+  const env2 = freshEnv();
+  const two = me;                       // the same wallet that signed that cleanup
+  const token2 = signIn(env2, two);
+  const door = env2.DB.pauseBefore(/^INSERT INTO swap_awards/);
+  const a = call(env2, 'POST', '/api/cleanup/award', { token: token2, body: { signature: sig } });
+  await door.reached;
+  const b = await call(env2, 'POST', '/api/cleanup/award', { token: token2, body: { signature: sig } });
+  door.release();
+  const aDone = await a;
+  const paid = [aDone.body.awarded, b.body.awarded].sort();
+  eq('both get a plain answer, not an error', aDone.status + '/' + b.status, '200/200');
+  eq('exactly one of them is paid', paid.join(','), [0, BURN_POINTS + CLOSE_POINTS].join(','));
+  eq('so the points are only credited once',
+    env2._db.prepare("SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type = 'cleanup'").get(two).n,
+    BURN_POINTS + CLOSE_POINTS);
+  eq('and nothing is logged as a failure', env2._db.prepare('SELECT COUNT(*) AS n FROM error_log').get().n, 0);
 }
 
 section('cleanup scan after closing accounts');

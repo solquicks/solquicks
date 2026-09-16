@@ -23,9 +23,20 @@ const asset = (r) => ({
   ownership: { owner: wallet(1) }
 });
 
-chain.rpc.searchAssets = (params) => params.limit === 1
-  ? { total: 6, items: [] }                       // six were minted; two have been burned
-  : { total: RANGERS.length, items: RANGERS.map(asset) };
+// DAS reports `total` as the size of the page it returned, not the collection —
+// the stand-in copies that, because reading it as a total is what broke this once
+const BURNED = [mint(90), mint(91)];
+const searchLimits = [];
+chain.rpc.searchAssets = (params) => {
+  searchLimits.push(params.limit);
+  const all = params.burnt === false
+    ? RANGERS.map(asset)
+    : RANGERS.map(asset).concat(BURNED.map((id) => ({ id, content: { metadata: {}, files: [], links: {} }, ownership: {} })));
+  // `total` is the size of the page that came back, exactly as DAS reports it:
+  // ask for one asset and it says one, whatever the collection holds
+  const items = all.slice(((params.page || 1) - 1) * params.limit, ((params.page || 1) - 1) * params.limit + params.limit);
+  return { total: items.length, items: items };
+};
 
 const env0 = () => freshEnv({ MOON_RANGERS_COLLECTION: COLLECTION });
 
@@ -77,10 +88,29 @@ section('minted, burned, named');
   chain.me = () => ({ symbol: 'moonrangers', floorPrice: 724870000, listedCount: 24, volume7d: 500000000 });
   await runScheduled(env);
   const a = (await call(env, 'GET', '/api/analytics')).body;
-  eq('the collection line is counted from the chain',
+  eq('minted counts the burned ones too, rather than trusting the page total',
     [a.collection.minted, a.collection.burned, a.collection.alive, a.collection.named].join('/'), '6/2/4/3');
+  // asking for one asset and reading `total` reported a collection of one
+  ok('and it is counted by reading whole pages, never a one-asset page',
+    searchLimits.length > 0 && searchLimits.every((n) => n >= 1000), searchLimits.join(','));
   ok('holders are kept as a series now, not just the latest', Array.isArray(a.holders.history) && a.holders.history.length >= 1,
     JSON.stringify(a.holders && a.holders.history));
+}
+
+section('the marketplace rate-limiting us');
+{
+  const env = env0();
+  let first = true;
+  chain.me = (u) => {
+    if (u.pathname.endsWith('/stats') && first) { first = false; return new Response('', { status: 429 }); }
+    return { symbol: 'moonrangers', floorPrice: 700000000, listedCount: 20, volume7d: 1000000000 };
+  };
+  await runScheduled(env);
+  const a = (await call(env, 'GET', '/api/analytics')).body;
+  ok('a refused floor request is tried again rather than lost', a.floor && a.floor.lamports === 700000000,
+    JSON.stringify(a.floor));
+  eq('and nothing is logged when the retry works',
+    env._db.prepare("SELECT COUNT(*) AS n FROM error_log WHERE route = 'analytics.floor'").get().n, 0);
 }
 
 finish();

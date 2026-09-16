@@ -6793,7 +6793,7 @@
 
       const c = a.collection;
       const story = document.getElementById('an-story');
-      if (c && c.minted && c.alive) {
+      if (c && c.alive && c.minted >= c.alive) {
         story.hidden = false;
         story.innerHTML = '<strong>' + c.minted + '</strong> minted · <strong>' + c.burned + '</strong> burned · ' +
           '<strong>' + c.alive + '</strong> still here' + (c.named ? ' · <strong>' + c.named + '</strong> named' : '');

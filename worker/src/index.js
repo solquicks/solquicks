@@ -490,7 +490,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'collection-2';
+const BUILD = 'counts-fixed-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -814,10 +814,33 @@ async function collectionData(env) {
   return { total: total, traits: counts, rangers: rangers };
 }
 
+/// How many were ever minted, burned ones included. DAS reports `total` as the
+/// size of the page it just returned, not the size of the collection — asking for
+/// one asset and reading `total` said the collection had one piece in it, which
+/// is exactly what went out on the page.
+async function countMinted(env) {
+  let n = 0;
+  for (let page = 1; page <= 10; page++) {
+    const res = await rpcCall(env, 'searchAssets', {
+      grouping: ['collection', env.MOON_RANGERS_COLLECTION], page: page, limit: 1000
+    });
+    const items = (res && res.items) || [];
+    n += items.length;
+    if (items.length < 1000) break;
+  }
+  return n;
+}
+
 async function fetchFloor() {
-  const res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL + '/stats', {
+  let res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL + '/stats', {
     headers: { 'Accept': 'application/json' }
   });
+  if (res.status === 429) {
+    await new Promise(function (r) { setTimeout(r, 2000); });
+    res = await fetch('https://api-mainnet.magiceden.dev/v2/collections/' + ME_SYMBOL + '/stats', {
+      headers: { 'Accept': 'application/json' }
+    });
+  }
   if (!res.ok) throw new Error('me ' + res.status);
   const s = await res.json();
   if (!s || typeof s.floorPrice !== 'number') return null;
@@ -898,15 +921,7 @@ async function refreshAnalytics(env) {
       try {
         const col = await collectionData(env);
         const named = col.rangers.filter(function (r) { return r.name; }).length;
-        const all = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0', id: 'm', method: 'searchAssets',
-            params: { grouping: ['collection', env.MOON_RANGERS_COLLECTION], page: 1, limit: 1 }
-          })
-        });
-        const minted = ((await all.json()).result || {}).total || 0;
+        const minted = await countMinted(env);
         const put = env.DB.prepare(
           'INSERT INTO kv_cache (k, n, ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET n = excluded.n, ts = excluded.ts'
         );
@@ -2967,7 +2982,10 @@ export default {
         const res = await jupFetch(env, '/swap/v1/quote?' + q.toString());
         if (!res.ok) {
           const body = await res.text();
-          await logError(env, 'swap.quote', res.status + ' ' + body.slice(0, 200));
+          // the pair and size come too: "Invalid input" on its own says nothing
+          // about which quote Jupiter refused
+          await logError(env, 'swap.quote', res.status + ' ' + body.slice(0, 120) +
+            ' [' + inputMint.slice(0, 6) + '→' + outputMint.slice(0, 6) + ' ' + amount + ' slip ' + slippageBps + ']');
           return json(request, env, { error: 'no route for that pair right now' }, 502);
         }
         const quote = await res.json();
@@ -3602,9 +3620,15 @@ export default {
         const room = Math.max(0, BURN_POINTS_DAILY_CAP - ((today && today.n) || 0));
         const points = Math.min(room, earned);
 
-        await env.DB.prepare(
-          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'
+        // A page that retries, or two tabs at once, used to hit the primary key and
+        // hand the person a 500 for a cleanup that had already been paid.
+        const wrote = await env.DB.prepare(
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(signature) DO NOTHING'
         ).bind(signature, wallet, 0, points, Date.now()).run();
+        if (wrote.meta.changes !== 1) {
+          return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
+        }
         if (points > 0) await addPoints(env, wallet, 'cleanup', points);
 
         return json(request, env, {
@@ -3657,9 +3681,13 @@ export default {
         const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
         const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
 
-        await env.DB.prepare(
-          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?)'
+        const wrote = await env.DB.prepare(
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(signature) DO NOTHING'
         ).bind(signature, wallet, v.usd, points, Date.now()).run();
+        if (wrote.meta.changes !== 1) {
+          return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
+        }
         if (points > 0) await addPoints(env, wallet, 'swap', points);
 
         return json(request, env, {

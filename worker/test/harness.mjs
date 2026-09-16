@@ -117,6 +117,7 @@ globalThis.fetch = async (url, init) => {
   if (u.startsWith('https://api-mainnet.magiceden.dev/')) {
     chain.meCalls.push(u);
     const out = chain.me ? chain.me(new URL(u)) : null;
+    if (out instanceof Response) return out;
     if (out === null || out === undefined) return new Response('', { status: 503 });
     return new Response(JSON.stringify(out), { status: 200 });
   }
