@@ -228,7 +228,11 @@ const page = await context.newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 const cspBlocks = [];
-page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspBlocks.push(m.text()); });
+const warnings = [];
+page.on('console', (m) => {
+  if (/Content Security Policy/i.test(m.text())) cspBlocks.push(m.text());
+  if (m.type() === 'warning') warnings.push(m.text());
+});
 
 try {
   section('the landing page');
@@ -442,6 +446,20 @@ try {
   net.lamports = 2e9;
   await bonkForWif();
   await page.click('.sw-protect button[data-protect="on"]');
+
+  section('a direct link to the Moon Rangers tab');
+  // #moon restores the tab before the page has finished setting itself up, which
+  // once left the explorer empty for anyone following a link straight to it
+  warnings.length = 0;
+  // a fresh load, not just a hash change: the query makes it a different URL
+  await page.goto(SITE + '?arrive=moon#moon', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#an-explore-panel:not([hidden])', { timeout: 20000 });
+  // the tab is restored before the script finishes setting up, and reading an
+  // address that does not exist yet threw here once, silently
+  ok('nothing failed on the way', !warnings.some((w) => /collection did not load/.test(w)), warnings.join(' | '));
+  eq('the explorer loads for someone arriving straight there',
+    (await page.textContent('#an-explore-count')).trim(), 'All 4 Rangers, rarest first');
+  ok('and the collection numbers come with it', /219 still here/.test(await page.textContent('#an-story')));
 
   section('settings survive a reload');
   await page.reload({ waitUntil: 'domcontentloaded' });

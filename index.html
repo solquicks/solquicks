@@ -2646,6 +2646,13 @@
     // read early, which silently kills the rest of the script.
     var analyticsTimer = null;
 
+    // The server behind every /api call. Declared up here for the same reason:
+    // restoring a tab from the address bar loads that tab's data immediately,
+    // and a `const` further down the file cannot be read before it runs — which
+    // is exactly how the collection quietly failed to load for anyone following
+    // a link straight to #moon.
+    const POINTS_API = 'https://solquicks-points.solquicks-45c.workers.dev';
+
     // ── PARTICLES ──
     (function() {
       const canvas = document.getElementById('particle-canvas');
@@ -3104,7 +3111,8 @@
     // Signed-out visitors earn nothing: a browser-side tally could never be
     // carried over without trusting the browser's own number for it, and the
     // site should not show a total it has no way to honour.
-    const POINTS_API = 'https://solquicks-points.solquicks-45c.workers.dev';
+    // POINTS_API is declared at the top of this script, because tab restore runs
+    // before this point and anything it loads needs the address.
 
     const FOX_EVENTS = {
       visit:    { pts: 10,  label: 'Daily points 👋' },
@@ -6926,7 +6934,11 @@
         renderTraitFilters();
         renderExplore();
         document.getElementById('an-explore-panel').hidden = false;
-      } catch (e) { /* the rest of the page does not depend on this */ }
+      } catch (e) {
+        // the rest of the page works without this, but a silent failure once hid
+        // a real bug here, so leave something to find
+        console.warn('collection did not load:', e && e.message);
+      }
     }
 
     function renderTraitFilters() {
@@ -7317,6 +7329,7 @@
     // long before POINTS_API is initialised — so the first analytics load has
     // to happen down here, once everything exists.
     if (document.getElementById('panel-moon').classList.contains('active')) {
+      loadCollection();
       loadAnalytics();
       if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
     }
