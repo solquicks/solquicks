@@ -314,6 +314,20 @@ POINTS_API now sits at the top of the script. The browser test loads the page
 fresh at `#moon` to keep it that way, and hash-only navigation in a test does not
 reload the page, so it has to use a different URL.
 
+**27. Bugs found by looking at the logs — fixed 2026-09-16.**
+- The collection line said **1 minted · -218 burned**: Helius reports `total` as the
+  size of the page it returned, so asking for one asset and reading it said the
+  collection held one piece. It now counts whole pages.
+- Two cleanup awards for the same signature at the same moment both got past the
+  "already paid?" check and the second hit the primary key, returning a **500** to
+  that person. Both awards now insert with ON CONFLICT DO NOTHING.
+- Magic Eden refused the floor request **14 times in a week** (429). It is retried
+  once before anything is logged.
+- A refused swap quote logged only Jupiter's "Invalid input"; it now records the
+  pair, size and slippage that were refused.
+- The Ranger whose artwork was lost before the migration showed an empty square
+  and a 502 in the console; its card now reads "art lost".
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
