@@ -331,6 +331,7 @@ const RATE_RULES = [
   { match: ['/api/mission/draw'], name: 'draw', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/analytics'], name: 'analytics', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/collection', '/api/collection/sales'], name: 'collection', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/store'], name: 'store', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
@@ -490,7 +491,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'counts-fixed-1';
+const BUILD = 'store-live-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -725,6 +726,30 @@ async function drawSnapshot(env, missionId) {
 // free tier capped at 2 DAS requests a second.
 
 const ME_SYMBOL = 'moonrangers';
+// The plushie's numbers used to be typed into the page by hand, so the first sale
+// made them wrong. store.fun renders its shop in the browser; this is the feed it
+// reads, and it needs no key.
+const STORE_FEED = 'https://api.store.fun/api/v1/public/collections/quicks/full';
+const STORE_PRODUCT = 'quicks-plushie';
+
+async function storeProduct() {
+  const res = await fetch(STORE_FEED, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error('store ' + res.status);
+  const body = await res.json();
+  const list = (body && body.data && body.data.products) || [];
+  const p = list.find(function (x) { return x.slug === STORE_PRODUCT; }) || list[0];
+  if (!p) return null;
+  const quantity = Number(p.quantity) || 0;
+  const sold = Number(p.sales_count) || 0;
+  return {
+    name: p.name || null,
+    priceUsdc: Number(p.price) || null,
+    quantity: quantity,
+    sold: sold,
+    available: Math.max(0, quantity - sold),
+    soldOut: !!p.sale_ended || (quantity > 0 && sold >= quantity)
+  };
+}
 // Bucket edges for a 436-piece collection. Whale is deliberately reachable —
 // the point is to show the shape of the holder base, not to flatter anyone.
 const WHALE_MIN = 10;
@@ -2298,7 +2323,8 @@ export default {
       if (path === '/api/img' || path === '/api/leaderboard' ||
           path === '/api/mission/draw' || path === '/api/analytics' ||
           path === '/api/analytics/wallet' || path === '/api/collection' ||
-          path === '/api/collection/sales' || path === '/api/booking/types' ||
+          path === '/api/collection/sales' || path === '/api/store' ||
+          path === '/api/booking/types' ||
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
@@ -2710,6 +2736,28 @@ export default {
         });
         const cached = new Response(res.body, res);
         cached.headers.set('Cache-Control', 'public, max-age=21600');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
+      }
+
+      // How many plushies are left, from the shop rather than from memory.
+      if (path === '/api/store' && request.method === 'GET') {
+        const cache = caches.default;
+        const key = new Request(new URL('/api/store', url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        let product = null;
+        try {
+          product = await storeProduct();
+        } catch (e) {
+          await logError(env, 'store', (e && e.message) || e);
+          return json(request, env, { unavailable: true });
+        }
+        if (!product) return json(request, env, { unavailable: true });
+        const res = json(request, env, { product: product });
+        const cached = new Response(res.body, res);
+        cached.headers.set('Cache-Control', 'public, max-age=600');
         ctx.waitUntil(cache.put(key, cached.clone()));
         return cached;
       }

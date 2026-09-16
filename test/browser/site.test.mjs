@@ -116,6 +116,7 @@ function workerAnswer(p, url) {
       { mint: 'm4', name: 'Ranger #4', image: 'https://gone.test/4', imageAlt: null, rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
     ]
   };
+  if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
   if (p === '/api/collection/sales') return { sales: [
     { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
     { mint: 'm3', name: 'Ranger #3', sol: 0.41, ts: Date.now() - 86400000, buyer: WALLET, seller: 'y' }
@@ -254,6 +255,14 @@ try {
     await page.click('.nav-item[data-tab="' + tab + '"]');
     ok('the ' + tab + ' tab shows its panel', await page.locator('#panel-' + tab).evaluate((p) => p.classList.contains('active')));
   }
+
+  section('the store');
+  await page.click('#nav-trigger');
+  await page.click('.nav-item[data-tab="store"]');
+  await page.waitForFunction(() => document.getElementById('product-stock').textContent !== '93 available', null, { timeout: 10000 });
+  eq('stock comes from the shop, not the page', (await page.textContent('#product-stock')).trim(), '88 available');
+  eq('and so does the order count', (await page.textContent('#store-progress')).trim(), '12 / 100');
+  eq('the bar matches', await page.evaluate(() => document.getElementById('store-fill').style.width), '12%');
 
   section('the Moon Rangers page');
   await page.click('#nav-trigger');

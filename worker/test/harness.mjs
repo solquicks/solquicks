@@ -63,6 +63,7 @@ export const chain = {
   rpc: {},        // extra RPC methods a test answers: { method: (params) => result }
   jup: null,      // a test's Jupiter stand-in: (url, init) => body object, or a Response
   me: null,        // a test's Magic Eden stand-in: (url) => body
+  store: null,     // a test's store.fun stand-in: (url) => body
   rpcCalls: [], jupCalls: [], meCalls: []
 };
 
@@ -113,6 +114,12 @@ globalThis.fetch = async (url, init) => {
     if (chain.inScheduled) return new Response('', { status: 503 });
     chain.unexpected.push(u);
     return new Response('{}', { status: 404 });
+  }
+  if (u.startsWith('https://api.store.fun/')) {
+    const out = chain.store ? chain.store(new URL(u)) : null;
+    if (out instanceof Response) return out;
+    if (out === null || out === undefined) return new Response('', { status: 503 });
+    return new Response(JSON.stringify(out), { status: 200 });
   }
   if (u.startsWith('https://api-mainnet.magiceden.dev/')) {
     chain.meCalls.push(u);

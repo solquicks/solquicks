@@ -2261,11 +2261,11 @@
           <div class="product-desc">"Handmade quicks plushie. extremely foxy. extremely popular."</div>
           <div class="product-meta">
             <div class="product-price">40 USDC</div>
-            <div class="product-stock">93 available</div>
+            <div class="product-stock" id="product-stock">93 available</div>
           </div>
           <div class="bonding-bar-wrap">
-            <div class="bonding-label"><span>Bonding Curve</span><span>7 / 100</span></div>
-            <div class="bonding-bar"><div class="bonding-fill"></div></div>
+            <div class="bonding-label"><span>Orders</span><span id="store-progress">7 / 100</span></div>
+            <div class="bonding-bar"><div class="bonding-fill" id="store-fill"></div></div>
           </div>
           <a href="https://store.fun/quicks/quicks-plushie" target="_blank" rel="noopener" class="buy-btn">Buy Now →</a>
           <form id="plushie-redeem" class="plushie-redeem" autocomplete="off">
@@ -2778,6 +2778,7 @@
       // waiting for a wallet. Refresh only while the tab is actually showing.
       if (tab === 'book' && !bkData && typeof loadBooking === 'function') loadBooking();
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
+      if (tab === 'store' && typeof loadStore === 'function') loadStore();
       if (tab === 'moon') {
         if (typeof loadCollection === 'function') loadCollection();
         if (typeof loadAnalytics === 'function') {
@@ -6903,6 +6904,25 @@
         (floor.change7d !== null && floor.change7d !== undefined ? ' · ' + floor.change7d + '% over 7 days' : '');
     }
 
+    /// How many plushies are left. These two numbers were typed into the page by
+    /// hand, so the first sale made them wrong; they now come from the shop. If the
+    /// shop cannot be reached the typed ones stay, which is no worse than before.
+    var storeLoaded = false;
+    async function loadStore() {
+      if (storeLoaded) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/store');
+        const d = await res.json();
+        const p = d && d.product;
+        if (!p || !p.quantity) return;
+        storeLoaded = true;
+        document.getElementById('product-stock').textContent = p.soldOut
+          ? 'Sold out' : p.available + ' available';
+        document.getElementById('store-progress').textContent = p.sold + ' / ' + p.quantity;
+        document.getElementById('store-fill').style.width = Math.min(100, (p.sold / p.quantity) * 100) + '%';
+      } catch (e) { /* the typed numbers remain */ }
+    }
+
     /// What Rangers have actually changed hands for. Quiet if the marketplace
     /// has nothing to say, rather than an empty box with an error in it.
     async function loadSales() {
@@ -7367,6 +7387,7 @@
     }
     if (document.getElementById('panel-book').classList.contains('active')) loadBooking();
     if (document.getElementById('panel-swap').classList.contains('active')) loadSwap();
+    if (document.getElementById('panel-store').classList.contains('active')) loadStore();
 </script>
 
   <button class="back-to-top" id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">

@@ -97,6 +97,30 @@ section('minted, burned, named');
     JSON.stringify(a.holders && a.holders.history));
 }
 
+section('how many plushies are left');
+{
+  const env = env0();
+  const feed = (sold, quantity, ended) => ({ data: { products: [
+    { slug: 'other-thing', name: 'Not this', quantity: 5, sales_count: '1', price: '10.00' },
+    { slug: 'quicks-plushie', name: 'quicks Plushie', quantity: quantity, sales_count: String(sold), price: '40.00', sale_ended: !!ended }
+  ] } });
+
+  chain.store = () => feed(7, 100);
+  const r = await call(env, 'GET', '/api/store');
+  eq('the plushie is picked out of the shop, not the first thing listed', r.body.product.name, 'quicks Plushie');
+  eq('sold and left are counted from it', r.body.product.sold + ' sold, ' + r.body.product.available + ' left', '7 sold, 93 left');
+  eq('and it is not sold out', r.body.product.soldOut, false);
+
+  chain.store = () => feed(100, 100);
+  const done = await call(freshEnv(), 'GET', '/api/store');
+  eq('a finished run reads as sold out', done.body.product.soldOut + ' ' + done.body.product.available, 'true 0');
+
+  chain.store = () => null;   // the shop is down
+  const down = await call(freshEnv(), 'GET', '/api/store');
+  eq('a shop outage says so quietly', down.status + ' ' + down.body.unavailable, '200 true');
+  chain.store = null;
+}
+
 section('the marketplace rate-limiting us');
 {
   const env = env0();
