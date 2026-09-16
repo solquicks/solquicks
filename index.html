@@ -6942,7 +6942,11 @@
     }
 
     function renderTraitFilters() {
-      const types = Object.keys(collection.traits).sort();
+      // a trait where almost every Ranger has its own value (the rarity rank the
+      // metadata carries) is not something anyone can filter by
+      const types = Object.keys(collection.traits).sort().filter(function (t) {
+        return Object.keys(collection.traits[t]).length <= 40;
+      });
       document.getElementById('an-filters').innerHTML = types.map(function (type) {
         const values = Object.keys(collection.traits[type]).sort(function (a, b) {
           return collection.traits[type][b] - collection.traits[type][a];

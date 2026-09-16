@@ -105,7 +105,9 @@ function workerAnswer(p, url) {
   };
   if (p === '/api/collection') return {
     total: 4,
-    traits: { Background: { Turtle: 2, Nebula: 2 }, Fur: { Green: 3, Gold: 1 } },
+    // "Rarity Rank" is one value per Ranger: it must not become a filter
+    traits: { Background: { Turtle: 2, Nebula: 2 }, Fur: { Green: 3, Gold: 1 },
+      'Rarity Rank': Object.fromEntries(Array.from({ length: 41 }, (_, i) => ['#' + i, 1])) },
     rangers: [
       { mint: 'm1', name: 'Ranger #1', image: 'https://cdn.test/1', rank: 1, traits: { Background: 'Turtle', Fur: 'Gold' } },
       { mint: 'm2', name: 'Ranger #2', image: 'https://cdn.test/2', rank: 2, traits: { Background: 'Turtle', Fur: 'Green' } },
@@ -295,6 +297,8 @@ try {
   await page.waitForSelector('#an-explore-panel:not([hidden])', { timeout: 10000 });
   const count = () => page.textContent('#an-explore-count');
   eq('every Ranger is listed, rarest first', (await count()).trim(), 'All 4 Rangers, rarest first');
+  eq('a trait with a value per Ranger is not offered as a filter',
+    await page.$$eval('#an-filters select', (els) => els.map((e) => e.dataset.trait).join(',')), 'Background,Fur');
   eq('the rarest is first in the grid', (await page.textContent('.an-rgr .an-rgr-name')).trim(), 'Ranger #1');
   await page.selectOption('select[data-trait="Fur"]', 'Green');
   eq('filtering by a trait narrows it down', (await count()).trim(), '3 of 4 match');
