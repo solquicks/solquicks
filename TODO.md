@@ -328,6 +328,25 @@ reload the page, so it has to use a different URL.
 - The Ranger whose artwork was lost before the migration showed an empty square
   and a 502 in the console; its card now reads "art lost".
 
+**28. Royalties to the Seeker, and the two unnamed Rangers — ready to run 2026-09-16.**
+`royalties.html` (signed by 31jpe, the update authority, which stays as it is
+because a Seeker cannot sign in a browser). It moves the royalty payout on all
+219 living Rangers to `uPMPP…` at 100%, keeping 3%, the verified creator and
+everything else; and repairs both blank names.
+
+**Both Rangers were identified from their Rarity Rank, which is unique per piece:**
+`oVPyKL…` is **Ranger #360** (rank 697, one trait swapped) and `GVJWmz…` is
+**Ranger #260** (rank 956, every trait swapped). The earlier note saying #290 and
+#236 was wrong. Magic Eden's own record independently calls GVJWmz "Ranger #260".
+
+**#260's artwork was recovered.** Its current file is dead, but four earlier
+versions still resolve, and the newest of those (May 2024,
+`2wH1jF1oKkWxpW8vvfjlRqzv3gG82z0b0GhcNC974ik`) has working art including the
+one-off Mech fur. It is three traits behind the final swap, whose image was never
+stored and cannot be rebuilt — the Mech fur layer exists nowhere on disk.
+*Every other revenue path already pays the Seeker: bookings, ads, the cleanup fee,
+the staking fee and the SOL swap fee all use TREASURY_WALLET.*
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
