@@ -378,7 +378,11 @@ try {
   }, WALLET);
 
   section('swap: normal send');
-  eq('bot protection starts off', await page.evaluate(() => swapProtect), false);
+  eq('bot protection is on unless it was turned off', await page.evaluate(() => swapProtect), true);
+  eq('and loading the page does not write that choice down',
+    await page.evaluate(() => localStorage.getItem('sq.swap.protect')), null);
+  await page.click('.sw-protect button[data-protect="off"]');
+  eq('turning it off is remembered', await page.evaluate(() => localStorage.getItem('sq.swap.protect')), 'off');
   await page.click('#sw-go');
   await page.waitForSelector('#sw-msg.good', { timeout: 15000 });
   ok('the success message appears', /Swapped\./.test(await page.textContent('#sw-msg')));

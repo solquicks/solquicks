@@ -2447,8 +2447,8 @@
           </div>
           <div class="sw-line"><span>Bot protection</span>
             <span class="sw-slip sw-protect">
-              <button data-protect="off" onclick="setSwapProtect(false)">Off</button>
-              <button data-protect="on" onclick="setSwapProtect(true)" title="Sends the swap privately so sandwich bots cannot see it first. Adds a 0.000005 SOL tip.">On</button>
+              <button data-protect="off" onclick="setSwapProtect(false, true)">Off</button>
+              <button data-protect="on" onclick="setSwapProtect(true, true)" title="Sends the swap privately so sandwich bots cannot see it first. Adds a 0.000005 SOL tip.">On</button>
             </span>
           </div>
         </div>
@@ -4757,7 +4757,9 @@
     var swapQuote = null;
     var swapSlippage = 'auto';   // or a number of basis points the person picked
     var swapSpeed = (function () { try { return localStorage.getItem('sq.swap.speed') || 'normal'; } catch (e) { return 'normal'; } })();
-    var swapProtect = (function () { try { return localStorage.getItem('sq.swap.protect') === 'on'; } catch (e) { return false; } })();
+    // On unless this visitor has turned it off. A protected swap is sent privately
+    // so sandwich bots cannot trade around it, and costs 0.000005 SOL.
+    var swapProtect = (function () { try { return localStorage.getItem('sq.swap.protect') !== 'off'; } catch (e) { return true; } })();
     var swapTokenSeq = 0;
     var swapDebounce = null;
     var swapSeq = 0;
@@ -5210,9 +5212,11 @@
       });
     }
 
-    function setSwapProtect(on) {
+    /// `remember` only when the visitor chose: painting the buttons on load used to
+    /// write the default back, which would have pinned everyone to the old one.
+    function setSwapProtect(on, remember) {
       swapProtect = !!on;
-      try { localStorage.setItem('sq.swap.protect', swapProtect ? 'on' : 'off'); } catch (e) {}
+      if (remember) { try { localStorage.setItem('sq.swap.protect', swapProtect ? 'on' : 'off'); } catch (e) {} }
       document.querySelectorAll('.sw-protect button').forEach(function (b) {
         b.classList.toggle('on', (b.dataset.protect === 'on') === swapProtect);
       });
