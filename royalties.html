@@ -82,10 +82,14 @@
   // metadata file changes. `rank` is checked against the uploaded file, so a
   // wrong or stale address cannot be written to the chain.
   const REPAIRS = [
-    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236', rank: 817, uri: null },
-    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290', rank: 795, uri: null },
-    { mint: 'GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz', name: 'Ranger #46', rank: 263, uri: null },
-    { mint: 'FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm', name: 'Ranger #205', rank: 949, uri: null }
+    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236', rank: 817,
+      uri: 'https://arweave.net/m29qFoI30Y0wEdd43YJjq3VqYfnSZws1r6IXSNvLV1A' },
+    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290', rank: 795,
+      uri: 'https://arweave.net/MXQolXrXRwXs1dK_07b2Xm_MbMq4I-btdMuWCaV7c0M' },
+    { mint: 'GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz', name: 'Ranger #46', rank: 263,
+      uri: 'https://arweave.net/UFfGes13G0C3F5siNdJGla7PJqVRgHvGq9hAtM1h7_0' },
+    { mint: 'FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm', name: 'Ranger #205', rank: 949,
+      uri: 'https://arweave.net/myIhzAeslmP9D1ldwMlJCzdC9HFWdOWM_1tnYlmQtf8' }
   ];
   // A fresh upload 404s on arweave.net for hours while it indexes, though it is
   // already stored. These gateways serve it immediately, so the check reads it

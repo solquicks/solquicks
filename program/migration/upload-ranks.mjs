@@ -13,6 +13,12 @@ const FILES = [
   { file: './prepared/rank-46.json', name: 'Ranger #46' },
   { file: './prepared/rank-205.json', name: 'Ranger #205' }
 ];
+// run from anywhere: everything is resolved against this file's own folder
+process.chdir(new URL('.', import.meta.url).pathname);
+for (const f of FILES) {
+  if (!fs.existsSync(f.file)) { console.error('missing ' + f.file + ' — ask Claude to prepare it again'); process.exit(1); }
+}
+if (!fs.existsSync('./uploader.json')) { console.error('uploader.json is not here; nothing can be uploaded'); process.exit(1); }
 const key = JSON.parse(fs.readFileSync('./uploader.json', 'utf8'));
 const turbo = TurboFactory.authenticated({ privateKey: (bs58.default || bs58).encode(Uint8Array.from(key)), token: 'solana' });
 
@@ -26,6 +32,8 @@ for (const f of FILES) {
     dataItemOpts: { tags: [{ name: 'Content-Type', value: 'application/json' }] }
   });
   urls[f.name] = 'https://arweave.net/' + res.id;
+  // written after every upload, so a run that stops halfway is not lost
+  fs.writeFileSync('./prepared/rank-uris.json', JSON.stringify(urls, null, 1));
   const want = JSON.parse(fs.readFileSync(f.file, 'utf8'));
   const rank = want.attributes.find((a) => a.trait_type === 'Rarity Rank').value;
   console.log(`\n${f.name}  (rank ${rank})\n  ${urls[f.name]}`);
@@ -39,6 +47,6 @@ for (const f of FILES) {
     } catch (e) { console.log(`  ${gw.padEnd(24)}: not there yet`); }
   }
 }
-fs.writeFileSync('./prepared/rank-uris.json', JSON.stringify(urls, null, 1));
 console.log('\ncredit after  :', (await turbo.getBalance()).winc);
-console.log('\nSaved to prepared/rank-uris.json — tell Claude it is done.');
+console.log('\n' + Object.keys(urls).length + ' of ' + FILES.length + ' uploaded, saved to prepared/rank-uris.json');
+console.log('Tell Claude it is done.');
