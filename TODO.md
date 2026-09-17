@@ -328,24 +328,25 @@ reload the page, so it has to use a different URL.
 - The Ranger whose artwork was lost before the migration showed an empty square
   and a 502 in the console; its card now reads "art lost".
 
-**28. Royalties to the Seeker, and the two unnamed Rangers — ready to run 2026-09-16.**
-`royalties.html` (signed by 31jpe, the update authority, which stays as it is
-because a Seeker cannot sign in a browser). It moves the royalty payout on all
-219 living Rangers to `uPMPP…` at 100%, keeping 3%, the verified creator and
-everything else; and repairs both blank names.
+**28. Royalties to the Seeker — DONE 2026-09-17.** All 219 living Rangers now pay
+`uPMPP…` 100%, rate still 3%, verified creator kept, update authority still 31jpe,
+collection still verified, every metadata file loads. Two runs were needed: the
+first sent eight transactions at once into an RPC plan that accepts one a second,
+so only 15 landed (nothing failed on chain). `royalties.html` now paces sends,
+retries refusals and reads the result back off the chain.
 
-**Both Rangers were identified from their Rarity Rank, which is unique per piece:**
-`oVPyKL…` is **Ranger #360** (rank 697, one trait swapped) and `GVJWmz…` is
-**Ranger #260** (rank 956, every trait swapped). The earlier note saying #290 and
-#236 was wrong. Magic Eden's own record independently calls GVJWmz "Ranger #260".
+**29. The two blank names — MY IDENTIFICATION WAS WRONG, correction ready.**
+I named them from the **Rarity Rank attribute, which is NOT unique**: the trait
+shop copies it onto swapped Rangers. `GVJWmz…` carries rank 956 and so does
+`FAtTsLTg…`, so naming GVJWmz "Ranger #260" gave the collection a duplicate —
+FAtTsLTg was minted as 260.json and is the real #260.
 
-**#260's artwork was recovered.** Its current file is dead, but four earlier
-versions still resolve, and the newest of those (May 2024,
-`2wH1jF1oKkWxpW8vvfjlRqzv3gG82z0b0GhcNC974ik`) has working art including the
-one-off Mech fur. It is three traits behind the final swap, whose image was never
-stored and cannot be rebuilt — the Mech fur layer exists nowhere on disk.
-*Every other revenue path already pays the Seeker: bookings, ads, the cleanup fee,
-the staking fee and the SOL swap fee all use TREASURY_WALLET.*
+**Identity comes from the mint transaction** (the IPFS file in the first
+transaction that touched the mint), and that says: `GVJWmz…` = **#236**,
+`oVPyKL…` = **#290**. That matches the note this file carried all along.
+Correction prepared: `node upload-names.mjs` uploads both files, then
+royalties.html applies the two renames in one transaction. The page now refuses
+any name another Ranger already holds.
 
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with

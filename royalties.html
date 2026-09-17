@@ -52,20 +52,23 @@
   </div>
 
   <div class="card">
-    <h3>2 · Ranger #260 — recovered</h3>
+    <h3>2 · Ranger #236 — recovered</h3>
     <div class="row"><b>Mint</b><span>GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2</span></div>
-    <div class="row"><b>Name</b><span><span class="was">(blank)</span> → <span class="now">Ranger #260</span></span></div>
-    <div class="row"><b>Metadata</b><span><span class="was">dead link</span> → <span class="now">its last surviving version, May 2024</span></span></div>
-    <div class="row"><b>Effect</b><span>artwork and traits come back; the final trait swap, whose image was never saved, is not recoverable</span></div>
+    <div class="row"><b>Minted as</b><span>236.json, 26 Feb 2023</span></div>
+    <div class="row"><b>Name</b><span><span class="was">Ranger #260 (held by FAtTsLTg…, the real #260)</span> → <span class="now">Ranger #236</span></span></div>
+    <div class="row"><b>Artwork</b><span>its last surviving version, May 2024 — kept</span></div>
+    <label for="uri236">Metadata URL for Ranger #236, from <code>node upload-names.mjs</code></label>
+    <input id="uri236" placeholder="https://arweave.net/…" spellcheck="false" autocomplete="off"/>
   </div>
 
   <div class="card">
-    <h3>3 · Ranger #360 — name restored</h3>
+    <h3>3 · Ranger #290 — name restored</h3>
     <div class="row"><b>Mint</b><span>oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F</span></div>
-    <div class="row"><b>Name</b><span><span class="was">(blank)</span> → <span class="now">Ranger #360</span></span></div>
+    <div class="row"><b>Minted as</b><span>290.json, 26 Feb 2023</span></div>
+    <div class="row"><b>Name</b><span><span class="was">Ranger #360</span> → <span class="now">Ranger #290</span></span></div>
     <div class="row"><b>Artwork</b><span>fine already — untouched</span></div>
-    <label for="uri360">Metadata URL from <code>node upload-360.mjs</code> (leave empty to set the name only)</label>
-    <input id="uri360" placeholder="https://arweave.net/…" spellcheck="false" autocomplete="off"/>
+    <label for="uri290">Metadata URL for Ranger #290, from <code>node upload-names.mjs</code></label>
+    <input id="uri290" placeholder="https://arweave.net/…" spellcheck="false" autocomplete="off"/>
   </div>
 
   <div class="card">
@@ -82,10 +85,12 @@
   const API = 'https://solquicks-points.solquicks-45c.workers.dev';
   const UPDATE_AUTHORITY = '31jpe6JUemS1YBSnjn8uR9vgfb2eXVAGwGyssMzz6HBU';
   const SEEKER = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
+  // Named for what each was minted as (the IPFS file in its first transaction).
+  // An earlier run named them from a Rarity Rank attribute, which the trait shop
+  // copies onto swapped Rangers — and gave one of them a name another Ranger held.
   const REPAIRS = [
-    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #260',
-      uri: 'https://arweave.net/2wH1jF1oKkWxpW8vvfjlRqzv3gG82z0b0GhcNC974ik' },
-    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #360', uri: null }
+    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236', input: 'uri236', uri: null },
+    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290', input: 'uri290', uri: null }
   ];
   // A transaction is 1232 bytes. Stop well short: a wallet may add its own guard
   // instruction, and a transaction that will not fit fails after it is signed.
@@ -260,17 +265,19 @@
       if (!mints.length) throw new Error('could not list the collection');
       log(mints.length + ' living Rangers found.', 'dim');
 
-      const uri360 = document.getElementById('uri360').value.trim();
-      if (uri360) {
-        const j = await (await fetch(uri360)).json();
-        if (j.name !== 'Ranger #360') throw new Error('that URL does not hold Ranger #360’s metadata');
-        log('Ranger #360’s new metadata reads back correctly.', 'ok');
-        REPAIRS[1].uri = uri360;
-      } else {
-        log('No URL given for Ranger #360 — its name will be set, its metadata file left as it is.', 'dim');
+      // the file must already say the new name, or the chain and the file disagree
+      for (const r of REPAIRS) {
+        const url = document.getElementById(r.input).value.trim();
+        if (!url) throw new Error('paste the metadata URL for ' + r.name + ' first');
+        const j = await (await fetch(url)).json();
+        if (j.name !== r.name) throw new Error('that URL holds ' + JSON.stringify(j.name) + ', not ' + r.name);
+        if (!j.image) throw new Error(r.name + '’s metadata has no image');
+        r.uri = url;
+        log(r.name + '’s metadata reads back correctly.', 'ok');
       }
 
       const jobs = [];
+      const holders = {};          // name → mints using it, to refuse a name already taken
       let done = 0, foreign = 0;
       for (let i = 0; i < mints.length; i += 100) {
         const slice = mints.slice(i, i + 100);
@@ -278,6 +285,7 @@
         infos.forEach((info, k) => {
           if (!info) { log('no metadata account for ' + slice[k], 'bad'); return; }
           const meta = parseMetadata(new Uint8Array(info.data));
+          (holders[meta.name] = holders[meta.name] || []).push(slice[k]);
           if (meta.updateAuthority !== UPDATE_AUTHORITY) { foreign++; return; }
           const repair = REPAIRS.find((r) => r.mint === slice[k]);
           const needsRoyalty = !royaltiesAlreadyRight(meta);
@@ -294,6 +302,10 @@
       }
 
       if (foreign) log(foreign + ' Rangers are under a different update authority and cannot be touched.', 'bad');
+      for (const r of REPAIRS) {
+        const others = (holders[r.name] || []).filter((m) => m !== r.mint);
+        if (others.length) throw new Error(r.name + ' is already the name of ' + others.join(', ') + '. Stopping.');
+      }
       log('');
       log('Already correct: ' + done, 'dim');
       log('To change: ' + jobs.length, 'gold');
