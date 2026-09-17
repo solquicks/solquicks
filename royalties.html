@@ -383,15 +383,70 @@
     return signed;
   }
 
-  async function confirmSig(c, sig) {
-    for (let i = 0; i < 45; i++) {
-      const st = await c.getSignatureStatuses([sig]);
-      const v = st && st.value && st.value[0];
-      if (v && v.err) throw new Error('failed on chain: ' + JSON.stringify(v.err));
-      if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized')) return;
-      await new Promise((r) => setTimeout(r, 1200));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /// The RPC plan accepts one sendTransaction a second. The first run fired eight
+  /// at once: five landed and the rest were refused before reaching the chain.
+  /// So transactions go out one at a time, and a refusal is waited out and retried.
+  async function sendPaced(c, raw) {
+    let wait = 1200;
+    for (let attempt = 0; attempt < 7; attempt++) {
+      try {
+        return await c.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 5 });
+      } catch (e) {
+        const m = String((e && e.message) || e);
+        // a refused request is worth retrying; anything else is a real answer
+        if (!/429|rate|too many|limit|fetch|timed? ?out|503|502/i.test(m)) throw e;
+        await sleep(wait);
+        wait = Math.min(wait * 2, 8000);
+      }
     }
-    throw new Error('not confirmed in time — check ' + sig);
+    throw new Error('the RPC kept refusing the transaction');
+  }
+
+  /// Waits for a set of signatures together: one status request for all of them
+  /// every couple of seconds, rather than a separate poller per transaction.
+  async function confirmAll(c, sigs, lastValidBlockHeight) {
+    const pending = new Map(sigs.map((s) => [s, true]));
+    const result = {};
+    for (let round = 0; round < 45 && pending.size; round++) {
+      await sleep(2000);
+      let st;
+      try { st = await c.getSignatureStatuses([...pending.keys()]); }
+      catch (e) { continue; }
+      [...pending.keys()].forEach((sig, i) => {
+        const v = st && st.value && st.value[i];
+        if (!v) return;
+        if (v.err) { result[sig] = 'failed on chain: ' + JSON.stringify(v.err); pending.delete(sig); }
+        else if (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized') { result[sig] = 'ok'; pending.delete(sig); }
+      });
+      if (pending.size && round % 5 === 4) {
+        const height = await c.getBlockHeight('confirmed').catch(() => 0);
+        if (height && height > lastValidBlockHeight) break;   // what is still pending never landed
+      }
+    }
+    for (const sig of pending.keys()) result[sig] = 'not confirmed';
+    return result;
+  }
+
+  /// How many Rangers the chain really says still need changing — the only count
+  /// worth reporting, since a send can be refused and a confirmation missed.
+  async function countRemaining(c) {
+    const mints = plan.map((j) => j.mint);
+    let remaining = 0;
+    for (let i = 0; i < mints.length; i += 100) {
+      const slice = mints.slice(i, i + 100);
+      const infos = await c.getMultipleAccountsInfo(slice.map((m) => metadataPda(m)));
+      infos.forEach((info, k) => {
+        if (!info) return;
+        const meta = parseMetadata(new Uint8Array(info.data));
+        const repair = REPAIRS.find((r) => r.mint === slice[k]);
+        const royaltyDone = royaltiesAlreadyRight(meta);
+        const nameDone = !repair || (meta.name === repair.name && (!repair.uri || meta.uri === repair.uri));
+        if (!royaltyDone || !nameDone) remaining++;
+      });
+    }
+    return remaining;
   }
 
   document.getElementById('apply').onclick = async function () {
@@ -401,7 +456,7 @@
     try {
       const packs = pack(plan, walletKey);
       log('');
-      log(plan.length + ' Rangers packed into ' + packs.length + ' transactions.', 'dim');
+      log(plan.length + ' Rangers packed into ' + packs.length + ' transactions. They go out one a second, so this takes a few minutes.', 'dim');
 
       // one transaction proves the shape before any wallet is asked to sign
       const probe = packs[0].tx;
@@ -410,9 +465,9 @@
       if (sim.value.err) throw new Error('simulation failed: ' + JSON.stringify(sim.value.err));
       log('First transaction simulates cleanly.', 'ok');
 
-      let sent = 0, failed = 0;
-      // A blockhash lives 60–90 seconds, so each batch gets a fresh one rather
-      // than signing everything against the first.
+      let landed = 0;
+      // A blockhash lives 60–90 seconds. Eight transactions at one a second, with
+      // room for retries, fit comfortably inside that.
       for (let i = 0; i < packs.length; i += PER_BATCH) {
         const batch = packs.slice(i, i + PER_BATCH);
         const { blockhash, lastValidBlockHeight } = await c.getLatestBlockhash('confirmed');
@@ -420,29 +475,32 @@
         log('batch ' + (Math.floor(i / PER_BATCH) + 1) + ' of ' + Math.ceil(packs.length / PER_BATCH) + ' — check your wallet', 'dim');
         const signed = await signMany(batch.map((p) => p.tx));
 
-        const results = await Promise.all(signed.map(async (raw, k) => {
+        const sent = [];
+        for (let k = 0; k < signed.length; k++) {
           try {
-            const sig = await c.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
-            await confirmSig(c, sig);
-            return { ok: true, sig: sig, n: batch[k].mints.length };
+            sent.push({ sig: await sendPaced(c, signed[k]), n: batch[k].mints.length });
           } catch (e) {
-            return { ok: false, error: e.message || String(e), n: batch[k].mints.length };
+            log('  ' + batch[k].mints.length + ' Rangers not sent: ' + (e.message || e), 'bad');
           }
-        }));
-        results.forEach((r) => {
-          if (r.ok) { sent += r.n; log('  ' + r.n + ' Rangers updated · ' + r.sig.slice(0, 16) + '…', 'ok'); }
-          else { failed += r.n; log('  ' + r.n + ' Rangers failed: ' + r.error, 'bad'); }
+          await sleep(1100);
+        }
+        const status = await confirmAll(c, sent.map((x) => x.sig), lastValidBlockHeight);
+        sent.forEach((x) => {
+          if (status[x.sig] === 'ok') { landed += x.n; log('  ' + x.n + ' Rangers updated · ' + x.sig.slice(0, 16) + '…', 'ok'); }
+          else log('  ' + x.n + ' Rangers: ' + status[x.sig], 'bad');
         });
-        log('  ' + sent + ' of ' + plan.length + ' done', 'dim');
+        log('  ' + landed + ' of ' + plan.length + ' confirmed so far', 'dim');
       }
 
       log('');
-      if (failed) {
-        log(failed + ' did not go through. Press Check, then Apply again — anything already correct is skipped.', 'bad');
+      log('Reading the chain back to be sure…', 'dim');
+      const remaining = await countRemaining(c);
+      if (remaining) {
+        log(remaining + ' Rangers still need changing. Press Check, then Apply again — the finished ones are skipped.', 'bad');
         btn.textContent = 'Apply';
         btn.disabled = false;
       } else {
-        log('All done. Royalties now pay the Seeker, and both Rangers have their names back.', 'ok');
+        log('All done, confirmed on chain. Royalties now pay the Seeker, and both Rangers have their names back.', 'ok');
         log('Wallets and marketplaces cache metadata, so give them a few hours to catch up.', 'dim');
         btn.textContent = 'Done';
       }
