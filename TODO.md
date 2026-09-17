@@ -352,6 +352,18 @@ any name another Ranger already holds.
 the same number #260 has. Harmless — the site's explorer computes rarity itself
 and ignores that attribute.*
 
+**30. Rarity Ranks corrected — DONE 2026-09-17.** Four Rangers carried a rank
+belonging to another: #236 (956 → 817) and #290 (697 → 795) from the trait shop
+copying it onto swapped pieces, #46 (835 → 263) and #205 (862 → 949) from the
+September rename. Verified on chain: every Ranger now carries its own edition's
+rank, no rank is shared by two Rangers, and all 219 metadata files load.
+
+**Why this took four runs, worth remembering:** (1) eight parallel sends into a
+1/s RPC limit, (2) a paste step that was easy to miss, (3) a check that read fresh
+uploads from arweave.net, which 404s for hours while indexing, and (4) **a cached
+copy of the signing page re-sent the previous run's update**. royalties.html is
+now served `no-store` and prints its build under the title.
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
