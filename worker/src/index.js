@@ -339,7 +339,7 @@ const RATE_RULES = [
   { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
-  { match: ['/api/swap/tokens', '/api/swap/earned'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
@@ -491,7 +491,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'store-live-1';
+const BUILD = 'fee-discovery-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1183,6 +1183,123 @@ const INPUT_FEE_MINTS = [
   'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'   // USDT
 ];
 
+// ── FINDING A FEE ACCOUNT BY ITSELF ─────────────────────────────────────────
+// Fee accounts used to be a hand-written list: create one on Jupiter's site, then
+// edit this file. Instead the worker derives the address Jupiter would use for a
+// mint and asks the chain whether it exists. Create an account and swaps in that
+// token start earning by themselves.
+const REFERRAL_PROGRAM = 'REFER4ZgmyYx9c6He5XfaTMiGfdLwRnkV4RPp9t9iF3';
+const REFERRAL_ACCOUNT = '5Vrx9Gi4E1dqe4hJine1Whds8LLqayJEN2ZSqFYko9uU';
+const PDA_MARKER = 'ProgramDerivedAddress';
+
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function b58ToBytes(s) {
+  let n = 0n;
+  for (const c of s) {
+    const i = B58_ALPHABET.indexOf(c);
+    if (i < 0) throw new Error('not base58');
+    n = n * 58n + BigInt(i);
+  }
+  const out = [];
+  while (n > 0n) { out.unshift(Number(n & 255n)); n >>= 8n; }
+  for (const c of s) { if (c !== '1') break; out.unshift(0); }
+  while (out.length < 32) out.unshift(0);
+  return Uint8Array.from(out);
+}
+function bytesToB58(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = (n << 8n) + BigInt(b);
+  let out = '';
+  while (n > 0n) { out = B58_ALPHABET[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = '1' + out; }
+  return out;
+}
+
+// Whether 32 bytes decompress to a point on ed25519. A program address is
+// precisely an address that does not, which is why it has no private key.
+const ED_P = (1n << 255n) - 19n;
+const ED_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
+function powMod(base, exp, mod) {
+  let r = 1n, b = base % mod;
+  while (exp > 0n) {
+    if (exp & 1n) r = (r * b) % mod;
+    b = (b * b) % mod;
+    exp >>= 1n;
+  }
+  return r;
+}
+function isOnCurve(bytes) {
+  let y = 0n;
+  for (let i = 31; i >= 0; i--) y = (y << 8n) + BigInt(bytes[i]);
+  y &= (1n << 255n) - 1n;                 // drop the sign bit
+  if (y >= ED_P) return false;
+  const y2 = (y * y) % ED_P;
+  const u = (y2 - 1n + ED_P) % ED_P;
+  const v = (ED_D * y2 + 1n) % ED_P;
+  // x = u v^3 (u v^7)^((p-5)/8), the standard decompression
+  const v3 = (v * v % ED_P) * v % ED_P;
+  const v7 = (v3 * v3 % ED_P) * v % ED_P;
+  let x = (u * v3 % ED_P) * powMod(u * v7 % ED_P, (ED_P - 5n) / 8n, ED_P) % ED_P;
+  const vx2 = (v * x % ED_P) * x % ED_P;
+  if (vx2 === u % ED_P) return true;
+  if (vx2 === (ED_P - u % ED_P) % ED_P) return true;   // the other square root
+  return false;
+}
+
+async function programAddress(seeds, programId) {
+  const marker = new TextEncoder().encode(PDA_MARKER);
+  const program = b58ToBytes(programId);
+  for (let bump = 255; bump >= 0; bump--) {
+    const parts = seeds.concat([Uint8Array.from([bump]), program, marker]);
+    let len = 0;
+    for (const p of parts) len += p.length;
+    const buf = new Uint8Array(len);
+    let o = 0;
+    for (const p of parts) { buf.set(p, o); o += p.length; }
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    if (!isOnCurve(hash)) return bytesToB58(hash);
+  }
+  throw new Error('no program address for those seeds');
+}
+
+/// The fee account Jupiter would use for a mint — the same address its dashboard
+/// creates, derived rather than looked up.
+async function derivedFeeAccount(mint) {
+  return programAddress(
+    [new TextEncoder().encode('referral_ata'), b58ToBytes(REFERRAL_ACCOUNT), b58ToBytes(mint)],
+    REFERRAL_PROGRAM);
+}
+
+/// Does that account exist, and under which token program? Cached: an answer
+/// only changes when an account is created, and a miss costs one RPC call.
+async function feeAccountFor(env, mint) {
+  const cache = caches.default;
+  const key = new Request('https://fee-account.cache/' + mint);
+  const hit = await cache.match(key);
+  if (hit) {
+    const cached = await hit.json();
+    return cached.account ? cached : null;
+  }
+  let answer = { account: null, program: null };
+  try {
+    const account = await derivedFeeAccount(mint);
+    const info = await rpcCall(env, 'getAccountInfo', [account, { encoding: 'jsonParsed' }]);
+    const value = info && info.value;
+    const parsed = value && value.data && value.data.parsed;
+    if (parsed && parsed.type === 'account' && parsed.info && parsed.info.mint === mint) {
+      answer = { account: account, program: value.owner };
+    }
+  } catch (e) {
+    await logError(env, 'fee.derive', (e && e.message) || e);
+    return null;                                    // do not cache a failure
+  }
+  // a missing account is worth remembering too, but for less time
+  await cache.put(key, new Response(JSON.stringify(answer), {
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=' + (answer.account ? 86400 : 900) }
+  }));
+  return answer.account ? answer : null;
+}
+
 /// Which fee account a swap pays into, and in which token. The output side is
 /// preferred so pairs that already earned keep earning exactly as before; the
 /// input side is the fallback. The account must also sit under its mint's own
@@ -1192,6 +1309,20 @@ const INPUT_FEE_MINTS = [
 function swapFee(inputMint, outputMint) {
   if (SWAP_FEE_ACCOUNTS[outputMint]) return { account: SWAP_FEE_ACCOUNTS[outputMint], mint: outputMint };
   if (INPUT_FEE_MINTS.indexOf(inputMint) >= 0) return { account: SWAP_FEE_ACCOUNTS[inputMint], mint: inputMint };
+  return null;
+}
+
+/// The same question, but also asking the chain about accounts created since this
+/// file was written. The output side is preferred, as before. The input side is
+/// only used for a classic SPL mint: taking a fee from a Token-2022 input has
+/// never been proven here, and a wrong guess fails the whole swap.
+async function swapFeeFor(env, inputMint, outputMint) {
+  const known = swapFee(inputMint, outputMint);
+  if (known) return known;
+  const out = await feeAccountFor(env, outputMint);
+  if (out) return { account: out.account, mint: outputMint };
+  const inp = await feeAccountFor(env, inputMint);
+  if (inp && inp.program === TOKEN_PROGRAM_ID) return { account: inp.account, mint: inputMint };
   return null;
 }
 
@@ -2260,6 +2391,10 @@ async function bannerLive(env) {
   ).bind(now, now).first();
 }
 
+// exposed for the tests: address derivation is maths that must be checked
+// against addresses Jupiter itself created
+export const _internals = { derivedFeeAccount, programAddress, isOnCurve, b58ToBytes, bytesToB58 };
+
 export default {
   /// Runs on a schedule so an outage is reported rather than stumbled upon.
   /// Alerts only on a change of state, so a long outage does not spam.
@@ -2333,6 +2468,7 @@ export default {
           path === '/api/banner/watch' || path === '/api/swap/tokens' ||
           path === '/api/swap/quote' || path === '/api/swap/build' ||
           path === '/api/swap/earned' || path === '/api/swap/search' ||
+          path === '/api/swap/top' ||
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
           path === '/api/cleanup/scan' ||
           path === '/api/swap/holdings' || path === '/api/swap/record' ||
@@ -2995,6 +3131,32 @@ export default {
         });
       }
 
+      // The busiest tokens on Solana right now, so the fee-account page can offer
+      // them rather than making anyone hunt for mint addresses.
+      if (path === '/api/swap/top' && request.method === 'GET') {
+        const cache = caches.default;
+        const key = new Request(new URL('/api/swap/top', url.origin).toString(), request);
+        const hit = await cache.match(key);
+        if (hit) return hit;
+
+        const res = await jupFetch(env, '/tokens/v2/toptraded/24h?limit=50');
+        if (!res.ok) return json(request, env, { error: 'could not read the top tokens' }, 502);
+        const list = await res.json().catch(function () { return []; });
+        const tokens = (Array.isArray(list) ? list : []).map(function (t) {
+          const s24 = t.stats24h || {};
+          return {
+            mint: t.id, symbol: t.symbol || null, name: t.name || null, decimals: t.decimals,
+            verified: !!t.isVerified, tokenProgram: t.tokenProgram || null,
+            volume24h: Math.round((Number(s24.buyVolume) || 0) + (Number(s24.sellVolume) || 0))
+          };
+        }).filter(function (t) { return t.mint; });
+        const out = json(request, env, { tokens: tokens });
+        const cached = new Response(out.body, out);
+        cached.headers.set('Cache-Control', 'public, max-age=1800');
+        ctx.waitUntil(cache.put(key, cached.clone()));
+        return cached;
+      }
+
       if (path === '/api/swap/tokens' && request.method === 'GET') {
         return json(request, env, { tokens: SWAP_TOKENS, feeBps: SWAP_FEE_BPS });
       }
@@ -3017,7 +3179,7 @@ export default {
         const slippageBps = auto
           ? await autoSlippageBps(env, inputMint, outputMint)
           : Math.max(1, Math.min(5000, Number(slippageParam) || 50));
-        const fee = swapFee(inputMint, outputMint);
+        const fee = await swapFeeFor(env, inputMint, outputMint);
         // the discount is decided here and enforced again when the swap is built
         const holder = isWallet(who) ? await isRangerHolder(env, who) : false;
         const feeBps = fee ? swapFeeBpsFor(holder) : 0;
@@ -3062,7 +3224,7 @@ export default {
           return json(request, env, { error: 'missing quote or wallet' }, 400);
         }
         // Rebuild the fee account here rather than trusting the client with it.
-        const fee = swapFee(quote.inputMint, quote.outputMint);
+        const fee = await swapFeeFor(env, quote.inputMint, quote.outputMint);
 
         // The quote arrives from the browser, so its fee rate is checked against
         // what this wallet is actually entitled to. The wallet is the one that

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>Swap fee accounts — solquicks</title>
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"
+        integrity="sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ" crossorigin="anonymous"></script>
+<style>
+  :root{--bg:#120E1F;--card:#1C1630;--sunk:#141021;--line:#2E2745;--ink:#F3EFFA;--soft:#CFC6DA;--muted:#8F84A8;--orange:#F0821E;--ok:#57C98A;--bad:#E4685D;--gold:#FFD98A}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:28px 16px 60px}
+  .wrap{max-width:820px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 18px;line-height:1.5}
+  .sub b{color:var(--gold)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  h3{margin:0 0 10px;font-size:16px}
+  button{appearance:none;border:none;border-radius:10px;background:var(--orange);color:#2A1206;font-size:15px;font-weight:800;padding:12px 18px;cursor:pointer;margin-right:8px}
+  button:disabled{background:#3A3252;color:var(--muted);cursor:default}
+  button.ghost{background:transparent;border:2px solid var(--line);color:var(--soft)}
+  textarea{width:100%;min-height:80px;background:var(--sunk);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  label{display:block;font-size:12px;color:var(--muted);font-weight:700;margin:14px 0 5px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  th{text-align:left;color:var(--muted);font-weight:700;padding:6px 6px;border-bottom:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+  td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.05);color:var(--soft)}
+  td.sym{font-weight:800;color:var(--ink)}
+  td.vol{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tick{color:var(--ok);font-weight:800}
+  .cross{color:var(--muted)}
+  .pick{accent-color:var(--orange);width:15px;height:15px}
+  .warn{background:#2E1C1A;border:1px solid var(--bad);border-radius:10px;padding:14px 16px;margin-bottom:14px;color:var(--soft);font-size:13px;line-height:1.55}
+  .warn b{color:var(--bad)}
+  .log{background:var(--sunk);border-radius:8px;padding:12px 14px;max-height:280px;overflow-y:auto;font-size:12px;white-space:pre-wrap;line-height:1.5;margin-top:12px}
+  .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}.gold{color:var(--gold)}
+</style>
+
+<div class="wrap">
+  <h1>Swap fee accounts</h1>
+  <p class="sub">Creates the accounts that collect your swap fee, in bulk, without the Jupiter dashboard.
+    <br><b id="build">build: bulk-fee-accounts · 17 Sep</b></p>
+
+  <div class="warn">
+    <b>Each account costs about 0.002 SOL of rent</b> (roughly 20¢), paid by the wallet
+    you connect, and is recoverable later by closing it. Creating one changes nothing
+    else: fees only start arriving once the account exists and the worker knows about it.
+    Accounts already created are skipped.
+  </div>
+
+  <div class="card">
+    <h3>1 · Pick the tokens</h3>
+    <p class="sub" style="margin:0 0 6px">The 50 busiest on Solana over the last day. Ticked rows have no fee account yet.</p>
+    <div id="table-wrap"><span class="dim">Connect a wallet to load them.</span></div>
+    <label for="extra">Any other mints, one per line</label>
+    <textarea id="extra" spellcheck="false" placeholder="mint address"></textarea>
+  </div>
+
+  <div class="card">
+    <button id="connect">Connect a wallet</button>
+    <button id="check" disabled>Check what is missing</button>
+    <button id="create" disabled>Create the ticked accounts</button>
+    <button class="ghost" id="none" disabled>Untick all</button>
+    <div class="log" id="log">Connect the wallet that should pay the rent.</div>
+  </div>
+</div>
+
+<script>
+  const RPC = 'https://solquicks-rpc-proxy.solquicks-45c.workers.dev';
+  const API = 'https://solquicks-points.solquicks-45c.workers.dev';
+  const REFERRAL_PROGRAM = 'REFER4ZgmyYx9c6He5XfaTMiGfdLwRnkV4RPp9t9iF3';
+  const REFERRAL_PROJECT = '45ruCyfdRkWpRNGEqWzjCiXRHkZs8WXCLQ67Pnpye7Hp';
+  const REFERRAL_ACCOUNT = '5Vrx9Gi4E1dqe4hJine1Whds8LLqayJEN2ZSqFYko9uU';
+  const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const TOKEN22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+  // initializeReferralTokenAccount, read off the transaction that created the
+  // USDC account through Jupiter's own dashboard
+  const INIT_IX = [125, 18, 70, 95, 86, 179, 221, 190];
+  const PER_TX = 4;             // accounts created per transaction
+  const PER_BATCH = 6;          // transactions signed against one blockhash
+
+  const w3 = () => window.solanaWeb3;
+  let provider = null, walletKey = null, rows = [];
+
+  const logEl = document.getElementById('log');
+  function log(msg, cls) {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function conn() {
+    return new (w3().Connection)(RPC, {
+      commitment: 'confirmed',
+      fetchMiddleware: function (url, options, next) {
+        if (options && options.headers) { delete options.headers['solana-client']; delete options.headers['Solana-Client']; }
+        next(url, options);
+      }
+    });
+  }
+
+  /// Where a mint's fee is collected: a program address of the referral account,
+  /// exactly as Jupiter's dashboard derives it.
+  function feeAccountFor(mint) {
+    const { PublicKey } = w3();
+    return PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('referral_ata'), new PublicKey(REFERRAL_ACCOUNT).toBytes(), new PublicKey(mint).toBytes()],
+      new PublicKey(REFERRAL_PROGRAM))[0];
+  }
+
+  function wallets() {
+    const found = [];
+    const register = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const w = arguments[i];
+        if (w && w.features && w.features['standard:connect'] &&
+            (w.chains || []).some((c) => String(c).indexOf('solana') === 0)) found.push({ kind: 'standard', name: w.name, w: w });
+      }
+    };
+    try {
+      window.addEventListener('wallet-standard:register-wallet', (e) => { try { e.detail({ register: register }); } catch (x) {} });
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
+    } catch (e) {}
+    const seen = {}; found.forEach((f) => { seen[f.name] = true; });
+    [{ name: 'Solflare', p: window.solflare }, { name: 'Backpack', p: window.backpack },
+     { name: 'Glow', p: window.glow }, { name: 'Solana Wallet', p: window.solana }]
+      .forEach((e) => { if (e.p && typeof e.p.connect === 'function' && !seen[e.name]) found.push({ kind: 'injected', name: e.name, w: e.p }); });
+    return found;
+  }
+
+  document.getElementById('connect').onclick = async function () {
+    const list = wallets();
+    if (!list.length) { log('No Solana wallet found in this browser.', 'bad'); return; }
+    const t = list[0];
+    try {
+      if (t.kind === 'standard') {
+        const res = await t.w.features['standard:connect'].connect();
+        walletKey = ((res && res.accounts && res.accounts[0]) || t.w.accounts[0]).address;
+      } else {
+        const res = await t.w.connect();
+        walletKey = ((res && res.publicKey) ? res.publicKey : t.w.publicKey).toString();
+      }
+      provider = t;
+      const sol = (await conn().getBalance(new (w3().PublicKey)(walletKey))) / 1e9;
+      log('Connected ' + walletKey.slice(0, 6) + '…' + walletKey.slice(-4) + ' — ' + sol.toFixed(4) + ' SOL', 'ok');
+      document.getElementById('check').disabled = false;
+      document.getElementById('check').click();
+    } catch (e) { log('Connection cancelled.', 'dim'); }
+  };
+
+  document.getElementById('check').onclick = async function () {
+    const btn = document.getElementById('check');
+    btn.disabled = true; btn.textContent = 'Reading…';
+    try {
+      const c = conn();
+      const res = await fetch(API + '/api/swap/top');
+      const top = (await res.json()).tokens || [];
+      const extra = document.getElementById('extra').value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+      const seen = {};
+      const list = [];
+      for (const t of top.concat(extra.map((m) => ({ mint: m, symbol: null, name: 'pasted', volume24h: null })))) {
+        if (seen[t.mint]) continue;
+        seen[t.mint] = true;
+        try { new (w3().PublicKey)(t.mint); } catch (e) { log('not a mint address: ' + t.mint, 'bad'); continue; }
+        list.push(t);
+      }
+
+      // each mint's own token program, and whether its fee account exists yet
+      const mintInfos = [];
+      for (let i = 0; i < list.length; i += 100) {
+        mintInfos.push(...await c.getMultipleAccountsInfo(list.slice(i, i + 100).map((t) => new (w3().PublicKey)(t.mint))));
+      }
+      const feeAddrs = list.map((t) => feeAccountFor(t.mint));
+      const feeInfos = [];
+      for (let i = 0; i < feeAddrs.length; i += 100) {
+        feeInfos.push(...await c.getMultipleAccountsInfo(feeAddrs.slice(i, i + 100)));
+      }
+
+      rows = list.map((t, i) => ({
+        mint: t.mint,
+        symbol: t.symbol || t.mint.slice(0, 4) + '…',
+        volume24h: t.volume24h,
+        program: mintInfos[i] ? mintInfos[i].owner.toBase58() : null,
+        fee: feeAddrs[i].toBase58(),
+        exists: !!feeInfos[i],
+        pick: !feeInfos[i]
+      })).filter((r) => {
+        if (r.program === TOKEN || r.program === TOKEN22) return true;
+        log(r.symbol + ' is not a token mint — skipped', 'dim');
+        return false;
+      });
+
+      paint();
+      const missing = rows.filter((r) => !r.exists).length;
+      log(rows.length + ' tokens checked · ' + (rows.length - missing) + ' already collect fees · ' + missing + ' missing', 'gold');
+      document.getElementById('create').disabled = !missing;
+      document.getElementById('none').disabled = !missing;
+      btn.textContent = 'Check again';
+      btn.disabled = false;
+    } catch (e) {
+      log('Check failed: ' + (e.message || e), 'bad');
+      btn.textContent = 'Check what is missing';
+      btn.disabled = false;
+    }
+  };
+
+  function paint() {
+    const picked = rows.filter((r) => r.pick).length;
+    const cost = (picked * 0.00204).toFixed(4);
+    document.getElementById('table-wrap').innerHTML =
+      '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">24h volume</th></tr></thead><tbody>' +
+      rows.map((r, i) =>
+        '<tr><td>' + (r.exists ? '<span class="tick">✓</span>'
+          : '<input class="pick" type="checkbox" data-i="' + i + '" ' + (r.pick ? 'checked' : '') + ' onchange="togglePick(this)">') + '</td>' +
+        '<td class="sym">' + esc(r.symbol) + '</td>' +
+        '<td>' + (r.program === TOKEN22 ? 'Token-2022' : 'SPL') + '</td>' +
+        '<td>' + (r.exists ? '<span class="tick">collecting</span>' : '<span class="cross">' + esc(r.fee.slice(0, 8)) + '…</span>') + '</td>' +
+        '<td class="vol">' + (r.volume24h ? '$' + r.volume24h.toLocaleString() : '—') + '</td></tr>').join('') +
+      '</tbody></table>' +
+      '<p class="sub" style="margin:10px 0 0">' + picked + ' ticked · about <b>' + cost + ' SOL</b> of rent</p>';
+  }
+
+  function togglePick(el) {
+    rows[Number(el.dataset.i)].pick = el.checked;
+    paint();
+  }
+
+  document.getElementById('none').onclick = function () {
+    rows.forEach((r) => { r.pick = false; });
+    paint();
+  };
+
+  function initIx(mint, program) {
+    const { PublicKey, TransactionInstruction, SystemProgram } = w3();
+    return new TransactionInstruction({
+      programId: new PublicKey(REFERRAL_PROGRAM),
+      keys: [
+        { pubkey: new PublicKey(walletKey), isSigner: true, isWritable: true },      // pays the rent
+        { pubkey: new PublicKey(REFERRAL_PROJECT), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(REFERRAL_ACCOUNT), isSigner: false, isWritable: false },
+        { pubkey: feeAccountFor(mint), isSigner: false, isWritable: true },
+        { pubkey: new PublicKey(mint), isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(program), isSigner: false, isWritable: false }
+      ],
+      data: new Uint8Array(INIT_IX)
+    });
+  }
+
+  async function signMany(txs) {
+    if (provider.kind === 'standard') {
+      const all = provider.w.features['solana:signAllTransactions'];
+      if (all) {
+        const out = await all.signAllTransactions({
+          transactions: txs.map((t) => ({
+            account: provider.w.accounts[0], chain: 'solana:mainnet',
+            transaction: t.serialize({ requireAllSignatures: false, verifySignatures: false })
+          }))
+        });
+        return out.map((o) => o.signedTransaction);
+      }
+      const one = provider.w.features['solana:signTransaction'];
+      const signed = [];
+      for (const t of txs) {
+        const out = await one.signTransaction({
+          account: provider.w.accounts[0], chain: 'solana:mainnet',
+          transaction: t.serialize({ requireAllSignatures: false, verifySignatures: false })
+        });
+        signed.push(out[0].signedTransaction);
+      }
+      return signed;
+    }
+    if (provider.w.signAllTransactions) return (await provider.w.signAllTransactions(txs)).map((t) => t.serialize());
+    const signed = [];
+    for (const t of txs) signed.push((await provider.w.signTransaction(t)).serialize());
+    return signed;
+  }
+
+  /// The RPC plan accepts one sendTransaction a second; a refusal is waited out.
+  async function sendPaced(c, raw) {
+    let wait = 1200;
+    for (let attempt = 0; attempt < 7; attempt++) {
+      try { return await c.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 5 }); }
+      catch (e) {
+        const m = String((e && e.message) || e);
+        if (!/429|rate|too many|limit|fetch|timed? ?out|503|502/i.test(m)) throw e;
+        await sleep(wait);
+        wait = Math.min(wait * 2, 8000);
+      }
+    }
+    throw new Error('the RPC kept refusing the transaction');
+  }
+
+  async function confirmAll(c, sigs) {
+    const pending = new Map(sigs.map((s) => [s, true]));
+    const result = {};
+    for (let round = 0; round < 40 && pending.size; round++) {
+      await sleep(2000);
+      let st;
+      try { st = await c.getSignatureStatuses([...pending.keys()]); } catch (e) { continue; }
+      [...pending.keys()].forEach((sig, i) => {
+        const v = st && st.value && st.value[i];
+        if (!v) return;
+        if (v.err) { result[sig] = 'failed on chain: ' + JSON.stringify(v.err); pending.delete(sig); }
+        else if (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized') { result[sig] = 'ok'; pending.delete(sig); }
+      });
+    }
+    for (const sig of pending.keys()) result[sig] = 'not confirmed';
+    return result;
+  }
+
+  document.getElementById('create').onclick = async function () {
+    const btn = document.getElementById('create');
+    const todo = rows.filter((r) => r.pick && !r.exists);
+    if (!todo.length) { log('Nothing ticked.', 'dim'); return; }
+    btn.disabled = true; btn.textContent = 'Working…';
+    const c = conn();
+    try {
+      const { PublicKey, Transaction } = w3();
+      const packs = [];
+      for (let i = 0; i < todo.length; i += PER_TX) {
+        const group = todo.slice(i, i + PER_TX);
+        const tx = new Transaction();
+        group.forEach((r) => tx.add(initIx(r.mint, r.program)));
+        tx.feePayer = new PublicKey(walletKey);
+        packs.push({ tx: tx, group: group });
+      }
+      log(todo.length + ' accounts in ' + packs.length + ' transactions — about ' + (todo.length * 0.00204).toFixed(4) + ' SOL of rent', 'dim');
+
+      // prove the shape before any wallet is asked to sign
+      packs[0].tx.recentBlockhash = (await c.getLatestBlockhash('confirmed')).blockhash;
+      const sim = await c.simulateTransaction(packs[0].tx);
+      if (sim.value.err) throw new Error('simulation failed: ' + JSON.stringify(sim.value.err));
+      log('First transaction simulates cleanly.', 'ok');
+
+      let made = 0;
+      for (let i = 0; i < packs.length; i += PER_BATCH) {
+        const batch = packs.slice(i, i + PER_BATCH);
+        const { blockhash } = await c.getLatestBlockhash('confirmed');
+        batch.forEach((p) => { p.tx.recentBlockhash = blockhash; p.tx.feePayer = new PublicKey(walletKey); });
+        log('batch ' + (Math.floor(i / PER_BATCH) + 1) + ' of ' + Math.ceil(packs.length / PER_BATCH) + ' — check your wallet', 'dim');
+        const signed = await signMany(batch.map((p) => p.tx));
+
+        const sent = [];
+        for (let k = 0; k < signed.length; k++) {
+          try { sent.push({ sig: await sendPaced(c, signed[k]), group: batch[k].group }); }
+          catch (e) { log('  ' + batch[k].group.map((r) => r.symbol).join(', ') + ' not sent: ' + (e.message || e), 'bad'); }
+          await sleep(1100);
+        }
+        const status = await confirmAll(c, sent.map((x) => x.sig));
+        sent.forEach((x) => {
+          const names = x.group.map((r) => r.symbol).join(', ');
+          if (status[x.sig] === 'ok') { made += x.group.length; log('  ' + names + ' — created', 'ok'); }
+          else log('  ' + names + ': ' + status[x.sig], 'bad');
+        });
+      }
+
+      log('');
+      log(made + ' of ' + todo.length + ' created. Checking the chain…', 'dim');
+      await document.getElementById('check').onclick();
+      const left = rows.filter((r) => !r.exists).length;
+      log(left ? left + ' still missing — tick them and try again.' : 'Every ticked token now has a fee account.', left ? 'bad' : 'ok');
+      log('Tell Claude which tokens you added: the worker has to know before it charges a fee on them.', 'gold');
+      btn.textContent = 'Create the ticked accounts';
+      btn.disabled = false;
+    } catch (e) {
+      log(e.message || 'Failed.', 'bad');
+      btn.textContent = 'Create the ticked accounts';
+      btn.disabled = false;
+    }
+  };
+</script>
+</html>

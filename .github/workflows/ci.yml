@@ -184,6 +184,12 @@ jobs:
         working-directory: worker
         run: node test/collection.test.mjs
 
+      # Deriving a fee account is elliptic-curve maths; it is checked against the
+      # accounts Jupiter's own dashboard created.
+      - name: Fee account derivation
+        working-directory: worker
+        run: node test/fee-derive.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest
@@ -221,7 +227,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in index.html stake-init.html; do
+          for f in index.html stake-init.html fees.html; do
             [ -f "$f" ] || continue
             while IFS= read -r line; do
               case "$line" in

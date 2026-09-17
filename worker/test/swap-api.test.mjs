@@ -2,6 +2,7 @@
 // which token, which Jupiter address is used, wallet holdings across both token
 // programs, and swap history read off the chain. Harness in harness.mjs.
 
+import { _internals } from '../src/index.js';
 import { chain, freshEnv as blankEnv, call, wallet, signIn, ok, eq, section, finish, runScheduled, setClock, START, TREASURY, pay } from './harness.mjs';
 
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -59,6 +60,10 @@ chain.jup = (u, init) => {
   }
 };
 
+// By default no token has a fee account beyond the ones written into the worker,
+// which is what the chain says for every mint nobody has created one for.
+chain.rpc.getAccountInfo = () => ({ value: null });
+
 const quote = async (env, inMint, outMint) => {
   const r = await call(env, 'GET', `/api/swap/quote?in=${inMint}&out=${outMint}&amount=1000000&slippage=50`);
   const sent = chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).pop();
@@ -111,6 +116,56 @@ section('which swaps earn the fee, and in which token');
   const { r } = await quote(env, SOL, BONK);
   const body = await build(env, r.body.quote, { feeAccount: wallet(66) });
   eq('a fee account sent by the client is ignored', body.feeAccount, FEE[SOL]);
+}
+
+section('a fee account created later is found on its own');
+{
+  const env = withSolPrice(freshEnv());
+  const bonkFee = await _internals.derivedFeeAccount(BONK);
+  const wifFee = await _internals.derivedFeeAccount(WIF);
+  let live = {};                       // which derived accounts exist on chain
+  let lookups = 0;
+  chain.rpc.getAccountInfo = ([addr]) => {
+    lookups++;
+    const mint = live[addr];
+    return mint
+      ? { value: { owner: TOKEN, data: { parsed: { type: 'account', info: { mint: mint } } } } }
+      : { value: null };
+  };
+
+  const quotePair = (a, b) => call(env, 'GET', `/api/swap/quote?in=${a}&out=${b}&amount=1000000&slippage=50`);
+  const before = (await quotePair(BONK, WIF)).body;
+  eq('with no account anywhere, the pair pays in SOL', before.feeMint, SOL);
+
+  // someone creates the account for WIF on Jupiter's site
+  live = { [wifFee]: WIF };
+  const fresh = withSolPrice(freshEnv());
+  const after = (await call(fresh, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50`)).body;
+  eq('the fee moves into the swap, in the token received', after.feeMint, WIF);
+  eq('and no separate SOL payment is asked for', after.feeLamports, 0);
+  const built = chain.jupCalls.filter((c) => c.url.includes('/swap/v1/swap')).pop();
+  const res = await call(fresh, 'POST', '/api/swap/build', { body: { quote: after.quote, user: wallet(1) } });
+  eq('the swap is built with the derived account',
+    chain.jupCalls.filter((c) => c.url.includes('/swap/v1/swap')).pop().body.feeAccount, wifFee);
+
+  const counted = lookups;
+  await call(fresh, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=2000000&slippage=50`);
+  eq('the answer is remembered rather than asked again', lookups, counted);
+
+  // only the token being sold has one, and it is a classic SPL mint
+  live = { [bonkFee]: BONK };
+  const sell = withSolPrice(freshEnv());
+  const sold = (await call(sell, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50`)).body;
+  eq('a fee can be taken from the token sold', sold.feeMint, BONK);
+
+  // the same, but the mint lives under Token-2022: untested territory, so no
+  chain.rpc.getAccountInfo = ([addr]) => (live[addr]
+    ? { value: { owner: TOKEN22, data: { parsed: { type: 'account', info: { mint: live[addr] } } } } }
+    : { value: null });
+  const t22 = withSolPrice(freshEnv());
+  const guarded = (await call(t22, 'GET', `/api/swap/quote?in=${BONK}&out=${WIF}&amount=1000000&slippage=50`)).body;
+  eq('a Token-2022 input is left alone, and pays in SOL instead', guarded.feeMint, SOL);
+  chain.rpc.getAccountInfo = () => ({ value: null });
 }
 
 section('pairs with no fee account pay in SOL');
