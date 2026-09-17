@@ -323,7 +323,14 @@
         log('  ' + r.name + ': ' + (j && j.changes.name ? 'name' + (j.changes.uri !== j.meta.uri ? ' and metadata file' : '') + ' will be set' : 'already correct'),
           j && j.changes.name ? 'gold' : 'dim');
       });
-      if (!jobs.length) { log('Nothing to do.', 'ok'); btn.textContent = 'Check what needs changing'; btn.disabled = false; return; }
+      if (!jobs.length) {
+        log('Nothing to do — everything is already correct.', 'ok');
+        plan = null;
+        document.getElementById('apply').disabled = true;   // nothing left to apply
+        btn.textContent = 'Check again';
+        btn.disabled = false;
+        return;
+      }
 
       plan = jobs;
       log('');
@@ -472,6 +479,7 @@
 
   document.getElementById('apply').onclick = async function () {
     const btn = document.getElementById('apply');
+    if (!plan || !plan.length) { log('Nothing to apply — press Check first.', 'dim'); return; }
     btn.disabled = true; btn.textContent = 'Working…';
     const c = conn();
     try {
