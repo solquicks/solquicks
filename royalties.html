@@ -52,21 +52,13 @@
   </div>
 
   <div class="card">
-    <h3>2 · Ranger #236 — recovered</h3>
-    <div class="row"><b>Mint</b><span>GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2</span></div>
-    <div class="row"><b>Minted as</b><span>236.json, 26 Feb 2023</span></div>
-    <div class="row"><b>Name</b><span><span class="was">Ranger #260 (held by FAtTsLTg…, the real #260)</span> → <span class="now">Ranger #236</span></span></div>
-    <div class="row"><b>Artwork</b><span>its last surviving version, May 2024 — kept</span></div>
-    <div class="row"><b>Metadata</b><span>uploaded and verified: k-NPWIP2…pb4_kDk</span></div>
-  </div>
-
-  <div class="card">
-    <h3>3 · Ranger #290 — name restored</h3>
-    <div class="row"><b>Mint</b><span>oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F</span></div>
-    <div class="row"><b>Minted as</b><span>290.json, 26 Feb 2023</span></div>
-    <div class="row"><b>Name</b><span><span class="was">Ranger #360</span> → <span class="now">Ranger #290</span></span></div>
-    <div class="row"><b>Artwork</b><span>fine already — untouched</span></div>
-    <div class="row"><b>Metadata</b><span>uploaded and verified: TCeefktS…FrixVt8</span></div>
+    <h3>2 · Four Rangers carrying the wrong Rarity Rank</h3>
+    <div class="row"><b>Why</b><span>the trait shop copied another Ranger's rank onto them; every other swapped Ranger keeps its own</span></div>
+    <div class="row"><b>Ranger #236</b><span><span class="was">956</span> → <span class="now">817</span></span></div>
+    <div class="row"><b>Ranger #290</b><span><span class="was">697</span> → <span class="now">795</span></span></div>
+    <div class="row"><b>Ranger #46</b><span><span class="was">835</span> → <span class="now">263</span></span></div>
+    <div class="row"><b>Ranger #205</b><span><span class="was">862</span> → <span class="now">949</span></span></div>
+    <div class="row"><b>Everything else</b><span>names, artwork and every other trait stay exactly as they are</span></div>
   </div>
 
   <div class="card">
@@ -86,11 +78,14 @@
   // Named for what each was minted as (the IPFS file in its first transaction).
   // An earlier run named them from a Rarity Rank attribute, which the trait shop
   // copies onto swapped Rangers — and gave one of them a name another Ranger held.
+  // Rarity Rank corrections: the name on each is already right, so only the
+  // metadata file changes. `rank` is checked against the uploaded file, so a
+  // wrong or stale address cannot be written to the chain.
   const REPAIRS = [
-    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236',
-      uri: 'https://arweave.net/k-NPWIP2eNvXtjuEqEXTPRcrrkQo3sKAfcY1pb4_kDk' },
-    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290',
-      uri: 'https://arweave.net/TCeefktS1i4D6lDB5aAYekN_gl2KrXHjdVWPFrixVt8' }
+    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236', rank: 817, uri: null },
+    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290', rank: 795, uri: null },
+    { mint: 'GGTjnPNLjjxEtYhshdumaKUrTH99LUVZUFCzsitS5VMz', name: 'Ranger #46', rank: 263, uri: null },
+    { mint: 'FAR6wZhvAkxByadvkvrpCZ6zeRyLkPNT7WpVrkEhALGm', name: 'Ranger #205', rank: 949, uri: null }
   ];
   // A fresh upload 404s on arweave.net for hours while it indexes, though it is
   // already stored. These gateways serve it immediately, so the check reads it
@@ -271,6 +266,7 @@
 
       // the file must already say the new name, or the chain and the file disagree
       for (const r of REPAIRS) {
+        if (!r.uri) throw new Error('the new metadata for ' + r.name + ' has not been uploaded yet');
         const id = r.uri.split('/').pop();
         let file = null, from = null;
         for (const gw of GATEWAYS) {
@@ -282,6 +278,10 @@
         if (!file) throw new Error('could not read ' + r.name + '’s metadata from any gateway');
         if (file.name !== r.name) throw new Error('that file holds ' + JSON.stringify(file.name) + ', not ' + r.name);
         if (!file.image) throw new Error(r.name + '’s metadata has no image');
+        if (r.rank !== undefined) {
+          const got = (file.attributes || []).find((a) => a.trait_type === 'Rarity Rank');
+          if (!got || got.value !== r.rank) throw new Error(r.name + '’s file says rank ' + (got && got.value) + ', not ' + r.rank);
+        }
         log(r.name + '’s metadata reads back correctly (' + from.replace('https://', '').replace('/', '') + ').', 'ok');
       }
 
