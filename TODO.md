@@ -335,18 +335,22 @@ first sent eight transactions at once into an RPC plan that accepts one a second
 so only 15 landed (nothing failed on chain). `royalties.html` now paces sends,
 retries refusals and reads the result back off the chain.
 
-**29. The two blank names — MY IDENTIFICATION WAS WRONG, correction ready.**
-I named them from the **Rarity Rank attribute, which is NOT unique**: the trait
-shop copies it onto swapped Rangers. `GVJWmz…` carries rank 956 and so does
-`FAtTsLTg…`, so naming GVJWmz "Ranger #260" gave the collection a duplicate —
-FAtTsLTg was minted as 260.json and is the real #260.
+**29. The two blank names — DONE 2026-09-17.** Verified on chain: no blank names,
+no duplicates, and all 219 metadata files load and agree with the chain.
+`GVJWmz…` is **Ranger #236** (artwork recovered from its May 2024 file, Mech fur
+and all), `oVPyKL…` is **Ranger #290**, and `FAtTsLTg…` keeps **Ranger #260**,
+which it was minted as.
 
-**Identity comes from the mint transaction** (the IPFS file in the first
-transaction that touched the mint), and that says: `GVJWmz…` = **#236**,
-`oVPyKL…` = **#290**. That matches the note this file carried all along.
-Correction prepared: `node upload-names.mjs` uploads both files, then
-royalties.html applies the two renames in one transaction. The page now refuses
+**The lesson worth keeping: identity comes from the mint transaction, not from
+the Rarity Rank attribute.** The trait shop copies that rank onto swapped
+Rangers — GVJWmz and FAtTsLTg both carry 956 — and naming from it briefly gave
+the collection two "Ranger #260". The mint transaction names the IPFS file it was
+minted from (`…/236.json`), which cannot be rewritten. royalties.html now refuses
 any name another Ranger already holds.
+
+*Cosmetic leftover: #236 still carries the copied "Rarity Rank 956" in its traits,
+the same number #260 has. Harmless — the site's explorer computes rarity itself
+and ignores that attribute.*
 
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
