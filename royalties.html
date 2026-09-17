@@ -57,8 +57,7 @@
     <div class="row"><b>Minted as</b><span>236.json, 26 Feb 2023</span></div>
     <div class="row"><b>Name</b><span><span class="was">Ranger #260 (held by FAtTsLTg…, the real #260)</span> → <span class="now">Ranger #236</span></span></div>
     <div class="row"><b>Artwork</b><span>its last surviving version, May 2024 — kept</span></div>
-    <label for="uri236">Metadata URL for Ranger #236, from <code>node upload-names.mjs</code></label>
-    <input id="uri236" placeholder="https://arweave.net/…" spellcheck="false" autocomplete="off"/>
+    <div class="row"><b>Metadata</b><span>uploaded and verified: k-NPWIP2…pb4_kDk</span></div>
   </div>
 
   <div class="card">
@@ -67,8 +66,7 @@
     <div class="row"><b>Minted as</b><span>290.json, 26 Feb 2023</span></div>
     <div class="row"><b>Name</b><span><span class="was">Ranger #360</span> → <span class="now">Ranger #290</span></span></div>
     <div class="row"><b>Artwork</b><span>fine already — untouched</span></div>
-    <label for="uri290">Metadata URL for Ranger #290, from <code>node upload-names.mjs</code></label>
-    <input id="uri290" placeholder="https://arweave.net/…" spellcheck="false" autocomplete="off"/>
+    <div class="row"><b>Metadata</b><span>uploaded and verified: TCeefktS…FrixVt8</span></div>
   </div>
 
   <div class="card">
@@ -89,9 +87,15 @@
   // An earlier run named them from a Rarity Rank attribute, which the trait shop
   // copies onto swapped Rangers — and gave one of them a name another Ranger held.
   const REPAIRS = [
-    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236', input: 'uri236', uri: null },
-    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290', input: 'uri290', uri: null }
+    { mint: 'GVJWmz3N8jPVu6AFHPe7LvQSY7tnKizK4m7j9BJkjMY2', name: 'Ranger #236',
+      uri: 'https://arweave.net/k-NPWIP2eNvXtjuEqEXTPRcrrkQo3sKAfcY1pb4_kDk' },
+    { mint: 'oVPyKLZbvJGQAZWZ7U3bNF4thFT2cRZoNYMtH86YT4F', name: 'Ranger #290',
+      uri: 'https://arweave.net/TCeefktS1i4D6lDB5aAYekN_gl2KrXHjdVWPFrixVt8' }
   ];
+  // A fresh upload 404s on arweave.net for hours while it indexes, though it is
+  // already stored. These gateways serve it immediately, so the check reads it
+  // from whichever answers — the address written on chain stays arweave.net.
+  const GATEWAYS = ['https://arweave.net/', 'https://vilenarios.com/', 'https://frostor.xyz/'];
   // A transaction is 1232 bytes. Stop well short: a wallet may add its own guard
   // instruction, and a transaction that will not fit fails after it is signed.
   const TX_BYTES = 1000;
@@ -267,13 +271,18 @@
 
       // the file must already say the new name, or the chain and the file disagree
       for (const r of REPAIRS) {
-        const url = document.getElementById(r.input).value.trim();
-        if (!url) throw new Error('paste the metadata URL for ' + r.name + ' first');
-        const j = await (await fetch(url)).json();
-        if (j.name !== r.name) throw new Error('that URL holds ' + JSON.stringify(j.name) + ', not ' + r.name);
-        if (!j.image) throw new Error(r.name + '’s metadata has no image');
-        r.uri = url;
-        log(r.name + '’s metadata reads back correctly.', 'ok');
+        const id = r.uri.split('/').pop();
+        let file = null, from = null;
+        for (const gw of GATEWAYS) {
+          try {
+            const res = await fetch(gw + id);
+            if (res.ok) { file = await res.json(); from = gw; break; }
+          } catch (e) { /* try the next gateway */ }
+        }
+        if (!file) throw new Error('could not read ' + r.name + '’s metadata from any gateway');
+        if (file.name !== r.name) throw new Error('that file holds ' + JSON.stringify(file.name) + ', not ' + r.name);
+        if (!file.image) throw new Error(r.name + '’s metadata has no image');
+        log(r.name + '’s metadata reads back correctly (' + from.replace('https://', '').replace('/', '') + ').', 'ok');
       }
 
       const jobs = [];
