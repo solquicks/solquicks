@@ -364,6 +364,23 @@ uploads from arweave.net, which 404s for hours while indexing, and (4) **a cache
 copy of the signing page re-sent the previous run's update**. royalties.html is
 now served `no-store` and prints its build under the title.
 
+**31. Fee accounts, without the Jupiter dashboard — shipped 2026-09-17.** The
+worker now derives the fee-account address Jupiter would use for any mint and
+asks the chain whether it exists (cached a day), so creating one is all it takes
+for swaps in that token to start earning. The derivation is ed25519 maths,
+checked in CI against the four accounts Jupiter's own dashboard made.
+`fees.html` creates them in bulk: the fifty busiest tokens on Solana, ticked
+where missing, about 0.002 SOL of rent each, one transaction a second.
+
+**Found while testing: eight popular tokens already had fee accounts** — ZEC,
+cbBTC, STONK, HYPE, JUP, MET, xBTC and ANSEM — all under our referral account,
+all at zero balance. They were invisible to the old hand-written list, and now
+earn automatically.
+
+**32. Points before signing in — nothing to fix (checked 2026-09-17).** A
+signed-out visitor earns nothing, stores nothing, and the daily button reads
+"Connect a wallet to claim". The old note predates the `/api/migrate` removal.
+
 **21. Bot protection — shipped 2026-09-15, off by default.** With it on, the swap
 gets a 0.000005 SOL tip added and is sent through Helius Sender with
 `mev-protect`, so sandwich bots cannot trade around it. Proven by building a real
