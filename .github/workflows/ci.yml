@@ -221,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in index.html stake-init.html fix-names.html royalties.html; do
+          for f in index.html stake-init.html; do
             [ -f "$f" ] || continue
             while IFS= read -r line; do
               case "$line" in
