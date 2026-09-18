@@ -491,7 +491,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'fee-discovery-1';
+const BUILD = 'quote-speed-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -3175,13 +3175,16 @@ export default {
           return json(request, env, { error: 'enter an amount' }, 400);
         }
 
+        // Slippage, the fee account and the holder check ask three different
+        // services nothing to do with each other. Waiting for each in turn added
+        // a third of a second to every keystroke.
         const auto = slippageParam === 'auto';
-        const slippageBps = auto
-          ? await autoSlippageBps(env, inputMint, outputMint)
-          : Math.max(1, Math.min(5000, Number(slippageParam) || 50));
-        const fee = await swapFeeFor(env, inputMint, outputMint);
-        // the discount is decided here and enforced again when the swap is built
-        const holder = isWallet(who) ? await isRangerHolder(env, who) : false;
+        const [slippageBps, fee, holder] = await Promise.all([
+          auto ? autoSlippageBps(env, inputMint, outputMint)
+               : Promise.resolve(Math.max(1, Math.min(5000, Number(slippageParam) || 50))),
+          swapFeeFor(env, inputMint, outputMint),
+          isWallet(who) ? isRangerHolder(env, who) : Promise.resolve(false)
+        ]);
         const feeBps = fee ? swapFeeBpsFor(holder) : 0;
         const q = new URLSearchParams({
           inputMint: inputMint, outputMint: outputMint,

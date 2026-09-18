@@ -93,6 +93,8 @@ function workerAnswer(p, url) {
   };
   if (p === '/api/swap/build') return { swapTransaction: net.built, lastValidBlockHeight: 1e12 };
   if (p === '/api/swap/history') return { swaps: [], savedUsd: 0, discountedSwaps: 0 };
+  // prices drive the instant estimate: 1 SOL is 100 USDC here
+  if (p === '/api/swap/prices') return { prices: { [SOL]: 100, [USDC]: 1, [BONK]: 0.00002, [WIF]: 2 } };
   if (p === '/api/analytics') return {
     holders: { total: 133, supply: 219, whales: 1, mid: 19, small: 113, top10Pct: 27.4, avg: 1.65, updatedAt: Date.now() - 60000,
       collectingSince: Date.now() - 9 * 86400000,
@@ -350,8 +352,19 @@ try {
   await page.waitForFunction(() => /Balance 2 SOL/.test(document.getElementById('sw-bal').textContent), null, { timeout: 10000 });
   ok('the SOL balance is read from the chain', true);
 
+  // an estimate must appear with the keystroke, before any quote comes back
+  await page.waitForFunction(() => Object.keys(swapPrices || {}).length > 0, null, { timeout: 10000 });
   await page.fill('#sw-in-amount', '1');
+  const instant = await page.evaluate(() => ({
+    value: document.getElementById('sw-out-amount').value,
+    marked: document.getElementById('sw-out-amount').classList.contains('est')
+  }));
+  eq('a figure appears the moment an amount is typed', instant.value, '100');
+  ok('and is marked as an estimate until the quote lands', instant.marked, JSON.stringify(instant));
   await page.waitForSelector('#sw-detail:not([hidden])', { timeout: 10000 });
+  eq('and the real quote replaces it, no longer marked an estimate',
+    await page.evaluate(() => document.getElementById('sw-out-amount').classList.contains('est')), false);
+  eq('with the quoted amount', await page.inputValue('#sw-out-amount'), '99.8');
   ok('the fee line shows 0.2%', /0\.2%/.test(await page.textContent('#sw-fee')));
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
