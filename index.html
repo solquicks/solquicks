@@ -5401,6 +5401,7 @@
       // rounded down, so it can never be more than is actually there
       amount = Math.floor(amount * Math.pow(10, d)) / Math.pow(10, d);
       document.getElementById('sw-in-amount').value = amount > 0 ? amount.toFixed(d).replace(/\.?0+$/, '') : '';
+      showEstimate();        // the same instant figure as typing gives
       quoteSwap();
     }
 
