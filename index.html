@@ -1413,6 +1413,12 @@
     .sw-board-me { background: var(--orange-soft); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
     .sw-saving { display: block; font-size: 0.72rem; font-weight: 800; color: var(--green); text-align: right; }
     .sw-history-title .sw-saving { display: inline; margin-left: 8px; font-family: inherit; text-align: left; }
+    .sw-more-swaps {
+      appearance: none; width: 100%; margin-top: 8px; padding: 8px; cursor: pointer;
+      background: none; border: none; border-top: 1px solid #EFE8DC; font-family: inherit;
+      font-size: 0.78rem; font-weight: 800; color: var(--ink-soft);
+    }
+    .sw-more-swaps:hover { color: var(--orange-deep); }
     .sw-route { text-align: right; max-width: 65%; font-size: 0.76rem; overflow-wrap: anywhere; }
     .sw-token { background: var(--cream); border: 2px solid #E7DFD2; border-radius: 12px; padding: 10px 13px; margin-top: 12px; }
     .sw-token-head { display: flex; align-items: center; gap: 6px; font-size: 0.86rem; color: var(--ink); }
@@ -2471,6 +2477,7 @@
       <div class="sw-history" id="sw-history" hidden>
         <div class="sw-history-title">Your swaps</div>
         <div id="sw-history-list"></div>
+        <button class="sw-more-swaps" id="sw-history-more" hidden onclick="toggleSwapHistory()"></button>
       </div>
 
       <div class="sw-history" id="sw-board" hidden>
@@ -5509,7 +5516,6 @@
 
     async function loadSwapHistory() {
       const box = document.getElementById('sw-history');
-      const list = document.getElementById('sw-history-list');
       const owner = Wallet.pubkey;
       if (!box) return;
       if (!owner) { box.hidden = true; return; }
@@ -5527,21 +5533,45 @@
           saved.textContent = 'Saved ' + fmtUsd(d.savedUsd) + ' with your Moon Ranger discount';
           title.appendChild(saved);
         }
-        const label = function (sym, mint) { return escapeHtml(sym || mint.slice(0, 4) + '…'); };
-        list.innerHTML = rows.map(function (s) {
-          const at = new Date(s.ts);
-          const when = at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
-            at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-          return '<div class="sw-hrow"><div>' +
-            '<div class="sw-hpair">' + escapeHtml(fmtAmount(s.in_amount)) + ' ' + label(s.in_symbol, s.in_mint) +
-            ' → ' + escapeHtml(fmtAmount(s.out_amount)) + ' ' + label(s.out_symbol, s.out_mint) + '</div>' +
-            '<div class="sw-hmeta">' + escapeHtml(when) + ' · <a href="https://solscan.io/tx/' +
-            encodeURIComponent(s.signature) + '" target="_blank" rel="noopener noreferrer">view</a></div>' +
-            '</div><div class="sw-hright">' + (s.usd !== null && s.usd !== undefined ? fmtUsd(s.usd) : '') +
-            (s.points ? '<span class="sw-hpts">+' + Number(s.points).toLocaleString() + ' pts</span>' : '') +
-            '</div></div>';
-        }).join('');
+        swapHistoryRows = rows;
+        paintSwapHistory();
       } catch (e) { /* history is a convenience; swapping is unaffected */ }
+    }
+
+    /// A long history pushed the week's top swappers off the screen, so only the
+    /// most recent few are shown until someone asks for the rest.
+    var swapHistoryOpen = false;
+    const SWAP_HISTORY_SHOWN = 5;
+    var swapHistoryRows = [];
+
+    function toggleSwapHistory() {
+      swapHistoryOpen = !swapHistoryOpen;
+      paintSwapHistory();
+    }
+
+    function paintSwapHistory() {
+      const list = document.getElementById('sw-history-list');
+      const more = document.getElementById('sw-history-more');
+      const rows = swapHistoryRows;
+      const shown = swapHistoryOpen ? rows : rows.slice(0, SWAP_HISTORY_SHOWN);
+      const label = function (sym, mint) { return escapeHtml(sym || mint.slice(0, 4) + '…'); };
+      list.innerHTML = shown.map(function (s) {
+        const at = new Date(s.ts);
+        const when = at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
+          at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        return '<div class="sw-hrow"><div>' +
+          '<div class="sw-hpair">' + escapeHtml(fmtAmount(s.in_amount)) + ' ' + label(s.in_symbol, s.in_mint) +
+          ' → ' + escapeHtml(fmtAmount(s.out_amount)) + ' ' + label(s.out_symbol, s.out_mint) + '</div>' +
+          '<div class="sw-hmeta">' + escapeHtml(when) + ' · <a href="https://solscan.io/tx/' +
+          encodeURIComponent(s.signature) + '" target="_blank" rel="noopener noreferrer">view</a></div>' +
+          '</div><div class="sw-hright">' + (s.usd !== null && s.usd !== undefined ? fmtUsd(s.usd) : '') +
+          (s.points ? '<span class="sw-hpts">+' + Number(s.points).toLocaleString() + ' pts</span>' : '') +
+          '</div></div>';
+      }).join('');
+      more.hidden = rows.length <= SWAP_HISTORY_SHOWN;
+      more.textContent = swapHistoryOpen
+        ? 'Show fewer'
+        : 'Show all ' + rows.length + ' swaps';
     }
 
     // ── live price ──

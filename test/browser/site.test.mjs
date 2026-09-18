@@ -92,7 +92,13 @@ function workerAnswer(p, url) {
     feeBps: 20, fullFeeBps: 20, holder: false, feeMint: SOL, slippageBps: 50, autoSlippage: true
   };
   if (p === '/api/swap/build') return { swapTransaction: net.built, lastValidBlockHeight: 1e12 };
-  if (p === '/api/swap/history') return { swaps: [], savedUsd: 0, discountedSwaps: 0 };
+  if (p === '/api/swap/history') return {
+    swaps: Array.from({ length: 9 }, (_, i) => ({
+      signature: 'h'.repeat(80) + i, in_symbol: 'SOL', in_mint: SOL, in_amount: 1, out_symbol: 'USDC', out_mint: USDC,
+      out_amount: 100 + i, usd: 100 + i, points: 100, ts: Date.now() - i * 3600000
+    })),
+    savedUsd: 0, discountedSwaps: 0
+  };
   // prices drive the instant estimate: 1 SOL is 100 USDC here
   if (p === '/api/swap/prices') return { prices: { [SOL]: 100, [USDC]: 1, [BONK]: 0.00002, [WIF]: 2 } };
   if (p === '/api/analytics') return {
@@ -369,6 +375,25 @@ try {
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
   ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+
+  section('swap: your swaps list stays short');
+  await page.waitForFunction(() => document.querySelectorAll('#sw-history-list .sw-hrow').length > 0, null, { timeout: 10000 });
+  const firstFew = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#sw-history-list .sw-hrow').length,
+    button: document.getElementById('sw-history-more').textContent,
+    hidden: document.getElementById('sw-history-more').hidden
+  }));
+  eq('only the most recent five are listed', firstFew.rows, 5);
+  eq('with a way to see the rest', firstFew.button, 'Show all 9 swaps');
+  await page.click('#sw-history-more');
+  const opened = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#sw-history-list .sw-hrow').length,
+    button: document.getElementById('sw-history-more').textContent
+  }));
+  eq('opening it shows them all', opened.rows, 9);
+  eq('and offers to collapse again', opened.button, 'Show fewer');
+  await page.click('#sw-history-more');
+  eq('collapsing goes back to five', await page.evaluate(() => document.querySelectorAll('#sw-history-list .sw-hrow').length), 5);
 
   section('swap: token picker hides worthless spam');
   await page.click('#sw-in-token');
