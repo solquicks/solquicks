@@ -4401,6 +4401,10 @@
           gross.toFixed(4) + ' SOL</strong> of rent — you keep <strong>' + keep.toFixed(4) +
           ' SOL</strong> after the ' + clScan.feePct + '% fee.';
         closeBtn.hidden = false;
+        // Whatever the last run did to this button, a fresh scan is a fresh start:
+        // closing accounts switched it off and nothing ever switched it back on,
+        // so the next lot of rent could be seen but never claimed.
+        closeBtn.disabled = false;
         const txs = Math.ceil(empty.length / CLOSE_PER_TX);
         closeBtn.textContent = 'Close ' + empty.length + ' and reclaim ' + keep.toFixed(4) + ' ◎' +
           (txs > 1 ? ' (' + txs + ' signatures)' : '');
@@ -4418,7 +4422,9 @@
           'You have <strong>' + total.toLocaleString(undefined, { maximumFractionDigits: 6 }) +
           ' wrapped SOL</strong>. Closing that account unwraps it straight back to ordinary SOL — ' +
           'nothing is burned and nothing is lost.';
-        document.getElementById('cl-wsol-btn').textContent =
+        const wsolBtn = document.getElementById('cl-wsol-btn');
+        wsolBtn.disabled = false;          // same trap as the close button above
+        wsolBtn.textContent =
           'Unwrap ' + total.toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ◎ and close';
       } else {
         wsolBlock.hidden = true;

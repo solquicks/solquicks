@@ -52,7 +52,24 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
-const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null };
+const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3 };
+
+// a wallet with some dead token accounts holding rent, and one holding a token
+const cleanupScan = () => ({
+  accounts: Array.from({ length: net.emptyAccounts }, (_, i) => ({
+    // real addresses: the page builds instructions from these, so they must decode
+    account: ['3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn', 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
+      '7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL'][i], mint: USDC, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    amountRaw: '0', amount: 0, decimals: 6, frozen: false, rent: 2039280, empty: true, nft: false,
+    name: 'USD Coin', symbol: 'USDC', image: null, collection: null, usd: null, priced: false
+  })).concat([{
+    account: '6aypgwsaHJmrVA6gS2EH5d67EmQyoSR2CRtoX33iZ9Yh', mint: BONK, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    amountRaw: '1000', amount: 1000, decimals: 5, frozen: false, rent: 2039280, empty: false, nft: false,
+    name: 'Bonk', symbol: 'BONK', image: null, collection: null, usd: 0.02, priced: true
+  }]),
+  rentPerAccount: 2039280, emptyRentLamports: 2039280 * net.emptyAccounts, feePct: 10,
+  treasury: TREASURY, pointsPerBurn: 5, solUsd: 100
+});
 
 const HOLDINGS = [
   { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9, verified: true, amount: 2, price: 100, usd: 200 },
@@ -124,6 +141,8 @@ function workerAnswer(p, url) {
       { mint: 'm4', name: 'Ranger #4', image: 'https://gone.test/4', imageAlt: null, rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
     ]
   };
+  if (p === '/api/cleanup/scan') return cleanupScan();
+  if (p === '/api/cleanup/award') return { awarded: 6, burned: 0, closed: 3, player: { points: 6 } };
   if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
   if (p === '/api/collection/sales') return { sales: [
     { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
@@ -504,6 +523,31 @@ try {
   net.lamports = 2e9;
   await bonkForWif();
   await page.click('.sw-protect button[data-protect="on"]');
+
+  section('wallet cleanup: the reclaim button comes back');
+  await page.click('#nav-trigger');
+  await page.click('.nav-item[data-tab="cleanup"]');
+  await page.click('#cl-scan');
+  await page.waitForFunction(() => {
+    const b = document.getElementById('cl-close-btn');
+    return b && !b.hidden && /Close 3/.test(b.textContent);
+  }, null, { timeout: 15000 });
+  eq('three dead accounts offer their rent back', await page.evaluate(() => document.getElementById('cl-close-btn').disabled), false);
+
+  // closing them: the wallet signs, then the page scans again and finds one more
+  net.emptyAccounts = 1;
+  await page.click('#cl-close-btn');
+  await page.waitForFunction(() => /Close 1/.test(document.getElementById('cl-close-btn').textContent), null, { timeout: 25000 });
+  const after = await page.evaluate(() => ({
+    disabled: document.getElementById('cl-close-btn').disabled,
+    label: document.getElementById('cl-close-btn').textContent,
+    message: (document.getElementById('cl-msg') || {}).textContent
+  }));
+  // this is the bug the page shipped with: rent was visible but the button was dead
+  eq('the button is usable again for the rent that is left', after.disabled, false);
+  ok('and offers the remaining account', /Close 1 and reclaim/.test(after.label), after.label);
+  ok('with the closure confirmed', /Closed 3 accounts/.test(after.message), after.message);
+  net.emptyAccounts = 3;
 
   section('a direct link to the Moon Rangers tab');
   // #moon restores the tab before the page has finished setting itself up, which
