@@ -66,6 +66,9 @@
       <button class="ghost" id="xs-busy" type="button">Add the busy xStocks</button>
       <button class="ghost" id="xs-all" type="button">Add every xStock</button>
       <span class="dim" id="xs-note"></span>
+      <br><span class="dim">As of September 2026 none of these can be created: xStocks use two Token-2022
+      extensions Jupiter's referral program is too old to read, so it refuses them. The buttons stay for
+      when that is fixed — the check will say so either way. Swaps of them still earn, as a SOL fee.</span>
     </p>
   </div>
 
@@ -261,15 +264,34 @@
 
       rows.sort((a, b) => (b.here - a.here) || (b.volume24h || 0) - (a.volume24h || 0));
       paint();
+
+      // Ask the chain whether each one can actually be created, before a
+      // wallet is asked for anything. One token the referral program cannot
+      // handle used to fail the whole batch at the last moment; now it is
+      // found here, named, and left out.
+      const trying = rows.filter((r) => r.pick);
+      if (trying.length) {
+        log('Simulating ' + trying.length + ' — cheaper to find a refusal now…', 'dim');
+        const { blockhash } = await c.getLatestBlockhash('confirmed');
+        for (const r of trying) {
+          const why = await whyNot(c, r, blockhash);
+          r.why = why;
+          if (why) { r.pick = false; log('  ' + r.symbol + ' cannot be created — ' + why, 'bad'); }
+        }
+        paint();
+      }
       const here = rows.filter((r) => r.here && !r.exists);
       if (here.length) {
         log(here.length + ' token' + (here.length === 1 ? '' : 's') + ' swapped here already have no fee account: ' +
           here.map((r) => r.symbol).join(', ') + ' — those are the ones that pay their rent back', 'gold');
       }
-      const missing = rows.filter((r) => !r.exists).length;
+      const already = rows.filter((r) => r.exists).length;
+      const refused = rows.filter((r) => r.why).length;
+      const missing = rows.length - already - refused;
       const ticked = rows.filter((r) => r.pick).length;
-      log(rows.length + ' tokens checked · ' + (rows.length - missing) + ' already collect fees · ' +
-        missing + ' missing, of which ' + ticked + ' ticked', 'gold');
+      log(rows.length + ' tokens checked · ' + already + ' already collect fees · ' +
+        missing + ' can be created, of which ' + ticked + ' ticked' +
+        (refused ? ' · ' + refused + ' refused by the referral program' : ''), 'gold');
       if (missing > ticked) {
         log('The rest are Solana\'s busiest rather than yours, so they are left unticked — ' +
           'tick any you want.', 'dim');
@@ -285,6 +307,31 @@
     }
   };
 
+  /// Empty when the account can be created, otherwise why not. Simulation is
+  /// free and signs nothing, so there is no reason to find this out later.
+  async function whyNot(c, row, blockhash) {
+    try {
+      const { PublicKey, Transaction } = w3();
+      const tx = new Transaction().add(initIx(row.mint, row.program));
+      tx.feePayer = new PublicKey(walletKey);
+      tx.recentBlockhash = blockhash;
+      const sim = await c.simulateTransaction(tx);
+      if (!sim.value.err) return '';
+      const err = JSON.stringify(sim.value.err);
+      // Jupiter's referral program predates the newest Token-2022 extensions,
+      // so a mint using one (xStocks carry ScaledUiAmount and Pausable) fails
+      // to deserialise before anything else happens. Nothing on this side can
+      // fix it; the program has to be upgraded.
+      if (/InvalidAccountData/.test(err)) {
+        return 'Jupiter\'s referral program cannot read this mint — it uses newer Token-2022 extensions';
+      }
+      if (/already in use/i.test(err)) return 'the account already exists';
+      return err;
+    } catch (e) {
+      return '';   // an RPC hiccup is not evidence against the token
+    }
+  }
+
   function paint() {
     const picked = rows.filter((r) => r.pick).length;
     const cost = (picked * 0.00204).toFixed(4);
@@ -292,10 +339,13 @@
       '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">Swapped here</th><th class="vol">24h volume</th></tr></thead><tbody>' +
       rows.map((r, i) =>
         '<tr><td>' + (r.exists ? '<span class="tick">✓</span>'
+          : r.why ? '<span class="cross">—</span>'
           : '<input class="pick" type="checkbox" data-i="' + i + '" ' + (r.pick ? 'checked' : '') + ' onchange="togglePick(this)">') + '</td>' +
         '<td class="sym">' + esc(r.symbol) + '</td>' +
         '<td>' + (r.program === TOKEN22 ? 'Token-2022' : 'SPL') + '</td>' +
-        '<td>' + (r.exists ? '<span class="tick">collecting</span>' : '<span class="cross">' + esc(r.fee.slice(0, 8)) + '…</span>') + '</td>' +
+        '<td>' + (r.exists ? '<span class="tick">collecting</span>'
+          : r.why ? '<span class="cross" title="' + esc(r.why) + '">cannot be created</span>'
+          : '<span class="cross">' + esc(r.fee.slice(0, 8)) + '…</span>') + '</td>' +
         '<td class="vol">' + (r.here ? '<b class="gold">' + r.here + '×</b>' : '—') + '</td>' +
         '<td class="vol">' + (r.volume24h ? '$' + r.volume24h.toLocaleString() : '—') + '</td></tr>').join('') +
       '</tbody></table>' +

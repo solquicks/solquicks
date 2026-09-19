@@ -1,5 +1,5 @@
 {
-  "note": "Backed Finance xStocks on Solana. Verified by Jupiter, mint address begins Xs, name ends xStock. Regenerate with collectible/../tools — see fees.html.",
+  "note": "Backed Finance xStocks on Solana. Verified by Jupiter, mint address begins Xs, name ends xStock. As of 2026-09-19 Jupiter's referral program cannot create a fee account for any of them: these mints carry the ScaledUiAmount and Pausable Token-2022 extensions, which it is too old to deserialise, and it fails with InvalidAccountData before doing anything. Kept here for when that program is upgraded. Swaps of these tokens still earn, as a SOL fee to the treasury.",
   "generated": "2026-09-19",
   "volumeThresholdUsd": 100000,
   "tokens": [

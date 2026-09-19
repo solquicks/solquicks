@@ -54,7 +54,7 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
-const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {} };
+const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
 const cleanupScan = () => ({
@@ -179,6 +179,12 @@ function rpcAnswer(method, params) {
     case 'getLatestBlockhash': return { context: ctx, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1e12 } };
     case 'getSignatureStatuses': return { context: ctx, value: [{ slot: 1, confirmations: null, err: null, confirmationStatus: 'confirmed' }] };
     case 'getBlockHeight': return 1;
+    // net.simFail makes the referral program refuse, the way it does for a
+    // mint carrying Token-2022 extensions it is too old to read.
+    case 'simulateTransaction': return {
+      context: ctx,
+      value: { err: net.simFail ? { InstructionError: [0, 'InvalidAccountData'] } : null, logs: [], unitsConsumed: 5000 }
+    };
     case 'searchAssets': return { total: 0, items: [] };
     default: return null;
   }
@@ -743,6 +749,19 @@ try {
     await fees.click('#xs-busy');
     eq('pressing it twice does not double them up',
       (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, busy.length);
+    // A mint the referral program cannot read — every xStock, today — has to
+    // be found by simulation and dropped, not discovered when the wallet is
+    // already open. One of them used to fail the whole batch.
+    net.simFail = true;
+    await fees.click('#check');
+    await fees.waitForFunction(() => /refused by the referral program/.test(document.getElementById('log').textContent),
+      null, { timeout: 30000 });
+    const refusedLog = await fees.textContent('#log');
+    ok('a refusal is explained, not just reported', /newer Token-2022 extensions/.test(refusedLog), refusedLog.slice(-200));
+    eq('nothing is left ticked', await fees.$$eval('#table-wrap input.pick:checked', (e) => e.length), 0);
+    eq('and the create button is off', await fees.evaluate(() => document.getElementById('create').disabled), true);
+    net.simFail = false;
+
     await fees.click('#xs-all');
     await fees.waitForFunction((n) => document.getElementById('extra').value.split('\n').filter(Boolean).length === n,
       xs.tokens.length, { timeout: 10000 }).catch(() => {});
