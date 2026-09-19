@@ -757,6 +757,18 @@ try {
     await fees.click('#xs-busy');
     eq('pressing it twice does not double them up',
       (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, busy.length);
+    // Filling a rent budget: ticks the busiest that can be created, and a
+    // token the program refuses must not eat a slot in the budget.
+    await fees.click('.ghost#none');
+    await fees.fill('#budget', '0.0041');          // exactly two accounts
+    await fees.click('#fill');
+    await fees.waitForFunction(() => /ticked — about/.test(document.getElementById('log').textContent),
+      null, { timeout: 30000 });
+    const filled = await fees.$$eval('#table-wrap input.pick:checked', (e) => e.length);
+    eq('the budget decides how many are ticked', filled, 2);
+    ok('and it says what that costs', /0\.0041 SOL of rent/.test(await fees.textContent('#log')));
+    await fees.click('.ghost#none');
+
     // A mint the referral program cannot read — every xStock, today — has to
     // be found by simulation and dropped, not discovered when the wallet is
     // already open. One of them used to fail the whole batch.

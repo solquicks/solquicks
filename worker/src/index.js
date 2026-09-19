@@ -3428,7 +3428,10 @@ export default {
         const hit = await cache.match(key);
         if (hit) return hit;
 
-        const res = await jupFetch(env, '/tokens/v2/toptraded/24h?limit=50');
+        // A hundred rather than fifty: the fee page fills a rent budget from
+        // this list, and after the ones that already collect and the ones the
+        // referral program refuses, fifty does not go far enough.
+        const res = await jupFetch(env, '/tokens/v2/toptraded/24h?limit=100');
         if (!res.ok) return json(request, env, { error: 'could not read the top tokens' }, 502);
         const list = await res.json().catch(function () { return []; });
         const tokens = (Array.isArray(list) ? list : []).map(function (t) {

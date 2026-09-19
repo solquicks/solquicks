@@ -62,6 +62,13 @@
     <div id="table-wrap"><span class="dim">Connect a wallet to load them.</span></div>
     <label for="extra">Any other mints, one per line</label>
     <textarea id="extra" spellcheck="false" placeholder="mint address"></textarea>
+    <p class="sub" style="margin:10px 0 0">
+      <label for="budget" style="display:inline">Tick the busiest tokens until about</label>
+      <input id="budget" type="number" step="0.005" min="0" value="0.085"
+             style="width:6.5em;display:inline-block;margin:0 4px"> SOL of rent
+      <button class="ghost" id="fill" type="button">Tick them</button>
+      <span class="dim" id="fill-note"></span>
+    </p>
     <p class="sub" style="margin:8px 0 0">
       <button class="ghost" id="xs-busy" type="button">Add the busy xStocks</button>
       <button class="ghost" id="xs-all" type="button">Add every xStock</button>
@@ -93,6 +100,7 @@
   // initializeReferralTokenAccount, read off the transaction that created the
   // USDC account through Jupiter's own dashboard
   const INIT_IX = [125, 18, 70, 95, 86, 179, 221, 190];
+  const RENT_PER_ACCOUNT = 0.00204;   // what one fee account costs, and never gets back
   const PER_TX = 4;             // accounts created per transaction
   const PER_BATCH = 6;          // transactions signed against one blockhash
 
@@ -254,6 +262,46 @@
       note.textContent = 'could not load the xStocks list';
     }
   }
+  /// Fills a rent budget with the busiest tokens that can actually be created,
+  /// simulating each as it goes. A token the referral program refuses costs a
+  /// simulation and nothing else — it never takes a slot in the budget, which
+  /// is the whole reason this is not simply "tick the top forty".
+  document.getElementById('fill').onclick = async function () {
+    const btn = document.getElementById('fill');
+    const note = document.getElementById('fill-note');
+    if (!walletKey) { log('Connect a wallet first.', 'bad'); return; }
+    if (!rows.length) { log('Press "Check what is missing" first.', 'dim'); return; }
+
+    const budget = Number(document.getElementById('budget').value) || 0;
+    const room = Math.floor(budget / RENT_PER_ACCOUNT);
+    if (room < 1) { note.textContent = 'that budget does not cover one account'; return; }
+
+    btn.disabled = true;
+    note.textContent = 'simulating…';
+    const c = conn();
+    const { blockhash } = await c.getLatestBlockhash('confirmed');
+    const pool = rows.filter((r) => !r.exists && !r.why && !r.pick)
+      .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+    let picked = rows.filter((r) => r.pick).length;
+    let refused = 0;
+    for (const r of pool) {
+      if (picked >= room) break;
+      const why = await whyNot(c, r, blockhash);
+      if (why) { r.why = why; refused++; continue; }
+      r.pick = true;
+      picked++;
+      note.textContent = picked + ' ticked…';
+      paint();
+    }
+    paint();
+    log(picked + ' ticked — about ' + (picked * RENT_PER_ACCOUNT).toFixed(4) + ' SOL of rent' +
+      (refused ? ', ' + refused + ' skipped because the referral program refuses them' : ''), 'gold');
+    note.textContent = '';
+    btn.disabled = false;
+    document.getElementById('create').disabled = !picked;
+    document.getElementById('none').disabled = !picked;
+  };
+
   document.getElementById('xs-busy').onclick = function () { addXStocks(true); };
   document.getElementById('xs-all').onclick = function () { addXStocks(false); };
 
@@ -404,7 +452,7 @@
 
   function paint() {
     const picked = rows.filter((r) => r.pick).length;
-    const cost = (picked * 0.00204).toFixed(4);
+    const cost = (picked * RENT_PER_ACCOUNT).toFixed(4);
     document.getElementById('table-wrap').innerHTML =
       '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">Swapped here</th><th class="vol">24h volume</th></tr></thead><tbody>' +
       rows.map((r, i) =>
@@ -527,7 +575,7 @@
         tx.feePayer = new PublicKey(walletKey);
         packs.push({ tx: tx, group: group });
       }
-      log(todo.length + ' accounts in ' + packs.length + ' transactions — about ' + (todo.length * 0.00204).toFixed(4) + ' SOL of rent', 'dim');
+      log(todo.length + ' accounts in ' + packs.length + ' transactions — about ' + (todo.length * RENT_PER_ACCOUNT).toFixed(4) + ' SOL of rent', 'dim');
 
       // prove the shape before any wallet is asked to sign
       packs[0].tx.recentBlockhash = (await c.getLatestBlockhash('confirmed')).blockhash;
