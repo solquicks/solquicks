@@ -72,6 +72,7 @@
     <label for="fee">Stake fee in SOL, charged per Ranger</label>
     <input id="fee" value="0.01"/>
 
+    <div id="wallet-choice" hidden style="margin-bottom:10px"></div>
     <button id="connect">Connect wallet</button>
     <button id="check" class="ghost" disabled>Run the pre-flight checks</button>
     <button id="init" disabled>Initialise on mainnet</button>
@@ -192,10 +193,39 @@
     set('cfg', configPda.toBase58());
   })();
 
+  /// Which wallet to use. Taking the first one registered hands the choice to
+  /// whichever extension shouted loudest, and on this page the wallet that
+  /// connects becomes the vault admin of a mainnet program. That is not a
+  /// thing to get wrong quietly, so it is asked, not assumed.
+  function chooseWallet(list) {
+    const box = document.getElementById('wallet-choice');
+    box.textContent = '';
+    const label = document.createElement('span');
+    label.className = 'dim';
+    label.textContent = 'Which wallet should become the admin? ';
+    box.appendChild(label);
+    // Names come from the extensions themselves: set as text, never markup.
+    list.forEach(function (w) {
+      const b = document.createElement('button');
+      b.textContent = w.name;
+      b.onclick = function () {
+        try { localStorage.setItem('stakeWallet', w.name); } catch (e) {}
+        box.hidden = true;
+        document.getElementById('connect').click();
+      };
+      box.appendChild(b);
+    });
+    box.hidden = false;
+  }
+
   document.getElementById('connect').onclick = async function () {
     const list = discoverWallets();
     if (!list.length) { log('No Solana wallet found in this browser.', 'bad'); return; }
-    const target = list[0];
+    let remembered = null;
+    try { remembered = localStorage.getItem('stakeWallet'); } catch (e) {}
+    const chosen = remembered && list.filter(function (w) { return w.name === remembered; })[0];
+    if (!chosen && list.length > 1) { chooseWallet(list); return; }
+    const target = chosen || list[0];
     try {
       if (target.kind === 'standard') {
         const res = await target.w.features['standard:connect'].connect();
@@ -211,6 +241,20 @@
       provider = target;
       set('admin', walletKey);
       log('Connected ' + target.name + '. This wallet will become the vault admin.', 'ok');
+      log('Not the one you meant? Press "Use another wallet" before checking.', 'dim');
+      const box = document.getElementById('wallet-choice');
+      box.textContent = '';
+      const again = document.createElement('button');
+      again.textContent = 'Use another wallet';
+      again.onclick = function () {
+        try { localStorage.removeItem('stakeWallet'); } catch (e) {}
+        walletKey = null;
+        provider = null;
+        document.getElementById('check').disabled = true;
+        chooseWallet(discoverWallets());
+      };
+      box.appendChild(again);
+      box.hidden = false;
       document.getElementById('check').disabled = false;
     } catch (e) {
       log('Connection cancelled or failed: ' + (e.message || e), 'dim');
