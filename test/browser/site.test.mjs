@@ -327,17 +327,31 @@ try {
   ok('WhatsApp is gone', !/whatsapp/i.test(await page.content()));
 
   section('every tab opens');
-  const tabs = await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab));
-  ok('the menu lists the tabs', tabs.length >= 6, tabs.join(','));
-  for (const tab of tabs) {
+  // Swap, Store and Book sit in the bar itself; the rest are behind the menu.
+  const quick = await page.$$eval('.nav-quick-btn[data-tab]', (els) => els.map((e) => e.dataset.tab));
+  eq('the three that earn are in the bar', quick.join(','), 'swap,store,book');
+  ok('and are not also buried in the menu',
+    (await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab)))
+      .every((t) => !quick.includes(t)));
+  const menuTabs = await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab));
+  eq('the menu holds what is left', menuTabs.join(','), 'links,cleanup,leaderboard,moon');
+  ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
+
+  for (const tab of quick) {
+    await page.click('.nav-quick-btn[data-tab="' + tab + '"]');
+    ok('the ' + tab + ' tab opens straight from the bar',
+      await page.locator('#panel-' + tab).evaluate((p) => p.classList.contains('active')));
+    ok('and the bar button shows as current',
+      await page.locator('.nav-quick-btn[data-tab="' + tab + '"]').evaluate((b) => b.classList.contains('active')));
+  }
+  for (const tab of menuTabs) {
     await page.click('#nav-trigger');
     await page.click('.nav-item[data-tab="' + tab + '"]');
     ok('the ' + tab + ' tab shows its panel', await page.locator('#panel-' + tab).evaluate((p) => p.classList.contains('active')));
   }
 
   section('the store');
-  await page.click('#nav-trigger');
-  await page.click('.nav-item[data-tab="store"]');
+  await page.click('.nav-quick-btn[data-tab="store"]');
   await page.waitForFunction(() => document.getElementById('product-stock').textContent !== '93 available', null, { timeout: 10000 });
   eq('stock comes from the shop, not the page', (await page.textContent('#product-stock')).trim(), '88 available');
   eq('and so does the order count', (await page.textContent('#store-progress')).trim(), '12 / 100');
@@ -472,8 +486,7 @@ try {
   ok('an unstaked one shows no earnings', !/pts/.test(mine[1]), JSON.stringify(mine));
 
   section('swap: quote');
-  await page.click('#nav-trigger');
-  await page.click('.nav-item[data-tab="swap"]');
+  await page.click('.nav-quick-btn[data-tab="swap"]');
   await page.waitForFunction(() => document.getElementById('sw-in-token').textContent.trim() === 'SOL');
   await page.click('#wallet-chip');
   await page.click('.wm-option:has-text("Test Wallet")');
@@ -910,8 +923,7 @@ try {
   section('settings survive a reload');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
-  await page.click('#nav-trigger');
-  await page.click('.nav-item[data-tab="swap"]');
+  await page.click('.nav-quick-btn[data-tab="swap"]');
   await page.waitForSelector('.sw-protect button.on', { state: 'attached' });
   eq('bot protection is still on', (await page.textContent('.sw-protect button.on')).trim(), 'On');
 } catch (e) {

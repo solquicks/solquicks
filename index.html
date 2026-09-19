@@ -230,6 +230,26 @@
     .nav-trigger[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
     @media (prefers-reduced-motion: reduce) { .nav-caret { transition: none; } }
 
+    /* The three that earn: always visible, never a menu away. */
+    .nav-quick { display: flex; align-items: center; gap: 4px; flex: 1; justify-content: center; min-width: 0; }
+    .nav-quick-btn {
+      appearance: none; cursor: pointer; white-space: nowrap;
+      background: transparent; border: 2px solid transparent; border-radius: 999px;
+      padding: 7px 13px; font-family: 'Baloo 2', sans-serif; font-weight: 800;
+      font-size: 0.92rem; color: var(--ink-soft);
+    }
+    .nav-quick-btn:hover { background: var(--orange-soft); color: var(--ink); }
+    .nav-quick-btn.active { background: var(--orange); border-color: var(--ink); color: #fff; }
+
+    /* On a phone the bar holds five controls. The trigger's page name is the
+       one thing already shown by the panel below it, so it goes first. */
+    @media (max-width: 560px) {
+      .nav-current { display: none; }
+      .nav-trigger { padding: 7px 10px; }
+      .nav-quick { gap: 2px; }
+      .nav-quick-btn { padding: 6px 9px; font-size: 0.84rem; }
+    }
+
     .nav-burger { display: grid; gap: 3px; flex-shrink: 0; }
     .nav-burger i { display: block; width: 15px; height: 2px; border-radius: 2px; background: currentColor; }
 
@@ -2060,6 +2080,11 @@
         <span class="nav-current" id="nav-current">Contact</span>
         <svg class="nav-caret" width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
       </button>
+      <div class="nav-quick" id="nav-quick">
+        <button class="nav-quick-btn" data-tab="swap" onclick="switchTab('swap',this)">Swap</button>
+        <button class="nav-quick-btn" data-tab="store" onclick="switchTab('store',this)">Store</button>
+        <button class="nav-quick-btn" data-tab="book" onclick="switchTab('book',this)">Book</button>
+      </div>
       <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
         <span id="wallet-chip-label">Connect</span>
@@ -2071,12 +2096,9 @@
           <span><span class="nav-item-name">Contact</span>
           <span class="nav-item-note">Links, socials, and how to reach me</span></span>
         </button>
-        <!-- Contact stays first as the landing page; the rest are alphabetical -->
-        <button class="nav-item" role="menuitem" data-tab="book" onclick="switchTab('book',this)">
-          <span class="nav-item-icon" aria-hidden="true">✉</span>
-          <span><span class="nav-item-name">Book</span>
-          <span class="nav-item-note">Book the Fox - hosting, speaking, advertisements</span></span>
-        </button>
+        <!-- Contact stays first as the landing page; the rest are alphabetical.
+             Swap, Store and Book are not here: they earn the money, so they sit
+             in the bar itself where they cannot be missed. -->
         <button class="nav-item" role="menuitem" data-tab="cleanup" onclick="switchTab('cleanup',this)">
           <span class="nav-item-icon" aria-hidden="true"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/></svg></span>
           <span><span class="nav-item-name">Cleanup</span>
@@ -2091,16 +2113,6 @@
           <span class="nav-item-icon" aria-hidden="true">◑</span>
           <span><span class="nav-item-name">Moon Rangers</span>
           <span class="nav-item-note">Stake, missions, and collection stats</span></span>
-        </button>
-        <button class="nav-item" role="menuitem" data-tab="store" onclick="switchTab('store',this)">
-          <span class="nav-item-icon" aria-hidden="true">◉</span>
-          <span><span class="nav-item-name">Store</span>
-          <span class="nav-item-note">solquicks merchandise</span></span>
-        </button>
-        <button class="nav-item" role="menuitem" data-tab="swap" onclick="switchTab('swap',this)">
-          <span class="nav-item-icon" aria-hidden="true">⇅</span>
-          <span><span class="nav-item-name">Swap</span>
-          <span class="nav-item-note">Trade Solana tokens</span></span>
         </button>
       </div>
     </nav>
@@ -2831,14 +2843,26 @@
     });
 
     // ── TABS ──
+    /// What the trigger should call a tab. Read from whichever control offers
+    /// it — the menu row's name, or the bar button's own text.
+    function tabLabel(tab) {
+      const el = document.querySelector('[data-tab="' + tab + '"]');
+      if (!el) return '';
+      const named = el.querySelector('.nav-item-name');
+      return (named ? named.textContent : el.textContent).trim();
+    }
+
+    /// Switches on the tab name rather than the button that was clicked: the
+    /// same tab now has two controls (a menu row or a button in the bar, not
+    /// both), and either must light up whichever exists.
     function switchTab(tab, btn) {
-      document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.nav-item, .nav-quick-btn').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
+      document.querySelectorAll('[data-tab="' + tab + '"]').forEach(function (el) { el.classList.add('active'); });
       // choosing closes the menu, and the trigger takes on the page name
       closeMenu();
-      const label = btn.querySelector('.nav-item-name');
-      if (label) document.getElementById('nav-current').textContent = label.textContent;
+      const label = tabLabel(tab);
+      if (label) document.getElementById('nav-current').textContent = label;
       const panel = document.getElementById('panel-' + tab);
       // Reset animation so it replays on every tab switch
       panel.style.animation = 'none';
@@ -2873,8 +2897,11 @@
       try { history.replaceState(null, '', tab === 'links' ? location.pathname : '#' + tab); } catch (e) {}
     }
 
+    /// Any control for a tab, in the menu or in the bar. Looking only inside
+    /// the menu would have broken every #swap, #store and #book link the
+    /// moment those three moved out of it.
     function tabButton(name) {
-      return document.querySelector('.nav-item[data-tab="' + name + '"]');
+      return document.querySelector('[data-tab="' + name + '"]');
     }
 
     // Restore the tab from the URL on load.
