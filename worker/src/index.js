@@ -2322,14 +2322,17 @@ async function badgesFor(env, wallets) {
   const out = {};
   if (!wallets.length) return out;
   const marks = wallets.map(function () { return '?'; }).join(',');
+  // Spread, not bind.apply: D1's bind needs its own statement as `this`, and
+  // apply(null, …) hands it none. That threw on every leaderboard with a row
+  // in it, and the box quietly vanished from the page.
   const rangers = await env.DB.prepare(
     'SELECT wallet FROM holder_positions WHERE count > 0 AND wallet IN (' + marks + ') ' +
     'UNION SELECT wallet FROM staked_nfts WHERE wallet IN (' + marks + ')'
-  ).bind.apply(null, wallets.concat(wallets)).all();
+  ).bind(...wallets, ...wallets).all();
   for (const r of rangers.results || []) out[r.wallet] = 'ranger';
   const collectors = await env.DB.prepare(
     'SELECT wallet FROM collectibles WHERE wallet IN (' + marks + ')'
-  ).bind.apply(null, wallets).all();
+  ).bind(...wallets).all();
   for (const r of collectors.results || []) if (!out[r.wallet]) out[r.wallet] = 'collectible';
   return out;
 }

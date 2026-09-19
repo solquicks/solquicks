@@ -31,7 +31,16 @@ function d1(db) {
   };
   const norm = (v) => (v === undefined ? null : typeof v === 'boolean' ? Number(v) : v);
   const statement = (sql, args = []) => ({
-    bind: (...a) => statement(sql, a.map(norm)),
+    _sql: sql,
+    // A method, not an arrow closing over sql, because real D1 reads the
+    // statement off `this`. An arrow here made `.bind.apply(null, …)` work in
+    // tests and fail in production, which is the worst of both.
+    bind(...a) {
+      if (!this || this._sql === undefined) {
+        throw new TypeError("Cannot read properties of null (reading 'dbSession')");
+      }
+      return statement(this._sql, a.map(norm));
+    },
     async first() { await tick(sql); return db.prepare(sql).get(...args) ?? null; },
     async all() { await tick(sql); return { results: db.prepare(sql).all(...args), success: true }; },
     async run() { await tick(sql); const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: r.changes } }; },
