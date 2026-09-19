@@ -42,9 +42,13 @@
     <br><b id="build">build: bulk-fee-accounts · 19 Sep</b></p>
 
   <div class="warn">
-    <b>Each account costs about 0.002 SOL of rent</b> (roughly 20¢), paid by the wallet
-    you connect, and is recoverable later by closing it. Creating one changes nothing
-    else: fees only start arriving once the account exists and the worker knows about it.
+    <b>Each account costs about 0.002 SOL of rent</b> (roughly 40¢), paid by the wallet
+    you connect, and <b>you cannot get it back</b>. Closing a referral token account is
+    signed by the project admin — Jupiter's key, not yours — so treat this as money spent,
+    not parked, and only create accounts for tokens people actually swap here.
+    Every pair already earns a fee: one with no account pays it as SOL to the treasury
+    instead. An account makes the fee come out of the swap itself, and keeps it working
+    when the swapper is short of SOL.
     Accounts already created are skipped. Nothing needs adding to the code afterwards:
     the worker works out each fee account's address itself and starts using it within
     about 15 minutes of it appearing on chain.
