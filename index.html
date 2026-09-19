@@ -16,7 +16,16 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com;"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
-  <link rel="apple-touch-icon" sizes="180x180" href="avatar.png"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png"/>
+  <!-- Installable: on a Seeker or any phone this can be added to the home
+       screen and opens without browser chrome, which is most of what the
+       dapp store listing wants anyway. -->
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <meta name="theme-color" content="#F0821E"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="solquicks"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="preconnect" href="https://solquicks-points.solquicks-45c.workers.dev" crossorigin>
@@ -1407,6 +1416,13 @@
     .sw-recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
     .sw-chip { background: var(--cream); padding: 4px 11px; }
     .sw-quoting { text-transform: none; letter-spacing: 0; font-weight: 700; margin-left: 4px; }
+    .sw-unit {
+      margin-left: 6px; padding: 1px 7px; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--line); background: transparent; color: var(--muted);
+      font: inherit; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+    }
+    .sw-unit:hover { color: var(--orange-deep); border-color: var(--orange); }
+    .sw-unit.on { background: var(--orange); border-color: var(--orange); color: #fff; }
     .sw-refresh {
       appearance: none; cursor: pointer; background: none; border: none; padding: 0 0 0 6px;
       font-family: inherit; font-size: 0.72rem; font-weight: 700; color: var(--muted);
@@ -2459,7 +2475,8 @@
         </div>
         <div class="sw-recent" id="sw-recent" hidden></div>
         <div class="sw-leg" id="sw-leg-in">
-          <div class="sw-legtop"><span class="sw-label">You pay</span><span class="sw-bal" id="sw-bal"></span></div>
+          <div class="sw-legtop"><span class="sw-label">You pay<button class="sw-unit" id="sw-unit" type="button"
+            onclick="toggleSwapUnit()" title="Type a dollar amount instead">$</button></span><span class="sw-bal" id="sw-bal"></span></div>
           <div class="sw-row">
             <input class="sw-amount" id="sw-in-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
             <button class="sw-pick" id="sw-in-token" onclick="openTokenPicker('in')">SOL</button>
@@ -4992,6 +5009,7 @@
     function paintPair() {
       document.getElementById('sw-in-token').textContent = swapPair.in.symbol;
       document.getElementById('sw-out-token').textContent = swapPair.out.symbol;
+      paintSwapUnit();       // the toggle names whichever token is being sold
       renderTokenWarnings();
       loadTokenPanel();
     }
@@ -5030,9 +5048,62 @@
     /// page already holds. Shown the moment someone types, so the box is never
     /// empty while the route is being found — and marked as an estimate, because
     /// it knows nothing about liquidity, the route or the fee.
+    /// The amount box holds tokens unless someone asks for dollars. Everything
+    /// downstream — the quote, the estimate, the points, what gets recorded —
+    /// reads swapInputTokens() rather than the box, so there is exactly one
+    /// place where the unit is understood and no way for the two to disagree.
+    var swapUsdMode = false;
+
+    function swapInputTokens() {
+      const raw = parseFloat(String(document.getElementById('sw-in-amount').value).replace(/,/g, ''));
+      if (!(raw > 0)) return NaN;
+      if (!swapUsdMode) return raw;
+      const price = swapPrices[swapPair.in.mint];
+      return price > 0 ? raw / price : NaN;
+    }
+
+    /// Switches the box between the token and dollars, converting what is
+    /// already typed so the swap being described does not change underneath.
+    function toggleSwapUnit() {
+      const price = swapPrices[swapPair.in.mint];
+      const box = document.getElementById('sw-in-amount');
+      const msg = document.getElementById('sw-msg');
+      if (!swapUsdMode && !(price > 0)) {
+        msg.className = 'sw-msg';
+        msg.textContent = 'No dollar price for ' + swapPair.in.symbol + ' yet — type the amount in ' + swapPair.in.symbol + '.';
+        return;
+      }
+      const tokens = swapInputTokens();
+      swapUsdMode = !swapUsdMode;
+      if (tokens > 0 && price > 0) {
+        box.value = swapUsdMode
+          ? (tokens * price).toFixed(2)
+          : trimNumber(tokens, swapPair.in.decimals);
+      }
+      paintSwapUnit();
+      showEstimate();
+      quoteSwap();
+    }
+
+    /// Drops trailing zeros without turning a small number into 0.
+    function trimNumber(n, decimals) {
+      const d = Math.min(decimals === undefined ? 6 : decimals, 9);
+      return String(Number(n.toFixed(d)));
+    }
+
+    function paintSwapUnit() {
+      const btn = document.getElementById('sw-unit');
+      const box = document.getElementById('sw-in-amount');
+      if (!btn) return;
+      btn.textContent = swapUsdMode ? '$' : swapPair.in.symbol;
+      btn.classList.toggle('on', swapUsdMode);
+      btn.title = swapUsdMode ? 'Type an amount of ' + swapPair.in.symbol + ' instead' : 'Type a dollar amount instead';
+      box.placeholder = swapUsdMode ? '$0.00' : '0.00';
+    }
+
     function showEstimate() {
       const outEl = document.getElementById('sw-out-amount');
-      const raw = parseFloat(String(document.getElementById('sw-in-amount').value).replace(/,/g, ''));
+      const raw = swapInputTokens();
       const inPrice = swapPrices[swapPair.in.mint], outPrice = swapPrices[swapPair.out.mint];
       if (!raw || raw <= 0 || !inPrice || !outPrice) {
         if (!swapQuote) { outEl.value = ''; outEl.classList.remove('est'); }
@@ -5057,7 +5128,15 @@
           ? '≈ $' + (amount * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           : '';
       };
-      set('sw-in-usd', swapPair.in.mint, document.getElementById('sw-in-amount').value);
+      // In dollar mode the box already says the dollars, so the line below it
+      // is only useful if it says how much of the token that buys.
+      const inEl = document.getElementById('sw-in-usd');
+      const tokens = swapInputTokens();
+      if (swapUsdMode) {
+        inEl.textContent = tokens > 0 ? '≈ ' + trimNumber(tokens, swapPair.in.decimals) + ' ' + swapPair.in.symbol : '';
+      } else {
+        set('sw-in-usd', swapPair.in.mint, document.getElementById('sw-in-amount').value);
+      }
       set('sw-out-usd', swapPair.out.mint, document.getElementById('sw-out-amount').value);
     }
 
@@ -5235,7 +5314,7 @@
     async function shareSwapLink() {
       const msg = document.getElementById('sw-msg');
       if (!swapPair.in || !swapPair.out) return;
-      const link = swapLinkFor(swapPair.in, swapPair.out, parseFloat(document.getElementById('sw-in-amount').value));
+      const link = swapLinkFor(swapPair.in, swapPair.out, swapInputTokens());
       msg.dataset.kind = '';
       try {
         await navigator.clipboard.writeText(link);
@@ -5275,7 +5354,9 @@
         refreshSwapBalance();
         refreshSwapPrices();
         if (link.amount) {
-          document.getElementById('sw-in-amount').value = String(link.amount);
+          document.getElementById('sw-in-amount').value = swapUsdMode && swapPrices[swapPair.in.mint] > 0
+            ? (link.amount * swapPrices[swapPair.in.mint]).toFixed(2)
+            : String(link.amount);
           quoteSwap();
         }
       } catch (e) {
@@ -5550,7 +5631,10 @@
       const d = swapPair.in.decimals;
       // rounded down, so it can never be more than is actually there
       amount = Math.floor(amount * Math.pow(10, d)) / Math.pow(10, d);
-      document.getElementById('sw-in-amount').value = amount > 0 ? amount.toFixed(d).replace(/\.?0+$/, '') : '';
+      const price = swapPrices[swapPair.in.mint];
+      document.getElementById('sw-in-amount').value = amount <= 0 ? ''
+        : swapUsdMode && price > 0 ? (amount * price).toFixed(2)
+        : amount.toFixed(d).replace(/\.?0+$/, '');
       showEstimate();        // the same instant figure as typing gives
       quoteSwap();
     }
@@ -5559,7 +5643,7 @@
       const line = document.getElementById('sw-after-line');
       const el = document.getElementById('sw-after');
       if (!line) return;
-      const raw = parseFloat(document.getElementById('sw-in-amount').value);
+      const raw = swapInputTokens();
       if (!swapQuote || swapBalances.in === null || swapBalances.out === null || !(raw > 0)) { line.hidden = true; return; }
       line.hidden = false;
       if (raw > swapBalances.in) {
@@ -5744,7 +5828,7 @@
       const auto = !!(opts && opts.auto);
       const tIn = swapPair.in;
       const tOut = swapPair.out;
-      const raw = parseFloat(document.getElementById('sw-in-amount').value);
+      const raw = swapInputTokens();
       const go = document.getElementById('sw-go');
       const detail = document.getElementById('sw-detail');
       const msg = document.getElementById('sw-msg');
@@ -5893,7 +5977,7 @@
       const el = document.getElementById('sw-points');
       if (!el) return;
       const price = swapPrices[swapPair.in.mint];
-      const raw = parseFloat(document.getElementById('sw-in-amount').value);
+      const raw = swapInputTokens();
       const usd = price && raw > 0 ? raw * price : 0;
 
       if (!FoxPoints.token) { el.textContent = 'sign in to earn'; return; }
@@ -6048,7 +6132,7 @@
         }
         lastSwap = {
           signature: sig, at: Date.now(), points: 0,
-          in: { symbol: swapPair.in.symbol, amount: parseFloat(document.getElementById('sw-in-amount').value) },
+          in: { symbol: swapPair.in.symbol, amount: swapInputTokens() },
           out: { symbol: swapPair.out.symbol, amount: Number(swapQuote.outAmount) / Math.pow(10, swapPair.out.decimals) },
           usd: Number(swapQuote.swapUsdValue) || null,
           link: swapLinkFor(swapPair.in, swapPair.out)

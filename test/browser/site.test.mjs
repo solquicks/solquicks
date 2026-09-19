@@ -43,7 +43,7 @@ const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got
 const section = (s) => console.log('\n── ' + s + ' ──');
 
 // ── the site, served as files ────────────────────────────────────────────────
-const TYPES = { '.html': 'text/html', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const TYPES = { '.html': 'text/html', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);
@@ -229,7 +229,10 @@ async function standIns(context) {
     if (url.startsWith(WORKER)) {
       const u = new URL(url);
       net.worker.push(u.pathname);
-      if (u.pathname === '/api/swap/quote') net.lastQuote = u.searchParams.get('in');
+      if (u.pathname === '/api/swap/quote') {
+        net.lastQuote = u.searchParams.get('in');
+        net.lastQuoteAmount = u.searchParams.get('amount');
+      }
       return json(route, workerAnswer(u.pathname, u));
     }
     if (url.startsWith(RPC)) {
@@ -496,6 +499,63 @@ try {
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
   ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+
+  section('it can be installed on a phone');
+  {
+    // A Seeker user should be able to keep this on the home screen, and the
+    // dapp store listing wants the same things a manifest declares.
+    const manifest = await page.evaluate(async () => {
+      const link = document.querySelector('link[rel="manifest"]');
+      if (!link) return null;
+      const res = await fetch(link.href);
+      return { type: res.headers.get('content-type'), body: await res.json() };
+    });
+    ok('the page declares a manifest', !!manifest);
+    eq('it stands alone rather than opening in a browser tab', manifest.body.display, 'standalone');
+    ok('it names itself', /solquicks/i.test(manifest.body.name));
+    const sizes = manifest.body.icons.map((i) => i.sizes);
+    ok('with the icon sizes a home screen needs', sizes.includes('192x192') && sizes.includes('512x512'), sizes.join(','));
+    ok('and one that can be masked to the phone\'s icon shape',
+      manifest.body.icons.some((i) => i.purpose === 'maskable'));
+
+    // An icon that 404s leaves a blank square on the home screen.
+    const icons = await page.evaluate(async (list) => {
+      const out = {};
+      for (const src of list) {
+        const r = await fetch(new URL(src, location.href).href);
+        out[src] = r.status;
+      }
+      return out;
+    }, manifest.body.icons.map((i) => i.src).concat(['icons/apple-touch-icon.png']));
+    ok('every icon it points at exists', Object.values(icons).every((c) => c === 200), JSON.stringify(icons));
+  }
+
+  section('swap: typing a dollar amount');
+  {
+    // The box means tokens until asked otherwise — that is the default, and
+    // the toggle has to convert rather than reinterpret what is typed.
+    eq('it starts in the token, named on the toggle', (await page.textContent('#sw-unit')).trim(), 'SOL');
+    await page.fill('#sw-in-amount', '2');
+    await page.waitForTimeout(300);
+    await page.click('#sw-unit');
+    eq('switching to dollars converts what was typed', await page.inputValue('#sw-in-amount'), '200.00');
+    eq('and the toggle says so', (await page.textContent('#sw-unit')).trim(), '$');
+    await page.waitForFunction(() => /≈ 2 SOL/.test(document.getElementById('sw-in-usd').textContent),
+      null, { timeout: 10000 });
+    ok('the line below says what that buys', true);
+
+    // $50 of SOL at $100 is half a SOL: the quote must ask for 0.5, not 50.
+    await page.fill('#sw-in-amount', '50');
+    await page.waitForFunction(() => document.getElementById('sw-detail').hidden === false, null, { timeout: 10000 });
+    await page.waitForTimeout(400);
+    eq('the quote is priced in tokens, not dollars', net.lastQuoteAmount, '500000000');
+
+    await page.click('#sw-unit');
+    eq('switching back shows the token amount', await page.inputValue('#sw-in-amount'), '0.5');
+    eq('and the toggle names the token again', (await page.textContent('#sw-unit')).trim(), 'SOL');
+    await page.fill('#sw-in-amount', '1');
+    await page.waitForTimeout(400);
+  }
 
   section('swap: your swaps list stays short');
   await page.waitForFunction(() => document.querySelectorAll('#sw-history-list .sw-hrow').length > 0, null, { timeout: 10000 });

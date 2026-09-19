@@ -1,0 +1,22 @@
+{
+  "name": "solquicks — swap, stake, earn",
+  "short_name": "solquicks",
+  "description": "Swap any Solana token with bot protection, earn Fox Points, and hold Moon Rangers.",
+  "start_url": "/?src=app#swap",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#E8F1F6",
+  "theme_color": "#F0821E",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Swap", "url": "/#swap" },
+    { "name": "Moon Rangers", "url": "/#moon" },
+    { "name": "Wallet cleanup", "url": "/#cleanup" }
+  ]
+}
