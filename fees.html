@@ -215,6 +215,8 @@
       const extra = document.getElementById('extra').value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
       const seen = {};
       const list = [];
+      const asked = {};
+      for (const m of extra) asked[m] = true;
       const sources = mine.map((t) => ({ mint: t.mint, symbol: t.symbol, volume24h: null }))
         .concat(top)
         .concat(extra.map((m) => ({ mint: m, symbol: null, name: 'pasted', volume24h: null })));
@@ -244,7 +246,13 @@
         program: mintInfos[i] ? mintInfos[i].owner.toBase58() : null,
         fee: feeAddrs[i].toBase58(),
         exists: !!feeInfos[i],
-        pick: !feeInfos[i]
+        asked: !!asked[t.mint],
+        // Ticked by default only where the rent has a reason: a token swapped
+        // here, or one you asked for by name. Solana's busiest are shown so
+        // you can tick them, but they are somebody else's traffic and ticking
+        // them for you would quietly spend about 0.09 SOL that never comes
+        // back.
+        pick: !feeInfos[i] && (!!tradedHere[t.mint] || !!asked[t.mint])
       })).filter((r) => {
         if (r.program === TOKEN || r.program === TOKEN22) return true;
         log(r.symbol + ' is not a token mint — skipped', 'dim');
@@ -259,9 +267,15 @@
           here.map((r) => r.symbol).join(', ') + ' — those are the ones that pay their rent back', 'gold');
       }
       const missing = rows.filter((r) => !r.exists).length;
-      log(rows.length + ' tokens checked · ' + (rows.length - missing) + ' already collect fees · ' + missing + ' missing', 'gold');
-      document.getElementById('create').disabled = !missing;
-      document.getElementById('none').disabled = !missing;
+      const ticked = rows.filter((r) => r.pick).length;
+      log(rows.length + ' tokens checked · ' + (rows.length - missing) + ' already collect fees · ' +
+        missing + ' missing, of which ' + ticked + ' ticked', 'gold');
+      if (missing > ticked) {
+        log('The rest are Solana\'s busiest rather than yours, so they are left unticked — ' +
+          'tick any you want.', 'dim');
+      }
+      document.getElementById('create').disabled = !ticked;
+      document.getElementById('none').disabled = !ticked;
       btn.textContent = 'Check again';
       btn.disabled = false;
     } catch (e) {

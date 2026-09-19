@@ -701,6 +701,16 @@ try {
     eq('and a token nobody here has swapped comes after', table[2].symbol, 'USDC');
     eq('one that already collects is marked, not offered', table[2].done, true);
 
+    // Ticking is what spends the money, so it must have a reason behind it.
+    const ticks = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => ({
+      symbol: tr.children[1].textContent.trim(),
+      ticked: !!tr.querySelector('input.pick:checked'),
+      offered: !!tr.querySelector('input.pick')
+    })));
+    const tickedNow = ticks.filter((t) => t.ticked).map((t) => t.symbol).sort();
+    eq('the tokens swapped here are ticked', tickedNow.join(','), 'BONK,WIF');
+    ok('and nothing else is', ticks.every((t) => t.ticked === (t.symbol === 'BONK' || t.symbol === 'WIF')));
+
     const logged = await fees.textContent('#log');
     ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
     ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));
@@ -712,6 +722,19 @@ try {
     const xs = JSON.parse(fs.readFileSync(path.join(ROOT, 'xstocks.json'), 'utf8'));
     const busy = xs.tokens.filter((t) => t.busy);
     ok('every xStock in the file is a Backed one', xs.tokens.every((t) => t.mint.startsWith('Xs')));
+    // A mint asked for by name is a reason of its own: SOL is in neither list
+    // here, so it can only be ticked because it was typed in.
+    net.accounts[SOL] = mintAccount;
+    await fees.fill('#extra', SOL);
+    await fees.click('#check');
+    await fees.waitForFunction(() => !document.getElementById('check').disabled, null, { timeout: 20000 });
+    const withPasted = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => ({
+      symbol: tr.children[1].textContent.trim(), ticked: !!tr.querySelector('input.pick:checked')
+    })));
+    const pastedRow = withPasted.find((t) => t.symbol.startsWith('So11') || t.symbol === 'SOL');
+    ok('a mint typed in by hand is ticked', pastedRow && pastedRow.ticked, JSON.stringify(withPasted));
+    await fees.fill('#extra', '');
+
     await fees.click('#xs-busy');
     await fees.waitForFunction(() => document.getElementById('extra').value.length > 0, null, { timeout: 10000 });
     const pasted = await fees.inputValue('#extra');
