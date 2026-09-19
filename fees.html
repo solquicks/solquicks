@@ -42,7 +42,7 @@
     <br><b id="build">build: bulk-fee-accounts · 19 Sep</b></p>
 
   <div class="warn">
-    <b>Each account costs about 0.002 SOL of rent</b> (roughly 40¢), paid by the wallet
+    <b>Each account costs about 0.0015 SOL of rent</b> (roughly 17¢), paid by the wallet
     you connect, and <b>you cannot get it back</b>. Closing a referral token account is
     signed by the project admin — Jupiter's key, not yours — so treat this as money spent,
     not parked, and only create accounts for tokens people actually swap here.
@@ -100,7 +100,25 @@
   // initializeReferralTokenAccount, read off the transaction that created the
   // USDC account through Jupiter's own dashboard
   const INIT_IX = [125, 18, 70, 95, 86, 179, 221, 190];
-  const RENT_PER_ACCOUNT = 0.00204;   // what one fee account costs, and never gets back
+  /// What one fee account costs, and never gets back. Read from the chain at
+  /// each check rather than hardcoded: the figure here was 0.00204, the rent
+  /// this code assumed, and the real minimum is 0.00149 — a third less.
+  /// Quoting a cost 37% too high is not a safe error when that number decides
+  /// how many accounts a budget buys.
+  const TOKEN_BYTES = 165;
+  const TOKEN22_BYTES = 178;          // a Token-2022 account carries ImmutableOwner
+  let rent = { base: 0.00149, t22: 0.00156 };
+  function rentOf(row) { return row && row.program === TOKEN22 ? rent.t22 : rent.base; }
+  function rentFor(list) { return list.reduce(function (sum, r) { return sum + rentOf(r); }, 0); }
+  async function readRent(c) {
+    try {
+      const [a, b] = await Promise.all([
+        c.getMinimumBalanceForRentExemption(TOKEN_BYTES),
+        c.getMinimumBalanceForRentExemption(TOKEN22_BYTES)
+      ]);
+      rent = { base: a / 1e9, t22: b / 1e9 };
+    } catch (e) { /* the built-in figures are close enough to show a total */ }
+  }
   const PER_TX = 4;             // accounts created per transaction
   const PER_BATCH = 6;          // transactions signed against one blockhash
 
@@ -273,8 +291,7 @@
     if (!rows.length) { log('Press "Check what is missing" first.', 'dim'); return; }
 
     const budget = Number(document.getElementById('budget').value) || 0;
-    const room = Math.floor(budget / RENT_PER_ACCOUNT);
-    if (room < 1) { note.textContent = 'that budget does not cover one account'; return; }
+    if (budget < rent.base) { note.textContent = 'that budget does not cover one account'; return; }
 
     btn.disabled = true;
     note.textContent = 'simulating…';
@@ -282,19 +299,21 @@
     const { blockhash } = await c.getLatestBlockhash('confirmed');
     const pool = rows.filter((r) => !r.exists && !r.why && !r.pick)
       .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+    let spent = rentFor(rows.filter((r) => r.pick));
     let picked = rows.filter((r) => r.pick).length;
     let refused = 0;
     for (const r of pool) {
-      if (picked >= room) break;
+      if (spent + rentOf(r) > budget) continue;   // a cheaper one further down may still fit
       const why = await whyNot(c, r, blockhash);
       if (why) { r.why = why; refused++; continue; }
       r.pick = true;
       picked++;
+      spent += rentOf(r);
       note.textContent = picked + ' ticked…';
       paint();
     }
     paint();
-    log(picked + ' ticked — about ' + (picked * RENT_PER_ACCOUNT).toFixed(4) + ' SOL of rent' +
+    log(picked + ' ticked — about ' + spent.toFixed(4) + ' SOL of rent' +
       (refused ? ', ' + refused + ' skipped because the referral program refuses them' : ''), 'gold');
     note.textContent = '';
     btn.disabled = false;
@@ -310,6 +329,7 @@
     btn.disabled = true; btn.textContent = 'Reading…';
     try {
       const c = conn();
+      await readRent(c);
       // Two sources, in the order the rent should be spent: what this site's
       // own swappers trade, then Solana's busiest. A fee account only earns
       // back its rent if someone here actually swaps that token.
@@ -451,8 +471,9 @@
   }
 
   function paint() {
-    const picked = rows.filter((r) => r.pick).length;
-    const cost = (picked * RENT_PER_ACCOUNT).toFixed(4);
+    const pickedRows = rows.filter((r) => r.pick);
+    const picked = pickedRows.length;
+    const cost = rentFor(pickedRows).toFixed(4);
     document.getElementById('table-wrap').innerHTML =
       '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">Swapped here</th><th class="vol">24h volume</th></tr></thead><tbody>' +
       rows.map((r, i) =>
@@ -575,7 +596,7 @@
         tx.feePayer = new PublicKey(walletKey);
         packs.push({ tx: tx, group: group });
       }
-      log(todo.length + ' accounts in ' + packs.length + ' transactions — about ' + (todo.length * RENT_PER_ACCOUNT).toFixed(4) + ' SOL of rent', 'dim');
+      log(todo.length + ' accounts in ' + packs.length + ' transactions — about ' + rentFor(todo).toFixed(4) + ' SOL of rent', 'dim');
 
       // prove the shape before any wallet is asked to sign
       packs[0].tx.recentBlockhash = (await c.getLatestBlockhash('confirmed')).blockhash;

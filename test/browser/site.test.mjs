@@ -179,6 +179,9 @@ function rpcAnswer(method, params) {
     case 'getLatestBlockhash': return { context: ctx, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1e12 } };
     case 'getSignatureStatuses': return { context: ctx, value: [{ slot: 1, confirmations: null, err: null, confirmationStatus: 'confirmed' }] };
     case 'getBlockHeight': return 1;
+    // the real rent-exempt minimum for a token account, which the page reads
+    // rather than assuming — it assumed 0.00204 and was a third over
+    case 'getMinimumBalanceForRentExemption': return (params && params[0] >= 178) ? 1554480 : 1488440;
     // net.simFail makes the referral program refuse, the way it does for a
     // mint carrying Token-2022 extensions it is too old to read.
     case 'simulateTransaction': return {
@@ -760,13 +763,14 @@ try {
     // Filling a rent budget: ticks the busiest that can be created, and a
     // token the program refuses must not eat a slot in the budget.
     await fees.click('.ghost#none');
-    await fees.fill('#budget', '0.0041');          // exactly two accounts
+    await fees.fill('#budget', '0.0030');          // exactly two at the real rent
     await fees.click('#fill');
     await fees.waitForFunction(() => /ticked — about/.test(document.getElementById('log').textContent),
       null, { timeout: 30000 });
     const filled = await fees.$$eval('#table-wrap input.pick:checked', (e) => e.length);
     eq('the budget decides how many are ticked', filled, 2);
-    ok('and it says what that costs', /0\.0041 SOL of rent/.test(await fees.textContent('#log')));
+    ok('costed at the rent the chain charges, not a guess',
+      /0\.0030 SOL of rent/.test(await fees.textContent('#log')), (await fees.textContent('#log')).slice(-160));
     await fees.click('.ghost#none');
 
     // A mint the referral program cannot read — every xStock, today — has to
