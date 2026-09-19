@@ -391,6 +391,55 @@ if it lands, consider making it the default.
 
 ---
 
+## Soulbound collectible — built 2026-09-18, waiting on artwork
+
+An open-edition Metaplex Core asset, 0.1 SOL, one per wallet, permanently
+non-transferable. Buyers mint themselves through a Candy Machine, so no key of
+ours is ever online and the price goes straight from the buyer to the Seeker.
+
+**Perks** (Rangers stay ahead everywhere): 15 bps swap fee against 20 standard
+and the Rangers' 10 · 7% off Book The Fox against their 15% · 250 Fox Points
+once, on minting · a badge on the swap leaderboard. A wallet holding both is
+always charged the Ranger rate.
+
+**Proved on a local validator running mainnet's own programs** (`collectible/test/rehearse.mjs`,
+8 checks): the price reaches the treasury, each is numbered, it belongs to the
+collection, transfers are refused, nobody can thaw it, one per wallet, and a
+different wallet can still mint.
+
+Three things the rehearsal caught that would have cost real money:
+
+- **Devnet is a different program.** Devnet runs a newer Core Candy Machine
+  build than mainnet and rejects a setup mainnet accepts. A devnet rehearsal
+  would have sent us redesigning something that was never broken.
+- **A bot tax makes refusals look like successes.** With one configured, a
+  wallet that already owned a collectible could pay the tax, get nothing, and
+  see a confirmed transaction. Removed — an open edition at 0.1 SOL has nothing
+  to snipe. The page still checks the asset exists rather than trusting a
+  confirmed signature.
+- **Holding one and being paid for one are different facts.** A perk check that
+  found a collectible on chain used to write the same row the points claim
+  writes, so anyone whose collectible was noticed before they claimed would
+  never have been paid. Points are now claimed by their own update.
+
+**Still to do, in order:**
+
+1. You supply the artwork — one square PNG, into `collectible/art/collectible.png`,
+   and a copy at `img/collectible.png` for the store card.
+2. `node upload.mjs` puts it and both metadata files on Arweave through Turbo.
+3. Fund the setup keypair with ~0.1 SOL. `setup.mjs` creates it and prints the
+   address on first run. It holds rent only; every 0.1 SOL of revenue goes
+   direct to `uPMPP…`. Most of the rent comes back when the mint is withdrawn.
+4. `node setup.mjs --cluster mainnet` — needs your explicit go-ahead, and the
+   permanent freeze cannot be undone afterwards.
+5. Paste the three addresses it prints into `MINT` in `index.html` and
+   `COLLECTIBLE_COLLECTION` in `worker/wrangler.toml`, then deploy both.
+
+Until step 5 the card reads "opening soon", the button is disabled and no perks
+are granted, so a half-finished setup cannot take anyone's money.
+
+---
+
 ## Blocked
 
 **11. moon-stake mainnet.**

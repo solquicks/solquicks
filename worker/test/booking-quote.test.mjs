@@ -30,16 +30,23 @@ function lift(name, kind) {
   throw new Error('unbalanced ' + decl);
 }
 
-const { quoteFor, usdcUnits, BOOKING_TYPES, RUSH_HOURS, RUSH_PCT, HOLDER_DISCOUNT_PCT } =
-  new Function(`
+const {
+  quoteFor, usdcUnits, BOOKING_TYPES, RUSH_HOURS, RUSH_PCT,
+  HOLDER_DISCOUNT_PCT, COLLECTIBLE_DISCOUNT_PCT
+} = new Function(`
     ${lift('USDC_DECIMALS', 'line')}
     ${lift('RUSH_HOURS', 'line')}
     ${lift('RUSH_PCT', 'line')}
     ${lift('HOLDER_DISCOUNT_PCT', 'line')}
+    ${lift('COLLECTIBLE_DISCOUNT_PCT', 'line')}
     ${lift('BOOKING_TYPES', 'array')}
     ${lift('usdcUnits', 'fn')}
+    ${lift('discountPctFor', 'fn')}
     ${lift('quoteFor', 'fn')}
-    return { quoteFor, usdcUnits, BOOKING_TYPES, RUSH_HOURS, RUSH_PCT, HOLDER_DISCOUNT_PCT };
+    return {
+      quoteFor, usdcUnits, BOOKING_TYPES, RUSH_HOURS, RUSH_PCT,
+      HOLDER_DISCOUNT_PCT, COLLECTIBLE_DISCOUNT_PCT
+    };
   `)();
 
 let pass = 0, fail = 0;
@@ -67,6 +74,24 @@ for (const t of BOOKING_TYPES) {
   const q = quoteFor(t, later(), true);
   eq(`${t.id}: holder pays ${100 - HOLDER_DISCOUNT_PCT}%`, q.total, Math.round(t.price * 0.85 * 100) / 100);
 }
+
+// ── the collectible discount, and the order the two perks come in ──
+// A collectible is worth less than a Ranger, and a wallet holding both is
+// quoted the Ranger price. If these ever cross over, the cheaper thing to own
+// would be the better thing to own.
+for (const t of BOOKING_TYPES) {
+  const q = quoteFor(t, later(), 'collectible');
+  eq(`${t.id}: collectible pays ${100 - COLLECTIBLE_DISCOUNT_PCT}%`, q.total,
+    Math.round(t.price * (1 - COLLECTIBLE_DISCOUNT_PCT / 100) * 100) / 100);
+  ok(`${t.id}: a Ranger still beats a collectible`,
+    quoteFor(t, later(), 'ranger').total < q.total,
+    `ranger ${quoteFor(t, later(), 'ranger').total} vs collectible ${q.total}`);
+  ok(`${t.id}: a collectible still beats nothing`, q.total < quoteFor(t, later(), null).total);
+}
+ok('the Ranger rate is the better one', HOLDER_DISCOUNT_PCT > COLLECTIBLE_DISCOUNT_PCT);
+eq('an unknown tier gets nothing off', quoteFor(type('space'), later(), 'nonsense').discountPct, 0);
+eq("'ranger' and the old true flag agree",
+  quoteFor(type('space'), later(), 'ranger').total, quoteFor(type('space'), later(), true).total);
 
 // ── rush applies only to booked-time services ──
 eq('X Space booked in 2 hours carries the rush', quoteFor(type('space'), soon(), false).total, 300);

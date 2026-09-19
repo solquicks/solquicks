@@ -547,6 +547,26 @@
       cursor: pointer;
     }
     .plushie-row button:hover { background: var(--orange); color: #fff; }
+    .mint-perks {
+      list-style: none; margin: 14px 0 0; padding: 0;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .mint-perks li {
+      font-size: 0.88rem; color: var(--ink-soft); font-weight: 600;
+      padding-left: 18px; position: relative;
+    }
+    .mint-perks li::before {
+      content: '+'; position: absolute; left: 0; color: var(--orange-deep); font-weight: 800;
+    }
+    .mint-warning {
+      font-size: 0.8rem; color: var(--muted); margin: 12px 0 0; line-height: 1.5;
+    }
+    #collectible-mint[disabled] { opacity: 0.55; cursor: not-allowed; }
+    .mint-art-missing {
+      aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+      background: var(--paper-2, rgba(0,0,0,0.04)); color: var(--muted);
+      font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    }
     .plushie-note { font-size: 0.82rem; margin-top: 8px; min-height: 1.1em; color: var(--muted); }
     .plushie-note.ok { color: var(--green); font-weight: 700; }
     .plushie-note.bad { color: var(--crimson); }
@@ -1411,6 +1431,7 @@
     .sw-board-last { margin: 8px 0 0; }
     .sw-board-rank { display: inline-block; min-width: 22px; color: var(--orange-deep); }
     .sw-board-me { background: var(--orange-soft); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+    .sw-badge { font-size: 0.8em; margin-left: 4px; }
     .sw-saving { display: block; font-size: 0.72rem; font-weight: 800; color: var(--green); text-align: right; }
     .sw-history-title .sw-saving { display: inline; margin-left: 8px; font-family: inherit; text-align: left; }
     .sw-more-swaps {
@@ -2289,6 +2310,35 @@
           </form>
         </div>
       </div>
+
+      <div class="product-card" id="collectible-card">
+        <div class="product-img-wrap">
+          <div class="product-badge" id="collectible-badge">SOULBOUND</div>
+          <img class="carousel-img active" id="collectible-art" src="img/collectible.png"
+               alt="solquicks Collectible" loading="lazy" onerror="collectibleArtMissing(this)"/>
+        </div>
+        <div class="product-info">
+          <div class="product-name">solquicks Collectible</div>
+          <div class="product-desc">"Yours for good. It never leaves your wallet."</div>
+          <div class="product-meta">
+            <div class="product-price">0.1 SOL</div>
+            <div class="product-stock" id="collectible-minted">—</div>
+          </div>
+          <ul class="mint-perks">
+            <li><strong>15 bps swap fee</strong> instead of 20 — a quarter off, for good</li>
+            <li><strong>7% off Book The Fox</strong></li>
+            <li><strong>250 Fox Points</strong>, once, when you mint</li>
+            <li><strong>A badge</strong> beside your wallet on the swap leaderboard</li>
+          </ul>
+          <p class="mint-warning">
+            Soulbound means soulbound. It cannot be sold, sent or burned, by you
+            or by us — there is no key anywhere that can unlock it. One per wallet.
+            Moon Rangers keep the better rates.
+          </p>
+          <button class="buy-btn" id="collectible-mint" onclick="mintCollectible()">Mint — 0.1 SOL</button>
+          <div id="collectible-note" class="plushie-note"></div>
+        </div>
+      </div>
     </div>
 
     <!-- BOOK PANEL -->
@@ -2790,7 +2840,7 @@
       // waiting for a wallet. Refresh only while the tab is actually showing.
       if (tab === 'book' && !bkData && typeof loadBooking === 'function') loadBooking();
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
-      if (tab === 'store' && typeof loadStore === 'function') loadStore();
+      if (tab === 'store' && typeof loadStore === 'function') { loadStore(); loadCollectible(); }
       if (tab === 'moon') {
         if (typeof loadCollection === 'function') loadCollection();
         if (typeof loadAnalytics === 'function') {
@@ -3727,6 +3777,29 @@
       systemProgram: '11111111111111111111111111111111'
     };
 
+    // The soulbound collectible. Addresses are written by collectible/setup.mjs
+    // into collectible/cache.mainnet.json — copy them here after that runs.
+    // While they are empty the store shows the card as "opening soon" and the
+    // mint button stays disabled, so a half-configured site cannot take money.
+    const MINT = {
+      candyMachine: '',
+      candyGuard: '',
+      collection: '',
+      treasury: 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc',
+      priceSol: 0.1,
+      mintLimitId: 1,
+      candyMachineProgram: 'CMACYFENjoBMHzapRXyo1JZkVS6EtaDDzkjMrmQLvr4J',
+      candyGuardProgram: 'CMAGAKJ67e9hRZgfC5SFTbZH8MgEmtqazKXjmkaJjWTJ',
+      coreProgram: 'CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d',
+      systemProgram: '11111111111111111111111111111111',
+      sysvarInstructions: 'Sysvar1nstructions1111111111111111111111111',
+      recentSlothashes: 'SysvarS1otHashes111111111111111111111111111'
+    };
+
+    function mintConfigured() {
+      return !!(MINT.candyMachine && MINT.candyGuard && MINT.collection);
+    }
+
     function w3() {
       const lib = window.solanaWeb3;
       if (!lib) throw new Error('Solana library is still loading — try again in a second.');
@@ -3827,6 +3900,59 @@
         data: await anchorDiscriminator('unstake')
       });
       return new Transaction().add(ix);
+    }
+
+    /// One mint from the Candy Guard, encoded by hand. Bundling Metaplex's SDK
+    /// would mean several hundred kilobytes and loosening the page's script
+    /// policy to load it, for an instruction that is thirteen fixed accounts
+    /// and two derived ones. test/browser/site.test.mjs replays this against
+    /// bytes produced by the real SDK (mint-ix.fixture.json) and fails on any
+    /// difference, so hand-rolling it does not mean trusting it.
+    ///
+    /// The guard reads its own settings from remaining accounts: the treasury
+    /// the price goes to, and the counter that holds a wallet to one.
+    async function collectibleMintIx(o) {
+      const { PublicKey, TransactionInstruction } = w3();
+      const enc = new TextEncoder();
+      const cmProgram = new PublicKey(MINT.candyMachineProgram);
+      const guardProgram = new PublicKey(MINT.candyGuardProgram);
+      const candyMachine = new PublicKey(o.candyMachine);
+      const candyGuard = new PublicKey(o.candyGuard);
+      const minter = new PublicKey(o.minter);
+      const asset = new PublicKey(o.asset);
+
+      const authorityPda = PublicKey.findProgramAddressSync(
+        [enc.encode('candy_machine'), candyMachine.toBuffer()], cmProgram)[0];
+      const mintCounter = PublicKey.findProgramAddressSync(
+        [enc.encode('mint_limit'), Uint8Array.of(o.mintLimitId), minter.toBuffer(),
+         candyGuard.toBuffer(), candyMachine.toBuffer()], guardProgram)[0];
+
+      const keys = [
+        { pubkey: candyGuard, isSigner: false, isWritable: false },
+        { pubkey: cmProgram, isSigner: false, isWritable: false },
+        { pubkey: candyMachine, isSigner: false, isWritable: true },
+        { pubkey: authorityPda, isSigner: false, isWritable: true },
+        { pubkey: minter, isSigner: true, isWritable: true },
+        { pubkey: minter, isSigner: true, isWritable: true },
+        // The owner slot, left unset: an omitted optional account is written as
+        // the program's own address, and the minter becomes the owner.
+        { pubkey: guardProgram, isSigner: false, isWritable: false },
+        { pubkey: asset, isSigner: true, isWritable: true },
+        { pubkey: new PublicKey(o.collection), isSigner: false, isWritable: true },
+        { pubkey: new PublicKey(MINT.coreProgram), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(MINT.systemProgram), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(MINT.sysvarInstructions), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(MINT.recentSlothashes), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(o.treasury), isSigner: false, isWritable: true },
+        { pubkey: mintCounter, isSigner: false, isWritable: true }
+      ];
+
+      // mint_v1(mintArgs: bytes, group: Option<String>) — the guards take no
+      // arguments here, so an empty vector and no group label.
+      const disc = await anchorDiscriminator('mint_v1');
+      const data = new Uint8Array(disc.length + 4 + 1);
+      data.set(disc, 0);
+      return new TransactionInstruction({ programId: guardProgram, keys: keys, data: data });
     }
 
     /// Sign and send through whichever wallet is connected, then wait for
@@ -4943,7 +5069,18 @@
       search.value = '';
       swapShowWorthless = false;
       renderPickerHome();
-      search.focus();
+      // On a phone, focusing the box throws the keyboard up over the list —
+      // so the first thing you see when picking a token is half a screen of
+      // keyboard, and the tokens you actually hold are hidden behind it. The
+      // list is the point; searching is the fallback. Focus only where a
+      // keyboard is already there.
+      if (hasRealKeyboard()) search.focus();
+    }
+
+    /// A mouse and a hover state mean a desktop, where focusing an input costs
+    /// nothing. Coarse pointers get the list instead.
+    function hasRealKeyboard() {
+      return window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     }
 
     /// Airdropped spam: not on Jupiter's verified list and worth under a cent.
@@ -5507,7 +5644,8 @@
           const me = Wallet.pubkey && r.wallet === Wallet.pubkey;
           return '<div class="sw-hrow' + (me ? ' sw-board-me' : '') + '"><div>' +
             '<div class="sw-hpair"><span class="sw-board-rank">' + r.rank + '</span>' +
-            (me ? 'You' : escapeHtml(r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4))) + '</div>' +
+            (me ? 'You' : escapeHtml(r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4))) +
+            tierBadge(r.tier) + '</div>' +
             '<div class="sw-hmeta">' + r.swaps + ' swap' + (r.swaps === 1 ? '' : 's') + '</div></div>' +
             '<div class="sw-hright">' + fmtUsd(r.usd) +
             (r.rank <= d.prizes.length && r.usd >= d.minUsd ? '<span class="sw-hpts">+' + d.prizes[r.rank - 1].toLocaleString() + ' pts</span>' : '') +
@@ -5518,6 +5656,14 @@
           : '';
         box.hidden = false;
       } catch (e) { /* the board is a bonus; swapping is unaffected */ }
+    }
+
+    /// A small mark beside a wallet on the leaderboard. Rangers get the rocket
+    /// they have always had a claim to; a collectible gets its own, smaller one.
+    function tierBadge(tier) {
+      if (tier === 'ranger') return ' <span class="sw-badge" title="Moon Ranger holder">🚀</span>';
+      if (tier === 'collectible') return ' <span class="sw-badge" title="solquicks Collectible holder">🦊</span>';
+      return '';
     }
 
     async function loadSwapHistory() {
@@ -6616,8 +6762,12 @@
         const meta = t.mode === 'enquiry' ? 'In person · travel included'
           : t.mode === 'async' ? 'No calendar needed · made for you'
           : t.minutes + ' minutes · ' + (t.format || 'live');
-        const yours = d.holder ? t.price * (1 - d.holderDiscountPct / 100) : t.price;
-        const priceHtml = d.holder
+        // The worker works out which perk applies and sends the percentage
+        // for this wallet, so a collectible holder is not shown a Ranger's
+        // discount and charged something else at checkout.
+        const off = d.discountPct || 0;
+        const yours = t.price * (1 - off / 100);
+        const priceHtml = off
           ? '<span class="bk-was">$' + t.price.toLocaleString() + '</span> $' +
             yours.toFixed(2).replace(/\.00$/, '')
           : '$' + t.price.toLocaleString();
@@ -6634,7 +6784,9 @@
       }).join('') +
         '<p class="bk-policy" style="text-align:center">' +
         escapeHtml(d.policy.rush) + ' ' + escapeHtml(d.policy.holder) +
-        (d.holder ? ' <strong>You hold a Ranger, so 15% is already off every price below.</strong>' : '') + '</p>';
+        (d.discountPct ? ' <strong>You hold ' +
+          (d.tier === 'ranger' ? 'a Ranger' : 'a collectible') + ', so ' + d.discountPct +
+          '% is already off every price below.</strong>' : '') + '</p>';
     }
 
     /// The flow replaces the rate card in place, but the card the visitor
@@ -6997,6 +7149,138 @@
         document.getElementById('store-progress').textContent = p.sold + ' / ' + p.quantity;
         document.getElementById('store-fill').style.width = Math.min(100, (p.sold / p.quantity) * 100) + '%';
       } catch (e) { /* the typed numbers remain */ }
+    }
+
+    /// The artwork is dropped in at img/collectible.png. Until it is there,
+    /// say so plainly — the Rangers' "art lost" box means something else
+    /// entirely, and borrowing it would be a lie about a file that is simply
+    /// not drawn yet.
+    function collectibleArtMissing(img) {
+      const box = document.createElement('div');
+      box.className = 'mint-art-missing';
+      box.textContent = 'artwork coming';
+      img.replaceWith(box);
+    }
+
+    var collectibleLoaded = false;
+
+    function note(id, text, kind) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      el.className = 'plushie-note' + (kind ? ' ' + kind : '');
+    }
+
+    /// How many have been minted, and whether this wallet already has one.
+    /// Everything about the card that is not typed into the page comes from
+    /// here, so an unconfigured or sold-out mint cannot look mintable.
+    async function loadCollectible() {
+      const card = document.getElementById('collectible-card');
+      const button = document.getElementById('collectible-mint');
+      if (!mintConfigured()) {
+        document.getElementById('collectible-badge').textContent = 'OPENING SOON';
+        document.getElementById('collectible-minted').textContent = 'not open yet';
+        button.disabled = true;
+        button.textContent = 'Opening soon';
+        return;
+      }
+      button.disabled = false;
+      if (collectibleLoaded && !Wallet.pubkey) return;
+      try {
+        const url = POINTS_API + '/api/collectible' +
+          (Wallet.pubkey ? '?wallet=' + encodeURIComponent(Wallet.pubkey) : '');
+        const res = await fetch(url);
+        const d = await res.json();
+        collectibleLoaded = true;
+        document.getElementById('collectible-minted').textContent =
+          (d.minted || 0) + ' minted';
+        if (d.holder) {
+          button.disabled = true;
+          button.textContent = 'You have one ✓';
+          note('collectible-note', 'One per wallet, and yours is already in there.', 'ok');
+        }
+      } catch (e) { /* the card still says what it costs */ }
+    }
+
+    /// Mints one collectible. The asset keypair is generated here and signs
+    /// here: it exists only to name the account, is never stored, and is of no
+    /// use to anyone afterwards — the wallet is the owner from the first block.
+    /// The 0.1 SOL goes from the buyer to the treasury inside the same
+    /// instruction, so nothing of ours ever holds it.
+    async function mintCollectible() {
+      const button = document.getElementById('collectible-mint');
+      if (!mintConfigured()) return;
+      if (!Wallet.active) { note('collectible-note', 'Connect a wallet first.', 'bad'); return; }
+
+      const { Keypair, PublicKey, TransactionMessage, VersionedTransaction, ComputeBudgetProgram } = w3();
+      const was = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Minting…';
+      note('collectible-note', 'Approve it in your wallet.', '');
+
+      const asset = Keypair.generate();
+      try {
+        const ix = await collectibleMintIx({
+          candyMachine: MINT.candyMachine,
+          candyGuard: MINT.candyGuard,
+          collection: MINT.collection,
+          treasury: MINT.treasury,
+          minter: Wallet.pubkey,
+          asset: asset.publicKey.toBase58(),
+          mintLimitId: MINT.mintLimitId
+        });
+        const latest = await rpc().getLatestBlockhash('confirmed');
+        const message = new TransactionMessage({
+          payerKey: new PublicKey(Wallet.pubkey),
+          recentBlockhash: latest.blockhash,
+          // A mint through the guards costs more than the default allowance.
+          instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ix]
+        }).compileToV0Message();
+        const tx = new VersionedTransaction(message);
+        tx.sign([asset]);
+
+        let binary = '';
+        for (const b of tx.serialize()) binary += String.fromCharCode(b);
+        const signature = await sendVersionedTx(btoa(binary), latest.lastValidBlockHeight);
+
+        // A confirmed signature is not proof of a collectible: a guard can
+        // refuse a mint inside a transaction that still succeeds. Ask the
+        // chain whether the asset is actually there.
+        const created = await rpc().getAccountInfo(asset.publicKey);
+        if (!created) throw new Error('The mint was refused — nothing was created and nothing was charged beyond the fee.');
+
+        note('collectible-note', 'Minted. It is yours for good.', 'ok');
+        button.textContent = 'You have one ✓';
+
+        // Points are granted by the worker after it checks the chain itself,
+        // so a made-up signature earns nothing.
+        try {
+          const res = await fetch(POINTS_API + '/api/collectible/claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wallet: Wallet.pubkey, signature: signature, asset: asset.publicKey.toBase58() })
+          });
+          const d = await res.json();
+          if (d && d.points) note('collectible-note', 'Minted, and ' + d.points + ' Fox Points are yours.', 'ok');
+        } catch (e) { /* the collectible is minted either way */ }
+
+        collectibleLoaded = false;
+        loadCollectible();
+        if (FoxPoints.token) FoxPoints.refresh();
+      } catch (e) {
+        button.disabled = false;
+        button.textContent = was;
+        note('collectible-note', mintError(e), 'bad');
+      }
+    }
+
+    /// Guard refusals come back as raw program errors. Say what happened.
+    function mintError(e) {
+      const text = String((e && e.message) || e);
+      if (/0x178c|MintLimit|allowed mints/i.test(text)) return 'This wallet already has one.';
+      if (/insufficient|0x1\b/i.test(text)) return 'Not enough SOL — you need 0.1 plus a little for fees.';
+      if (/User rejected|rejected the request|declined/i.test(text)) return 'Cancelled.';
+      return text;
     }
 
     /// What Rangers have actually changed hands for. Quiet if the marketplace
@@ -7463,7 +7747,7 @@
     }
     if (document.getElementById('panel-book').classList.contains('active')) loadBooking();
     if (document.getElementById('panel-swap').classList.contains('active')) loadSwap();
-    if (document.getElementById('panel-store').classList.contains('active')) loadStore();
+    if (document.getElementById('panel-store').classList.contains('active')) { loadStore(); loadCollectible(); }
 </script>
 
   <button class="back-to-top" id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">

@@ -21,3 +21,10 @@ program/migration/settle.sql
 
 # written by a failed browser test run
 test/browser/failure.png
+
+# the collectible's setup. authority.json signs the collection and the candy
+# machine into existence — it holds rent, never revenue, and never leaves here.
+collectible/node_modules/
+collectible/authority.json
+collectible/art/
+collectible/prepared/

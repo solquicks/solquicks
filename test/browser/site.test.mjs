@@ -29,6 +29,8 @@ const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const WIF = 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
 const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const MINT_FIXTURE = JSON.parse(fs.readFileSync(new URL('./mint-ix.fixture.json', import.meta.url), 'utf8'));
 
 // ── assertions ───────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -52,7 +54,7 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
-const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3 };
+const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {} };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
 const cleanupScan = () => ({
@@ -144,6 +146,17 @@ function workerAnswer(p, url) {
   if (p === '/api/cleanup/scan') return cleanupScan();
   if (p === '/api/cleanup/award') return { awarded: 6, burned: 0, closed: 3, player: { points: 6 } };
   if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
+  if (p === '/api/swap/top') return { tokens: [
+    { mint: USDC, symbol: 'USDC', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 900000000 },
+    { mint: WIF, symbol: 'WIF', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 20000000 },
+    { mint: BONK, symbol: 'BONK', decimals: 5, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 5000000 }
+  ] };
+  if (p === '/api/swap/traded') return { days: 90, tokens: [
+    { mint: BONK, symbol: 'BONK', swaps: 9 },
+    { mint: WIF, symbol: 'WIF', swaps: 2 }
+  ] };
+  if (p === '/api/collectible') return { open: true, minted: 37, priceSol: 0.1, points: 250, swapFeeBps: 15, discountPct: 7, holder: false };
+  if (p === '/api/collectible/claim') return { points: 250, player: { points: 250 } };
   if (p === '/api/collection/sales') return { sales: [
     { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
     { mint: 'm3', name: 'Ranger #3', sol: 0.41, ts: Date.now() - 86400000, buyer: WALLET, seller: 'y' }
@@ -151,9 +164,15 @@ function workerAnswer(p, url) {
   return {};
 }
 
-function rpcAnswer(method) {
+function rpcAnswer(method, params) {
   const ctx = { slot: 1 };
   switch (method) {
+    // The fee-account page reads a list of mints, then the list of fee
+    // accounts derived from them. net.accounts says which addresses exist.
+    case 'getMultipleAccounts': return {
+      context: ctx,
+      value: (params && params[0] ? params[0] : []).map((k) => net.accounts[k] || null)
+    };
     case 'getBalance': return { context: ctx, value: net.lamports };
     case 'getParsedTokenAccountsByOwner':
     case 'getTokenAccountsByOwner': return { context: ctx, value: [] };
@@ -186,7 +205,7 @@ async function standIns(context) {
     if (url.startsWith(RPC)) {
       const body = JSON.parse(req.postData() || '{}');
       const calls = Array.isArray(body) ? body : [body];
-      const out = calls.map((c) => { net.rpc.push(c.method); return { jsonrpc: '2.0', id: c.id, result: rpcAnswer(c.method) }; });
+      const out = calls.map((c) => { net.rpc.push(c.method); return { jsonrpc: '2.0', id: c.id, result: rpcAnswer(c.method, c.params) }; });
       return json(route, Array.isArray(body) ? out : out[0]);
     }
     if (url.startsWith(SENDER)) {
@@ -290,6 +309,59 @@ try {
   eq('stock comes from the shop, not the page', (await page.textContent('#product-stock')).trim(), '88 available');
   eq('and so does the order count', (await page.textContent('#store-progress')).trim(), '12 / 100');
   eq('the bar matches', await page.evaluate(() => document.getElementById('store-fill').style.width), '12%');
+
+  section('the collectible: the mint instruction, byte for byte');
+  {
+    // index.html encodes the Candy Guard mint by hand rather than shipping
+    // Metaplex's SDK. The fixture is what that SDK produces for the same
+    // inputs, so any drift in accounts, order, flags or data shows up here
+    // instead of on someone's 0.1 SOL.
+    const built = await page.evaluate(async (f) => {
+      const ix = await collectibleMintIx({
+        candyMachine: f.input.candyMachine,
+        candyGuard: f.input.candyGuard,
+        collection: f.input.collection,
+        treasury: f.input.treasury,
+        minter: f.input.minter,
+        asset: f.input.asset,
+        mintLimitId: f.input.mintLimitId
+      });
+      return {
+        programId: ix.programId.toBase58(),
+        data: Array.from(ix.data).map((b) => b.toString(16).padStart(2, '0')).join(''),
+        keys: ix.keys.map((k) => ({ pubkey: k.pubkey.toBase58(), isSigner: k.isSigner, isWritable: k.isWritable }))
+      };
+    }, MINT_FIXTURE);
+
+    eq('the same program', built.programId, MINT_FIXTURE.programId);
+    eq('the same instruction data', built.data, MINT_FIXTURE.data);
+    eq('the same number of accounts', built.keys.length, MINT_FIXTURE.keys.length);
+    eq('the same accounts, in the same order, with the same flags',
+      JSON.stringify(built.keys), JSON.stringify(MINT_FIXTURE.keys));
+  }
+
+  section('the collectible: the card');
+  {
+    // Shipped unconfigured, the card must not look mintable.
+    eq('before the mint opens it says so', (await page.textContent('#collectible-minted')).trim(), 'not open yet');
+    eq('and the button cannot be pressed', await page.evaluate(() => document.getElementById('collectible-mint').disabled), true);
+
+    // Once the addresses are in, it reads the count from the worker.
+    await page.evaluate(() => {
+      MINT.candyMachine = '11111111111111111111111111111112';
+      MINT.candyGuard = '11111111111111111111111111111113';
+      MINT.collection = '11111111111111111111111111111114';
+      collectibleLoaded = false;
+      return loadCollectible();
+    });
+    await page.waitForFunction(() => document.getElementById('collectible-minted').textContent === '37 minted', null, { timeout: 10000 });
+    eq('the count comes from the worker', (await page.textContent('#collectible-minted')).trim(), '37 minted');
+    eq('and the button opens up', await page.evaluate(() => document.getElementById('collectible-mint').disabled), false);
+    ok('the page says it can never be moved',
+      /cannot be sold, sent or burned/.test(await page.textContent('.mint-warning')));
+    eq('a missing artwork file says what it is, not "art lost"',
+      (await page.textContent('.mint-art-missing')).trim(), 'artwork coming');
+  }
 
   section('the Moon Rangers page');
   await page.click('#nav-trigger');
@@ -417,6 +489,8 @@ try {
   section('swap: token picker hides worthless spam');
   await page.click('#sw-in-token');
   await page.waitForSelector('.sw-result-sym');
+  eq('with a mouse, the search box takes focus so you can type straight away',
+    await page.evaluate(() => document.activeElement && document.activeElement.id), 'sw-search');
   const listed = async () => page.$$eval('#sw-results .sw-result-sym', (els) => els.map((e) => e.textContent.replace('✓', '').trim()));
   let syms = await listed();
   ok('verified holdings are listed', syms.includes('SOL') && syms.includes('USDC'), syms.join(','));
@@ -562,6 +636,77 @@ try {
   eq('the explorer loads for someone arriving straight there',
     (await page.textContent('#an-explore-count')).trim(), 'All 4 Rangers, rarest first');
   ok('and the collection numbers come with it', /219 still here/.test(await page.textContent('#an-story')));
+
+  section('swap on a phone: the keyboard stays down until you ask for it');
+  {
+    // A touch device with no hover: the picker must show the list, not throw a
+    // keyboard over it. The tokens someone already holds are the whole point
+    // of that first screen.
+    const touch = await browser.newContext({
+      viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3
+    });
+    await standIns(touch);
+    await touch.addInitScript(testWallet, WALLET);
+    const phone = await touch.newPage();
+    phone.on('pageerror', (e) => pageErrors.push('[phone] ' + e.message));
+    await phone.goto(SITE + '#swap', { waitUntil: 'domcontentloaded' });
+    await phone.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+    await phone.waitForSelector('#sw-in-token', { state: 'visible', timeout: 20000 });
+    await phone.tap('#sw-in-token');
+    await phone.waitForSelector('.sw-result-sym');
+
+    const focused = await phone.evaluate(() => document.activeElement && document.activeElement.id);
+    ok('opening the picker does not focus the search box', focused !== 'sw-search', 'focus was on ' + focused);
+    ok('the tokens you hold are on screen instead',
+      (await phone.$$eval('#sw-results .sw-result-sym', (els) => els.map((e) => e.textContent))).length > 0);
+
+    // Tapping it must still work — this is about not doing it uninvited.
+    await phone.tap('#sw-search');
+    eq('tapping the box still focuses it',
+      await phone.evaluate(() => document.activeElement && document.activeElement.id), 'sw-search');
+    await touch.close();
+  }
+
+  section('the fee-account page points the rent at tokens swapped here');
+  {
+    // Each fee account costs real rent, and the site's own swappers are not
+    // Solana's top fifty. The page must show what is traded here first.
+    const fees = await context.newPage();
+    fees.on('pageerror', (e) => pageErrors.push('[fees] ' + e.message));
+    await fees.goto(SITE + 'fees.html', { waitUntil: 'domcontentloaded' });
+    await fees.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+
+    // Every mint is a real token mint; no fee account exists yet except USDC's.
+    const derived = await fees.evaluate((mints) => {
+      const out = {};
+      for (const m of mints) out[m] = feeAccountFor(m).toBase58();
+      return out;
+    }, [USDC, WIF, BONK]);
+    const mintAccount = { lamports: 1e9, owner: TOKEN_PROGRAM, data: ['', 'base64'], executable: false, rentEpoch: 0 };
+    net.accounts = {};
+    for (const m of [USDC, WIF, BONK]) net.accounts[m] = mintAccount;
+    net.accounts[derived[USDC]] = { lamports: 2039280, owner: TOKEN_PROGRAM, data: ['', 'base64'], executable: false, rentEpoch: 0 };
+
+    await fees.click('#connect');            // connecting runs the check itself
+    await fees.waitForSelector('#table-wrap table tbody tr', { timeout: 20000 });
+
+    const table = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => ({
+      symbol: tr.children[1].textContent.trim(),
+      here: tr.children[4].textContent.trim(),
+      done: /collecting/.test(tr.children[3].textContent)
+    })));
+    eq('the most-swapped token here is listed first', table[0].symbol, 'BONK');
+    eq('with how often it was swapped', table[0].here, '9×');
+    eq('then the next one swapped here', table[1].symbol, 'WIF');
+    eq('and a token nobody here has swapped comes after', table[2].symbol, 'USDC');
+    eq('one that already collects is marked, not offered', table[2].done, true);
+
+    const logged = await fees.textContent('#log');
+    ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
+    ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));
+    ok('it says the worker picks them up by itself', /15 minutes/.test(await fees.content()));
+    await fees.close();
+  }
 
   section('settings survive a reload');
   await page.reload({ waitUntil: 'domcontentloaded' });

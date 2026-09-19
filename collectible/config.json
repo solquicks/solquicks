@@ -1,0 +1,10 @@
+{
+  "collectionName": "solquicks Collectibles",
+  "assetName": "solquicks Collectible",
+  "symbol": "QUICKS",
+  "priceSol": 0.1,
+  "treasury": "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc",
+  "itemsAvailable": 100000,
+  "mintLimitPerWallet": 1,
+  "artwork": "art/collectible.png"
+}

@@ -339,7 +339,7 @@ const RATE_RULES = [
   { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
-  { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top', '/api/swap/traded'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
@@ -363,7 +363,13 @@ const RATE_RULES = [
   // pool, and each scan costs real Helius credits — if those run out, holder
   // analytics and the Ranger grid stop working for everyone.
   { match: ['scan:global'], name: 'scanbudget', by: 'global', limit: 600, windowMs: 3600000 },
-  { match: ['holdings:global'], name: 'holdingsbudget', by: 'global', limit: 1200, windowMs: 3600000 }
+  { match: ['holdings:global'], name: 'holdingsbudget', by: 'global', limit: 1200, windowMs: 3600000 },
+  { match: ['/api/collectible'], name: 'collectible', by: 'ip', limit: 30, windowMs: 60000 },
+  { match: ['/api/collectible/claim'], name: 'collectibleclaim', by: 'ip', limit: 10, windowMs: 60000 },
+  // Checking whether a stranger holds one costs a DAS call. The answer is
+  // remembered per wallet, so this only bites on a flood of fresh addresses —
+  // which is exactly the way to burn the Helius credits everything else needs.
+  { match: ['collectible:global'], name: 'collectiblebudget', by: 'global', limit: 600, windowMs: 3600000 }
 ];
 
 /// Compares without leaking where two strings first differ. A plain !== returns
@@ -383,7 +389,9 @@ async function rateLimited(request, env, path, wallet) {
   const rule = RATE_RULES.find(function (r) { return r.match.indexOf(path) >= 0; });
   if (!rule) return false;
 
-  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  // A global budget has no IP to key on and can be spent from deep inside a
+  // request, where the Request object is not to hand.
+  const ip = (request && request.headers.get('CF-Connecting-IP')) || 'unknown';
   const who = rule.by === 'global'
     ? 'all'
     : (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
@@ -1343,10 +1351,34 @@ async function solFeeLamports(env, quote, bps) {
 }
 
 // Moon Ranger holders pay half. A wallet that holds or has staked a Ranger is
-// quoted and charged 10 bps instead of 20.
+// quoted and charged 10 bps instead of 20. A soulbound collectible earns a
+// smaller cut of the same fee — Rangers are meant to stay the better thing to
+// hold, so a wallet with both is charged the Ranger rate.
 const HOLDER_SWAP_FEE_BPS = 10;
-function swapFeeBpsFor(isHolder) {
-  return isHolder ? HOLDER_SWAP_FEE_BPS : SWAP_FEE_BPS;
+const COLLECTIBLE_SWAP_FEE_BPS = 15;
+const COLLECTIBLE_PRICE_SOL = 0.1;
+const COLLECTIBLE_POINTS = 250;
+
+function swapFeeBpsFor(tier) {
+  // `true` is the old Ranger-or-not flag, still passed by older callers.
+  if (tier === 'ranger' || tier === true) return HOLDER_SWAP_FEE_BPS;
+  if (tier === 'collectible') return COLLECTIBLE_SWAP_FEE_BPS;
+  return SWAP_FEE_BPS;
+}
+
+/// Any rate meaningfully under the standard one means a perk was applied.
+/// Exact comparison would be wrong: the rate is recovered from amounts on
+/// chain and rounds.
+function discountedRate(feeBps) {
+  return feeBps !== null && feeBps < SWAP_FEE_BPS * 0.9;
+}
+
+/// What the discount was worth, in dollars. A Ranger pays 10 bps where the
+/// standard is 20, so the saving equals the fee; a collectible pays 15, so it
+/// is a third of it. Derive it rather than assuming either.
+function savedOn(paidUsd, feeBps) {
+  if (!discountedRate(feeBps) || !feeBps) return 0;
+  return Math.round(paidUsd * (SWAP_FEE_BPS - feeBps) / feeBps * 10000) / 10000;
 }
 
 // Speed choices map to Jupiter's priority levels, each with a ceiling so a busy
@@ -1664,16 +1696,14 @@ async function recordSwap(env, signature) {
     if (feeBps === null || feeBps < HOLDER_SWAP_FEE_BPS * 0.8) {
       feePaid = null;
       feeBps = null;
-    } else if (feeBps < (HOLDER_SWAP_FEE_BPS + SWAP_FEE_BPS) / 2) {
-      savedUsd = Math.round(feePaid.amount * price(SOL_MINT) * 10000) / 10000;
+    } else {
+      savedUsd = savedOn(feePaid.amount * price(SOL_MINT), feeBps);
     }
   } else if (feePaid) {
     const base = s.feePaid.mint === inMint ? s.spent[inMint]
       : s.feePaid.mint === outMint ? s.received[outMint] + s.feePaid.amount : 0;
     if (base > 0) feeBps = Math.round(s.feePaid.amount / base * 10000);
-    if (feeBps !== null && feeBps < (HOLDER_SWAP_FEE_BPS + SWAP_FEE_BPS) / 2) {
-      savedUsd = Math.round(s.feePaid.amount * price(s.feePaid.mint) * 10000) / 10000;
-    }
+    savedUsd = savedOn(s.feePaid.amount * price(s.feePaid.mint), feeBps);
   }
 
   const symbols = {};
@@ -1955,6 +1985,14 @@ async function verifyInvoice(env, wallet, signature, minUsdc, purpose) {
 const RUSH_HOURS = 48;
 const RUSH_PCT = 50;
 const HOLDER_DISCOUNT_PCT = 15;
+const COLLECTIBLE_DISCOUNT_PCT = 7;
+
+/// What comes off a booking for this wallet. Rangers first, as everywhere else.
+function discountPctFor(tier) {
+  if (tier === 'ranger' || tier === true) return HOLDER_DISCOUNT_PCT;
+  if (tier === 'collectible') return COLLECTIBLE_DISCOUNT_PCT;
+  return 0;
+}
 const MIN_LEAD_HOURS = 24;
 const HOLD_MINUTES = 20;
 const BOOKING_HORIZON_DAYS = 30;
@@ -2146,12 +2184,12 @@ async function openSlots(env, type) {
 /// in does not change the total. What must stay in step is the breakdown the
 /// payment screen draws in index.html, which is computed separately — see
 /// test/booking-quote.test.mjs.
-function quoteFor(type, startsAt, isHolder) {
+function quoteFor(type, startsAt, tier) {
   const base = type.price;
   const rush = type.mode === 'slot' && startsAt &&
     (startsAt - Date.now()) < RUSH_HOURS * 3600000;
   const afterRush = rush ? base * (1 + RUSH_PCT / 100) : base;
-  const discount = isHolder ? HOLDER_DISCOUNT_PCT : 0;
+  const discount = discountPctFor(tier);
   const total = Math.round(afterRush * (1 - discount / 100) * 100) / 100;
   return { base: base, rush: rush, rushPct: rush ? RUSH_PCT : 0, discountPct: discount, total: total };
 }
@@ -2167,6 +2205,155 @@ async function isRangerHolder(env, wallet) {
     'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ?'
   ).bind(wallet).first();
   return !!(staked && staked.n > 0);
+}
+
+/// Whether this wallet holds a soulbound collectible. The mint is recorded in
+/// D1 when it happens, which answers most calls without leaving the worker;
+/// anything not in that table is checked against the chain once and then
+/// recorded, so a collectible minted from somewhere else still earns its perks.
+async function isCollectibleHolder(env, wallet) {
+  if (!wallet || !env.COLLECTIBLE_COLLECTION) return false;
+  const row = await env.DB.prepare(
+    'SELECT wallet FROM collectibles WHERE wallet = ?'
+  ).bind(wallet).first();
+  if (row) return true;
+  if (!env.HELIUS_API_KEY) return false;
+
+  const cached = await env.DB.prepare(
+    "SELECT n, ts FROM kv_cache WHERE k = ?"
+  ).bind('nocollectible:' + wallet).first();
+  // A wallet without one is the common case and would otherwise cost a DAS
+  // call on every quote, so remember the absence for an hour.
+  if (cached && Date.now() - cached.ts < 3600000) return false;
+
+  // Spend from the shared budget before the call, not after it.
+  if (await rateLimited(null, env, 'collectible:global', null)) {
+    await logError(env, 'collectible.holder', 'hourly lookup budget spent');
+    return false;
+  }
+
+  let owned = null;
+  try {
+    owned = await searchAssets(env, {
+      ownerAddress: wallet,
+      grouping: ['collection', env.COLLECTIBLE_COLLECTION],
+      burnt: false, page: 1, limit: 10
+    });
+  } catch (e) {
+    await logError(env, 'collectible.holder', (e && e.message) || e);
+    return false;   // a failed lookup must not hand out a discount
+  }
+  const asset = (owned && owned[0]) || null;
+  if (!asset) {
+    await env.DB.prepare(
+      'INSERT INTO kv_cache (k, n, ts) VALUES (?, 1, ?) ON CONFLICT(k) DO UPDATE SET ts = excluded.ts'
+    ).bind('nocollectible:' + wallet, Date.now()).run();
+    return false;
+  }
+  // Recorded so the next lookup is a single row read. points stays 0: this
+  // wallet has not been paid yet, and claiming later must still work.
+  await env.DB.prepare(
+    'INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, ?, 0) ' +
+    'ON CONFLICT(wallet) DO NOTHING'
+  ).bind(wallet, asset.id, 'chain:' + asset.id, Date.now()).run();
+  return true;
+}
+
+/// Which badge each of these wallets wears, from what is already in D1.
+/// Rangers outrank collectibles here too, so one wallet never shows two.
+async function badgesFor(env, wallets) {
+  const out = {};
+  if (!wallets.length) return out;
+  const marks = wallets.map(function () { return '?'; }).join(',');
+  const rangers = await env.DB.prepare(
+    'SELECT wallet FROM holder_positions WHERE count > 0 AND wallet IN (' + marks + ') ' +
+    'UNION SELECT wallet FROM staked_nfts WHERE wallet IN (' + marks + ')'
+  ).bind.apply(null, wallets.concat(wallets)).all();
+  for (const r of rangers.results || []) out[r.wallet] = 'ranger';
+  const collectors = await env.DB.prepare(
+    'SELECT wallet FROM collectibles WHERE wallet IN (' + marks + ')'
+  ).bind.apply(null, wallets).all();
+  for (const r of collectors.results || []) if (!out[r.wallet]) out[r.wallet] = 'collectible';
+  return out;
+}
+
+/// What this wallet is entitled to, as one word. Rangers are checked first and
+/// win, so holding both never costs someone the better rate.
+async function perkTier(env, wallet) {
+  if (!wallet) return null;
+  if (await isRangerHolder(env, wallet)) return 'ranger';
+  if (await isCollectibleHolder(env, wallet)) return 'collectible';
+  return null;
+}
+
+/// A number worth keeping for a while, stored in D1 so every edge shares it.
+/// Used for counts that cost several RPC calls to work out.
+async function cachedCount(env, key, ttl, compute) {
+  const row = await env.DB.prepare('SELECT n, ts FROM kv_cache WHERE k = ?').bind(key).first();
+  if (row && Date.now() - row.ts < ttl) return row.n;
+  let value;
+  try {
+    value = await compute();
+  } catch (e) {
+    await logError(env, 'cache.' + key, (e && e.message) || e);
+    return row ? row.n : 0;   // a stale number beats a wrong one
+  }
+  await env.DB.prepare(
+    'INSERT INTO kv_cache (k, n, ts) VALUES (?, ?, ?) ' +
+    'ON CONFLICT(k) DO UPDATE SET n = excluded.n, ts = excluded.ts'
+  ).bind(key, value, Date.now()).run();
+  return value;
+}
+
+/// Who owns one asset, and which collection it belongs to. Straight from DAS,
+/// so it reflects the chain rather than anything the browser said.
+async function assetOwnedBy(env, asset) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 'a', method: 'getAsset', params: { id: asset } })
+  });
+  if (!res.ok) throw new Error('rpc ' + res.status);
+  const data = await res.json();
+  if (data.error || !data.result) return null;
+  const r = data.result;
+  const group = (r.grouping || []).find(function (g) { return g.group_key === 'collection'; });
+  return {
+    owner: r.ownership && r.ownership.owner,
+    collection: group ? group.group_value : null,
+    burnt: !!r.burnt
+  };
+}
+
+/// One DAS searchAssets call, returning the items or throwing.
+async function searchAssets(env, params) {
+  const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 'c', method: 'searchAssets', params: params })
+  });
+  if (!res.ok) throw new Error('rpc ' + res.status);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'rpc error');
+  return (data.result && data.result.items) || [];
+}
+
+/// How many collectibles exist. DAS reports `total` as the size of the page it
+/// returned, not the size of the collection, so the pages have to be walked —
+/// the Rangers page once showed "1 minted" for exactly this reason.
+async function collectiblesMinted(env) {
+  if (!env.COLLECTIBLE_COLLECTION || !env.HELIUS_API_KEY) return 0;
+  let page = 1, total = 0;
+  for (;;) {
+    const items = await searchAssets(env, {
+      grouping: ['collection', env.COLLECTIBLE_COLLECTION],
+      burnt: false, page: page, limit: 1000
+    });
+    total += items.length;
+    if (items.length < 1000 || page > 50) break;
+    page += 1;
+  }
+  return total;
 }
 
 function publicBooking(b) {
@@ -2468,12 +2655,13 @@ export default {
           path === '/api/banner/watch' || path === '/api/swap/tokens' ||
           path === '/api/swap/quote' || path === '/api/swap/build' ||
           path === '/api/swap/earned' || path === '/api/swap/search' ||
-          path === '/api/swap/top' ||
+          path === '/api/swap/top' || path === '/api/swap/traded' ||
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
           path === '/api/cleanup/scan' ||
           path === '/api/swap/holdings' || path === '/api/swap/record' ||
           path === '/api/swap/history' || path === '/api/swap/token' ||
           path === '/api/swap/leaderboard' ||
+          path === '/api/collectible' || path === '/api/collectible/claim' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
@@ -2877,6 +3065,80 @@ export default {
       }
 
       // How many plushies are left, from the shop rather than from memory.
+      // ── the soulbound collectible ──
+      // How many exist, and whether the asking wallet has one. The count is a
+      // paged DAS walk, so it is cached; the holder flag is per wallet and is
+      // not, because someone who has just minted should see it immediately.
+      if (path === '/api/collectible' && request.method === 'GET') {
+        const who = url.searchParams.get('wallet');
+        if (!env.COLLECTIBLE_COLLECTION) {
+          return json(request, env, { open: false, minted: 0, holder: false });
+        }
+        const minted = await cachedCount(env, 'collectible:minted', 300000, function () {
+          return collectiblesMinted(env);
+        });
+        return json(request, env, {
+          open: true,
+          minted: minted,
+          priceSol: COLLECTIBLE_PRICE_SOL,
+          points: COLLECTIBLE_POINTS,
+          swapFeeBps: COLLECTIBLE_SWAP_FEE_BPS,
+          discountPct: COLLECTIBLE_DISCOUNT_PCT,
+          holder: isWallet(who) ? await isCollectibleHolder(env, who) : false
+        });
+      }
+
+      // Records a mint and pays the one-off points for it. The signature is
+      // checked against the chain: the asset has to exist, belong to our
+      // collection and be owned by the wallet asking. Nothing here trusts the
+      // browser, so a made-up signature earns nothing.
+      if (path === '/api/collectible/claim' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const who = body.wallet;
+        const asset = body.asset;
+        const signature = body.signature;
+        if (!isWallet(who) || !isWallet(asset) || typeof signature !== 'string' || signature.length < 64) {
+          return json(request, env, { error: 'missing wallet, asset or signature' }, 400);
+        }
+        if (!env.COLLECTIBLE_COLLECTION || !env.HELIUS_API_KEY) {
+          return json(request, env, { error: 'the collectible is not open yet' }, 503);
+        }
+
+        let owned;
+        try {
+          owned = await assetOwnedBy(env, asset);
+        } catch (e) {
+          await logError(env, 'collectible.claim', (e && e.message) || e);
+          return json(request, env, { error: 'could not read that mint' }, 502);
+        }
+        if (!owned) return json(request, env, { error: 'no such collectible' }, 404);
+        if (owned.owner !== who) return json(request, env, { error: 'that collectible belongs to another wallet' }, 403);
+        if (owned.collection !== env.COLLECTIBLE_COLLECTION) {
+          return json(request, env, { error: 'that is not a solquicks collectible' }, 400);
+        }
+
+        // Holding one and having been paid for it are separate facts. A row
+        // can already exist because a perk check found the collectible on
+        // chain first — that must not cost the person their points. The
+        // payment is claimed by the UPDATE, which only one caller can win, so
+        // a retry or two tabs at once still pay exactly once.
+        await env.DB.prepare(
+          'INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, ?, 0) ' +
+          'ON CONFLICT(wallet) DO NOTHING'
+        ).bind(who, asset, signature, Date.now()).run();
+        const paid = await env.DB.prepare(
+          'UPDATE collectibles SET points = ? WHERE wallet = ? AND points = 0'
+        ).bind(COLLECTIBLE_POINTS, who).run();
+        if (paid.meta.changes !== 1) {
+          return json(request, env, { already: true, points: 0, player: await playerState(env, who) });
+        }
+        await addPoints(env, who, 'collectible', COLLECTIBLE_POINTS);
+        return json(request, env, {
+          points: COLLECTIBLE_POINTS,
+          player: await playerState(env, who)
+        });
+      }
+
       if (path === '/api/store' && request.method === 'GET') {
         const cache = caches.default;
         const key = new Request(new URL('/api/store', url.origin).toString(), request);
@@ -3123,11 +3385,38 @@ export default {
         const last = await env.DB.prepare(
           'SELECT rank, wallet, usd, points FROM swap_weekly_awards WHERE week = ? ORDER BY rank'
         ).bind(new Date(start - WEEK_MS).toISOString().slice(0, 10)).all();
+        // Badges for the ten rows on show. Both tables are local, so this is
+        // two reads rather than ten chain lookups — a leaderboard is not worth
+        // spending Helius credits on.
+        const tiers = await badgesFor(env, top.map(function (r) { return r.wallet; }));
         return json(request, env, {
           weekStart: start, weekEnd: start + WEEK_MS,
           prizes: WEEKLY_SWAP_PRIZES, minUsd: WEEKLY_SWAP_MIN_USD,
-          top: top.map(function (r, i) { return { rank: i + 1, wallet: r.wallet, usd: r.usd, swaps: r.swaps }; }),
+          top: top.map(function (r, i) {
+            return { rank: i + 1, wallet: r.wallet, usd: r.usd, swaps: r.swaps, tier: tiers[r.wallet] || null };
+          }),
           lastWeek: last.results || []
+        });
+      }
+
+      // Which mints this site's own swappers actually trade. Rent is real
+      // money and each fee account costs some, so the page that creates them
+      // should point at the tokens that will earn it back rather than at
+      // Jupiter's global top fifty, which may be nothing like this crowd.
+      // Counts only: what the site turns over is nobody else's business.
+      if (path === '/api/swap/traded' && request.method === 'GET') {
+        const since = Date.now() - 90 * 86400000;
+        const rows = await env.DB.prepare(
+          'SELECT mint, MAX(symbol) AS symbol, COUNT(*) AS swaps FROM (' +
+          'SELECT in_mint AS mint, in_symbol AS symbol FROM swaps WHERE ts >= ? ' +
+          'UNION ALL SELECT out_mint AS mint, out_symbol AS symbol FROM swaps WHERE ts >= ?' +
+          ') GROUP BY mint ORDER BY swaps DESC, mint LIMIT 50'
+        ).bind(since, since).all();
+        return json(request, env, {
+          days: 90,
+          tokens: (rows.results || []).map(function (r) {
+            return { mint: r.mint, symbol: r.symbol || null, swaps: r.swaps };
+          })
         });
       }
 
@@ -3183,7 +3472,7 @@ export default {
           auto ? autoSlippageBps(env, inputMint, outputMint)
                : Promise.resolve(Math.max(1, Math.min(5000, Number(slippageParam) || 50))),
           swapFeeFor(env, inputMint, outputMint),
-          isWallet(who) ? isRangerHolder(env, who) : Promise.resolve(false)
+          isWallet(who) ? perkTier(env, who) : Promise.resolve(null)
         ]);
         const feeBps = fee ? swapFeeBpsFor(holder) : 0;
         const q = new URLSearchParams({
@@ -3212,7 +3501,8 @@ export default {
           feeBps: charged ? swapFeeBpsFor(holder) : 0,
           fullFeeBps: charged ? SWAP_FEE_BPS : 0,
           feeLamports: feeLamports,
-          holder: holder,
+          holder: !!holder,
+          tier: holder,
           feeMint: fee ? fee.mint : feeLamports ? SOL_MINT : null,
           slippageBps: slippageBps,
           autoSlippage: auto
@@ -3233,7 +3523,7 @@ export default {
         // what this wallet is actually entitled to. The wallet is the one that
         // signs, so quoting as a holder's address and swapping from another
         // wallet does not carry the discount across.
-        const entitled = swapFeeBpsFor(await isRangerHolder(env, user));
+        const entitled = swapFeeBpsFor(await perkTier(env, user));
         if (fee) {
           const quoted = quote.platformFee ? Number(quote.platformFee.feeBps) : 0;
           if (quoted !== entitled) {
@@ -3457,14 +3747,19 @@ export default {
       // ── public: the rate card ──
       if (path === '/api/booking/types' && request.method === 'GET') {
         const wallet = await getSession(request, env).catch(function () { return null; });
-        const holder = wallet ? await isRangerHolder(env, wallet) : false;
+        const holder = wallet ? await perkTier(env, wallet) : null;
         return json(request, env, {
           types: BOOKING_TYPES,
           policy: BOOKING_POLICY,
           rushHours: RUSH_HOURS,
           rushPct: RUSH_PCT,
           holderDiscountPct: HOLDER_DISCOUNT_PCT,
-          holder: holder,
+          collectibleDiscountPct: COLLECTIBLE_DISCOUNT_PCT,
+          holder: !!holder,
+          tier: holder,
+          // What comes off for this wallet in particular, so the page does not
+          // have to know which perk beats which.
+          discountPct: discountPctFor(holder),
           payTo: env.TREASURY_WALLET || null
         });
       }
@@ -3501,7 +3796,7 @@ export default {
         }
 
         const wallet = await getSession(request, env).catch(function () { return null; });
-        const holder = wallet ? await isRangerHolder(env, wallet) : false;
+        const holder = wallet ? await perkTier(env, wallet) : null;
         const q = quoteFor(type, startsAt, holder);
         // Paid in USDC, so no exchange rate is needed — and a SOL price feed
         // being down can no longer refuse someone paying in dollars.

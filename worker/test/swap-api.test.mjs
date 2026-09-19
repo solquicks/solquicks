@@ -474,6 +474,21 @@ section('weekly swap leaderboard');
   ok('a swap that paid no fee does not count', !board.top.some((r) => r.wallet === e));
   eq('prizes and minimum are published', board.prizes.join('/') + ' min $' + board.minUsd, '500/250/100 min $25');
 
+  // badges: read from D1 rather than the chain, so the board costs nothing
+  env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 2, 1, 1)').run(a);
+  env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(b, 'asset-b', 'sig-b');
+  env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(a, 'asset-a', 'sig-a');
+  env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, 1)').run(c, 'staked-c');
+  const badged = (await call(env, 'GET', '/api/swap/leaderboard')).body.top;
+  const tierOf = (who) => (badged.find((r) => r.wallet === who) || {}).tier;
+  eq('a Ranger holder is badged as one', tierOf(a), 'ranger');
+  eq('holding both shows the Ranger badge only', tierOf(a), 'ranger');
+  eq('a collectible holder gets its own badge', tierOf(b), 'collectible');
+  eq('a staked Ranger still counts', tierOf(c), 'ranger');
+  eq('everyone else has no badge', tierOf(d), null);
+  ok('and no chain call was made for any of it',
+    !chain.rpcCalls.slice(-6).includes('searchAssets'), chain.rpcCalls.slice(-6).join(','));
+
   // the week closes: pay out only after the grace period, and only once
   setClock(monday + 7 * DAY + 3600000);                 // one hour after the week ended
   await runScheduled(env);
@@ -597,6 +612,129 @@ section('cleanup scan after closing accounts');
   eq('the re-scan the page makes after closing asks for fresh numbers, and gets 0', emptyCount(await scan(true)), 0);
   ok('and every token-account read uses confirmed, not finalized, state',
     commitments.length > 0 && commitments.every((c) => c === 'confirmed'), JSON.stringify(commitments));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+
+section('which tokens are worth a fee account');
+{
+  const env = freshEnv();
+  const DAY = 86400000;
+  const now = Date.now();
+  const put = (sig, a, b, ts) => env._db.prepare(
+    'INSERT INTO swaps (signature, wallet, in_mint, in_symbol, in_amount, out_mint, out_symbol, out_amount, usd, ts) ' +
+    'VALUES (?, ?, ?, ?, 1, ?, ?, 1, 100, ?)'
+  ).run(sig, wallet(60), a[0], a[1], b[0], b[1], ts);
+
+  put('t1', [SOL, 'SOL'], [BONK, 'BONK'], now - DAY);
+  put('t2', [BONK, 'BONK'], [WIF, 'WIF'], now - 2 * DAY);
+  put('t3', [USDC, 'USDC'], [BONK, 'BONK'], now - 3 * DAY);
+  put('t4', [WIF, 'WIF'], [USDC, 'USDC'], now - 200 * DAY);   // older than the window
+
+  const body = (await call(env, 'GET', '/api/swap/traded')).body;
+  const bonk = body.tokens.find((t) => t.mint === BONK);
+  eq('a mint traded on both sides is counted each time', bonk.swaps, 3);
+  eq('the busiest comes first', body.tokens[0].mint, BONK);
+  eq('and carries its symbol', bonk.symbol, 'BONK');
+  eq('a swap older than the window is left out', (body.tokens.find((t) => t.mint === WIF) || {}).swaps, 1);
+  ok('what the site turns over is not published', body.tokens.every((t) => t.usd === undefined));
+}
+
+section('the soulbound collectible');
+{
+  const COLLECTION = 'CoLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL1';
+  const env = freshEnv({ COLLECTIBLE_COLLECTION: COLLECTION });
+  const owner = wallet(120), ranger = wallet(121), nobody = wallet(122);
+  const asset = wallet(123);
+
+  // The chain: one collectible, owned by `owner`, in our collection.
+  const assets = {};
+  assets[asset] = { id: asset, ownership: { owner: owner }, grouping: [{ group_key: 'collection', group_value: COLLECTION }] };
+  chain.rpc.getAsset = (params) => assets[params.id] || null;
+  chain.rpc.searchAssets = (params) => {
+    const all = Object.values(assets).filter((a) =>
+      (a.grouping[0] || {}).group_value === (params.grouping || [])[1]);
+    const mine = params.ownerAddress ? all.filter((a) => a.ownership.owner === params.ownerAddress) : all;
+    return { items: params.page > 1 ? [] : mine, total: mine.length };
+  };
+
+  const state = async (who) => (await call(env, 'GET', '/api/collectible' + (who ? '?wallet=' + who : ''))).body;
+
+  eq('the card knows how many exist', (await state()).minted, 1);
+  eq('and what it costs', (await state()).priceSol, 0.1);
+  eq('a holder is recognised', (await state(owner)).holder, true);
+  eq('someone without one is not', (await state(nobody)).holder, false);
+
+  // ── the perks ──
+  env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 1, 1, 1)').run(ranger);
+  const quoteAs = async (who) =>
+    (await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${BONK}&amount=1000000&slippage=50&wallet=` + who)).body;
+
+  eq('a collectible holder is quoted 0.15%', (await quoteAs(owner)).feeBps, 15);
+  eq('and told the standard rate, so the saving shows', (await quoteAs(owner)).fullFeeBps, 20);
+  eq('which tier it is', (await quoteAs(owner)).tier, 'collectible');
+  eq('nobody pays the full 0.2%', (await quoteAs(nobody)).feeBps, 20);
+
+  // Someone holding both must never be charged the worse of the two rates.
+  assets[wallet(124)] = { id: wallet(124), ownership: { owner: ranger }, grouping: [{ group_key: 'collection', group_value: COLLECTION }] };
+  eq('a Ranger who also mints one keeps the Ranger rate', (await quoteAs(ranger)).feeBps, 10);
+  eq('and is called a Ranger, not a collectible holder', (await quoteAs(ranger)).tier, 'ranger');
+
+  // ── claiming the points ──
+  const claim = (body) => call(env, 'POST', '/api/collectible/claim', { body: body });
+  const good = { wallet: owner, asset: asset, signature: 'C'.repeat(88) };
+
+  // The perk checks above already found this collectible on chain and cached
+  // it. Being known as a holder must not cost the person their points.
+  const first = await claim(good);
+  eq('minting pays 250 Fox Points, even after a perk check found it first', first.body.points, 250);
+  const again = await claim(good);
+  eq('claiming twice pays nothing more', again.body.points + ' ' + again.body.already, '0 true');
+
+  const stolen = await claim({ wallet: nobody, asset: asset, signature: 'D'.repeat(88) });
+  eq("another wallet cannot claim someone else's collectible", stolen.status, 403);
+
+  assets[wallet(125)] = { id: wallet(125), ownership: { owner: nobody }, grouping: [{ group_key: 'collection', group_value: wallet(126) }] };
+  const imposter = await claim({ wallet: nobody, asset: wallet(125), signature: 'E'.repeat(88) });
+  eq('an NFT from some other collection earns nothing', imposter.status, 400);
+
+  const invented = await claim({ wallet: nobody, asset: wallet(127), signature: 'F'.repeat(88) });
+  eq('a made-up asset earns nothing', invented.status, 404);
+
+  // ── what the discount was worth, at either rate ──
+  const me = wallet(128);
+  swapTx('G'.repeat(87) + '1', me, { spend: { mint: BONK, amount: 7_500_000 }, get: { mint: WIF, amount: 74.85 }, solFee: 1_500_000 });
+  const rec = (await call(env, 'POST', '/api/swap/record', { body: { signature: 'G'.repeat(87) + '1' } })).body.swap || {};
+  // Nothing about a perk may cost credits without a ceiling: a proxy pool
+  // asking about thousands of fresh wallets would otherwise drain the same
+  // Helius budget the Ranger grid and holder analytics depend on.
+  const drained = freshEnv({ COLLECTIBLE_COLLECTION: COLLECTION });
+  drained._db.prepare(
+    "INSERT INTO rate_limits (k, n, expires) VALUES (?, 99999, ?)"
+  ).run('collectiblebudget:all:' + Math.floor(Date.now() / 3600000), Date.now() + 3600000);
+  // The minted count is cached for everyone and is not the thing under test;
+  // warm it so the only call this route could make is the holder lookup.
+  drained._db.prepare("INSERT INTO kv_cache (k, n, ts) VALUES ('collectible:minted', 5, ?)").run(Date.now());
+  const before = chain.rpcCalls.length;
+  eq('with the hourly budget spent, nobody is quoted a discount',
+    (await call(drained, 'GET', '/api/collectible?wallet=' + wallet(129))).body.holder, false);
+  eq('and no lookup was made', chain.rpcCalls.length, before);
+
+  eq('a collectible fee reads back as 15 bps', rec.fee_bps, 15);
+  // 15 bps paid where 20 would have been: the saving is a third of the fee,
+  // not the whole of it as it is for a Ranger.
+  eq('and saved a third of it: $0.075', rec.saved_usd, 0.075);
+}
+
+// An unconfigured collection must not hand out perks or pretend to be open.
+section('before the collectible opens');
+{
+  const env = freshEnv();
+  const body = (await call(env, 'GET', '/api/collectible?wallet=' + wallet(130))).body;
+  eq('the card says it is not open', body.open + ' ' + body.minted, 'false 0');
+  eq('nobody counts as a holder', body.holder, false);
+  eq('and claiming is refused', (await call(env, 'POST', '/api/collectible/claim',
+    { body: { wallet: wallet(130), asset: wallet(131), signature: 'H'.repeat(88) } })).status, 503);
 }
 
 finish();
