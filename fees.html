@@ -73,6 +73,7 @@
   </div>
 
   <div class="card">
+    <div id="wallet-choice" hidden style="margin-bottom:10px"></div>
     <button id="connect">Connect a wallet</button>
     <button id="check" disabled>Check what is missing</button>
     <button id="create" disabled>Create the ticked accounts</button>
@@ -148,10 +149,63 @@
     return found;
   }
 
+  /// Which wallet to use. Taking the first one registered meant whichever
+  /// extension shouted loudest got the connection, which on a machine with
+  /// several is not the one you meant. Asked once, then remembered.
+  function chooseWallet(list) {
+    const box = document.getElementById('wallet-choice');
+    box.textContent = '';
+    const label = document.createElement('span');
+    label.className = 'dim';
+    label.textContent = 'Which wallet? ';
+    box.appendChild(label);
+    // The name comes from the extension itself, so it is set as text and
+    // never built into markup.
+    list.forEach(function (w) {
+      const b = document.createElement('button');
+      b.className = 'ghost';
+      b.textContent = w.name;
+      b.onclick = function () {
+        try { localStorage.setItem('feeWallet', w.name); } catch (e) {}
+        document.getElementById('connect').click();
+      };
+      box.appendChild(b);
+    });
+    box.hidden = false;
+  }
+
+  /// Once connected, leave a way back: a machine with several wallets will
+  /// have connected the wrong one at least once.
+  function showWalletSwitch(name) {
+    const box = document.getElementById('wallet-choice');
+    box.textContent = '';
+    const label = document.createElement('span');
+    label.className = 'dim';
+    label.textContent = 'Using ' + name + ' ';
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = 'Use another wallet';
+    b.onclick = function () {
+      try { localStorage.removeItem('feeWallet'); } catch (e) {}
+      walletKey = null;
+      provider = null;
+      document.getElementById('check').disabled = true;
+      document.getElementById('create').disabled = true;
+      chooseWallet(wallets());
+    };
+    box.appendChild(label);
+    box.appendChild(b);
+    box.hidden = false;
+  }
+
   document.getElementById('connect').onclick = async function () {
     const list = wallets();
     if (!list.length) { log('No Solana wallet found in this browser.', 'bad'); return; }
-    const t = list[0];
+    let remembered = null;
+    try { remembered = localStorage.getItem('feeWallet'); } catch (e) {}
+    const chosen = remembered && list.filter(function (w) { return w.name === remembered; })[0];
+    if (!chosen && list.length > 1) { chooseWallet(list); return; }
+    const t = chosen || list[0];
     try {
       if (t.kind === 'standard') {
         const res = await t.w.features['standard:connect'].connect();
@@ -162,7 +216,9 @@
       }
       provider = t;
       const sol = (await conn().getBalance(new (w3().PublicKey)(walletKey))) / 1e9;
-      log('Connected ' + walletKey.slice(0, 6) + '…' + walletKey.slice(-4) + ' — ' + sol.toFixed(4) + ' SOL', 'ok');
+      log('Connected ' + walletKey.slice(0, 6) + '…' + walletKey.slice(-4) + ' — ' + sol.toFixed(4) +
+        ' SOL · ' + t.name, 'ok');
+      showWalletSwitch(t.name);
       document.getElementById('check').disabled = false;
       document.getElementById('check').click();
     } catch (e) { log('Connection cancelled.', 'dim'); }
@@ -177,10 +233,13 @@
   /// Most of them barely trade: 22 of the 101 do over $100k a day and the rest
   /// fall away to nothing, so the busy ones are offered separately. Rent is
   /// spent for good, and an account on a token nobody swaps earns nothing.
+  const knownSymbols = {};      // mint → ticker, for mints added by a button
+
   async function addXStocks(onlyBusy) {
     const note = document.getElementById('xs-note');
     try {
       const data = await (await fetch('xstocks.json')).json();
+      for (const t of data.tokens) knownSymbols[t.mint] = t.symbol;
       const want = data.tokens.filter((t) => !onlyBusy || t.busy);
       const box = document.getElementById('extra');
       const already = box.value.split(/\s+/).filter(Boolean);
@@ -243,7 +302,7 @@
 
       rows = list.map((t, i) => ({
         mint: t.mint,
-        symbol: t.symbol || t.mint.slice(0, 4) + '…',
+        symbol: t.symbol || knownSymbols[t.mint] || t.mint.slice(0, 4) + '…',
         volume24h: t.volume24h,
         here: tradedHere[t.mint] || 0,
         program: mintInfos[i] ? mintInfos[i].owner.toBase58() : null,
@@ -273,10 +332,21 @@
       if (trying.length) {
         log('Simulating ' + trying.length + ' — cheaper to find a refusal now…', 'dim');
         const { blockhash } = await c.getLatestBlockhash('confirmed');
+        const refusals = {};
         for (const r of trying) {
           const why = await whyNot(c, r, blockhash);
           r.why = why;
-          if (why) { r.pick = false; log('  ' + r.symbol + ' cannot be created — ' + why, 'bad'); }
+          if (why) {
+            r.pick = false;
+            (refusals[why] = refusals[why] || []).push(r.symbol);
+          }
+        }
+        // Twenty-two identical red lines read as twenty-two problems. One
+        // reason, however many tokens share it.
+        for (const why of Object.keys(refusals)) {
+          const who = refusals[why];
+          log(who.length + (who.length === 1 ? ' token' : ' tokens') + ' cannot be created — ' + why, 'bad');
+          log('  ' + who.join(', '), 'dim');
         }
         paint();
       }

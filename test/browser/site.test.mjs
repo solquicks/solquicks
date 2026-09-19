@@ -721,6 +721,8 @@ try {
     ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
     ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));
     ok('it says the worker picks them up by itself', /15 minutes/.test(await fees.content()));
+    ok('the wallet it connected is named, with a way to change it',
+      /Use another wallet/.test(await fees.content()));
     ok('and that the rent cannot be got back', /cannot get it back/.test(await fees.content()));
 
     // xStocks: the busy ones only, because most of the 101 barely trade and
@@ -745,6 +747,12 @@ try {
     await fees.waitForFunction(() => document.getElementById('extra').value.length > 0, null, { timeout: 10000 });
     const pasted = await fees.inputValue('#extra');
     eq('the busy xStocks are filled in, not all 101', pasted.split('\n').filter(Boolean).length, busy.length);
+    net.accounts[busy[0].mint] = mintAccount;
+    await fees.click('#check');
+    await fees.waitForFunction(() => !document.getElementById('check').disabled, null, { timeout: 30000 });
+    const symbols = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    ok('an xStock is listed by its ticker, not the first four characters of its mint',
+      symbols.includes(busy[0].symbol), symbols.join(','));
     ok('and they are the ones that trade', pasted.includes(busy[0].mint));
     await fees.click('#xs-busy');
     eq('pressing it twice does not double them up',
@@ -758,6 +766,14 @@ try {
       null, { timeout: 30000 });
     const refusedLog = await fees.textContent('#log');
     ok('a refusal is explained, not just reported', /newer Token-2022 extensions/.test(refusedLog), refusedLog.slice(-200));
+    // Two refusals for the same reason are one line, not two: a wall of
+    // identical red lines reads as a wall of separate problems.
+    eq('identical refusals are grouped',
+      (refusedLog.match(/cannot be created — Jupiter/g) || []).length, 1);
+    const grouped = refusedLog.match(/(\d+) tokens cannot be created — ([^\n]*?)\s{2,}([^\n]+?)(?:\d|$)/);
+    ok('the grouped line says how many, and names them',
+      grouped && Number(grouped[1]) === grouped[3].split(',').length,
+      JSON.stringify(grouped && grouped.slice(1)));
     eq('nothing is left ticked', await fees.$$eval('#table-wrap input.pick:checked', (e) => e.length), 0);
     eq('and the create button is off', await fees.evaluate(() => document.getElementById('create').disabled), true);
     net.simFail = false;
