@@ -30,6 +30,7 @@ const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const WIF = 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
 const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const RAY = '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R';
 const MINT_FIXTURE = JSON.parse(fs.readFileSync(new URL('./mint-ix.fixture.json', import.meta.url), 'utf8'));
 
 // ── assertions ───────────────────────────────────────────────────────────────
@@ -146,11 +147,31 @@ function workerAnswer(p, url) {
   if (p === '/api/cleanup/scan') return cleanupScan();
   if (p === '/api/cleanup/award') return { awarded: 6, burned: 0, closed: 3, player: { points: 6 } };
   if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
-  if (p === '/api/swap/top') return { tokens: [
-    { mint: USDC, symbol: 'USDC', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 900000000 },
-    { mint: WIF, symbol: 'WIF', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 20000000 },
-    { mint: BONK, symbol: 'BONK', decimals: 5, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 5000000 }
-  ] };
+  if (p === '/api/swap/top') {
+    // Deliberately disagreeing metrics, so a test can tell which one the page
+    // is actually ranking by: USDC is the busiest, BONK the biggest.
+    const pool = [
+      { mint: USDC, symbol: 'USDC', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 900000000, mcap: 1000, liquidity: 5000, holders: 10, organicScore: 1 },
+      { mint: WIF, symbol: 'WIF', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 20000000, mcap: 50000, liquidity: 90000, holders: 500, organicScore: 50 },
+      { mint: BONK, symbol: 'BONK', decimals: 5, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 5000000, mcap: 9000000, liquidity: 1000, holders: 90, organicScore: 99 },
+      // Neither of these is swapped on the site, and their metrics are
+      // inverted, so the order they come out in says which ranking is live.
+      { mint: RAY, symbol: 'RAY', decimals: 6, verified: true, tokenProgram: TOKEN_PROGRAM, volume24h: 1, mcap: 5000000, liquidity: 700000, holders: 3000, organicScore: 80 }
+    ];
+    const rank = url.searchParams.get('rank') || 'volume';
+    const of = { volume: 'volume24h', mcap: 'mcap', liquidity: 'liquidity', organic: 'organicScore', holders: 'holders' }[rank] || 'volume24h';
+    return {
+      rank,
+      ranks: [
+        { id: 'volume', label: 'Busiest — 24h volume', unit: 'usd' },
+        { id: 'mcap', label: 'Biggest — market cap', unit: 'usd' },
+        { id: 'liquidity', label: 'Deepest liquidity', unit: 'usd' },
+        { id: 'organic', label: 'Most organic — real trading', unit: 'score' },
+        { id: 'holders', label: 'Most holders', unit: 'count' }
+      ],
+      tokens: pool.slice().sort((a, b) => b[of] - a[of])
+    };
+  }
   if (p === '/api/swap/traded') return { days: 90, tokens: [
     { mint: BONK, symbol: 'BONK', swaps: 9 },
     { mint: WIF, symbol: 'WIF', swaps: 2 }
@@ -693,7 +714,7 @@ try {
     }, [USDC, WIF, BONK]);
     const mintAccount = { lamports: 1e9, owner: TOKEN_PROGRAM, data: ['', 'base64'], executable: false, rentEpoch: 0 };
     net.accounts = {};
-    for (const m of [USDC, WIF, BONK]) net.accounts[m] = mintAccount;
+    for (const m of [USDC, WIF, BONK, RAY]) net.accounts[m] = mintAccount;
     net.accounts[derived[USDC]] = { lamports: 2039280, owner: TOKEN_PROGRAM, data: ['', 'base64'], executable: false, rentEpoch: 0 };
 
     await fees.click('#connect');            // connecting runs the check itself
@@ -760,6 +781,30 @@ try {
     await fees.click('#xs-busy');
     eq('pressing it twice does not double them up',
       (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, busy.length);
+    // The ranking decides the order the budget is spent in, so it has to be
+    // the metric asked for and not whatever the list arrived sorted by.
+    eq('the column is named after the ranking',
+      (await fees.$$eval('#table-wrap thead th', (th) => th.map((e) => e.textContent.trim()))).pop(),
+      'Busiest — 24h volume');
+    await fees.selectOption('#rank', 'mcap');
+    await fees.waitForFunction(() => /Biggest/.test(document.querySelector('#table-wrap thead').textContent),
+      null, { timeout: 30000 });
+    const byMcap = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    // BONK and WIF are swapped here so they lead whatever the ranking. Of the
+    // rest, USDC is the busiest by far and RAY barely trades, but RAY is
+    // worth five thousand times more — so by market cap RAY must come first.
+    ok('ranking by market cap reorders the rest',
+      byMcap.includes('RAY') && byMcap.indexOf('RAY') < byMcap.indexOf('USDC'), byMcap.join(','));
+    eq('and the figures shown are market caps',
+      (await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[5].textContent.trim())))[byMcap.indexOf('USDC')],
+      '$1,000');
+    await fees.selectOption('#rank', 'volume');
+    await fees.waitForFunction(() => /Busiest/.test(document.querySelector('#table-wrap thead').textContent),
+      null, { timeout: 30000 });
+    const byVol = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    ok('and switching back puts the busiest in front again',
+      byVol.includes('RAY') && byVol.indexOf('USDC') < byVol.indexOf('RAY'), byVol.join(','));
+
     // Filling a rent budget: ticks the busiest that can be created, and a
     // token the program refuses must not eat a slot in the budget.
     await fees.click('.ghost#none');

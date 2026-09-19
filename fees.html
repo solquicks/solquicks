@@ -56,6 +56,10 @@
 
   <div class="card">
     <h3>1 · Pick the tokens</h3>
+    <p class="sub" style="margin:0 0 8px">
+      <label for="rank" style="display:inline">Rank the rest by</label>
+      <select id="rank" style="margin-left:4px"><option value="volume">Busiest — 24h volume</option></select>
+    </p>
     <p class="sub" style="margin:0 0 6px">Tokens swapped on this site first, then the 50 busiest on Solana
       over the last day. Ticked rows have no fee account yet — start with the ones showing swaps here,
       since those are the ones that earn their rent back.</p>
@@ -298,7 +302,7 @@
     const c = conn();
     const { blockhash } = await c.getLatestBlockhash('confirmed');
     const pool = rows.filter((r) => !r.exists && !r.why && !r.pick)
-      .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+      .sort((a, b) => rankValue(b) - rankValue(a));
     let spent = rentFor(rows.filter((r) => r.pick));
     let picked = rows.filter((r) => r.pick).length;
     let refused = 0;
@@ -334,10 +338,12 @@
       // own swappers trade, then Solana's busiest. A fee account only earns
       // back its rent if someone here actually swaps that token.
       const [topRes, mineRes] = await Promise.all([
-        fetch(API + '/api/swap/top'),
+        fetch(API + '/api/swap/top?rank=' + encodeURIComponent(currentRank())),
         fetch(API + '/api/swap/traded').catch(() => null)
       ]);
-      const top = (await topRes.json()).tokens || [];
+      const topBody = await topRes.json();
+      const top = topBody.tokens || [];
+      fillRankMenu(topBody.ranks, topBody.rank);
       const mine = mineRes && mineRes.ok ? ((await mineRes.json()).tokens || []) : [];
       const tradedHere = {};
       for (const t of mine) tradedHere[t.mint] = t.swaps;
@@ -347,7 +353,7 @@
       const list = [];
       const asked = {};
       for (const m of extra) asked[m] = true;
-      const sources = mine.map((t) => ({ mint: t.mint, symbol: t.symbol, volume24h: null }))
+      const sources = mine.map((t) => ({ mint: t.mint, symbol: t.symbol }))
         .concat(top)
         .concat(extra.map((m) => ({ mint: m, symbol: null, name: 'pasted', volume24h: null })));
       for (const t of sources) {
@@ -371,7 +377,8 @@
       rows = list.map((t, i) => ({
         mint: t.mint,
         symbol: t.symbol || knownSymbols[t.mint] || t.mint.slice(0, 4) + '…',
-        volume24h: t.volume24h,
+        volume24h: t.volume24h, mcap: t.mcap, liquidity: t.liquidity,
+        holders: t.holders, organicScore: t.organicScore,
         here: tradedHere[t.mint] || 0,
         program: mintInfos[i] ? mintInfos[i].owner.toBase58() : null,
         fee: feeAddrs[i].toBase58(),
@@ -389,7 +396,7 @@
         return false;
       });
 
-      rows.sort((a, b) => (b.here - a.here) || (b.volume24h || 0) - (a.volume24h || 0));
+      rows.sort((a, b) => (b.here - a.here) || rankValue(b) - rankValue(a));
       paint();
 
       // Ask the chain whether each one can actually be created, before a
@@ -470,12 +477,66 @@
     }
   }
 
+  /// Which ranking the person asked for, what it is worth for a given token,
+  /// and how to write it down. The worker decides what rankings exist and
+  /// sends the menu with the list, so adding one there is enough.
+  let rankUnits = { volume: 'usd' };
+  let rankLabels = { volume: '24h volume' };
+
+  function currentRank() {
+    const el = document.getElementById('rank');
+    return (el && el.value) || 'volume';
+  }
+
+  function fillRankMenu(ranks, active) {
+    if (!ranks || !ranks.length) return;
+    const el = document.getElementById('rank');
+    if (el.dataset.filled === '1') return;     // do not stamp on the choice
+    el.textContent = '';
+    rankUnits = {};
+    rankLabels = {};
+    for (const r of ranks) {
+      rankUnits[r.id] = r.unit;
+      rankLabels[r.id] = r.label;
+      const o = document.createElement('option');
+      o.value = r.id;
+      o.textContent = r.label;
+      el.appendChild(o);
+    }
+    el.value = active || 'volume';
+    el.dataset.filled = '1';
+    el.onchange = function () {
+      if (!walletKey) return;
+      log('Ranking by ' + (rankLabels[currentRank()] || currentRank()) + '…', 'dim');
+      document.getElementById('check').click();
+    };
+  }
+
+  function rankValue(row) {
+    const rank = currentRank();
+    if (rank === 'mcap') return row.mcap || 0;
+    if (rank === 'liquidity') return row.liquidity || 0;
+    if (rank === 'organic') return row.organicScore || 0;
+    if (rank === 'holders') return row.holders || 0;
+    return row.volume24h || 0;
+  }
+
+  function rankShown(row) {
+    const v = rankValue(row);
+    if (!v) return '—';
+    const unit = rankUnits[currentRank()];
+    if (unit === 'usd') return '$' + Math.round(v).toLocaleString();
+    if (unit === 'count') return Math.round(v).toLocaleString();
+    return String(v);
+  }
+
   function paint() {
     const pickedRows = rows.filter((r) => r.pick);
     const picked = pickedRows.length;
     const cost = rentFor(pickedRows).toFixed(4);
     document.getElementById('table-wrap').innerHTML =
-      '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">Swapped here</th><th class="vol">24h volume</th></tr></thead><tbody>' +
+      '<table><thead><tr><th></th><th>Token</th><th>Program</th><th>Fee account</th><th class="vol">Swapped here</th><th class="vol">' +
+      esc(rankLabels[currentRank()] || '24h volume') + '</th></tr></thead><tbody>' +
       rows.map((r, i) =>
         '<tr><td>' + (r.exists ? '<span class="tick">✓</span>'
           : r.why ? '<span class="cross">—</span>'
@@ -486,7 +547,7 @@
           : r.why ? '<span class="cross" title="' + esc(r.why) + '">cannot be created</span>'
           : '<span class="cross">' + esc(r.fee.slice(0, 8)) + '…</span>') + '</td>' +
         '<td class="vol">' + (r.here ? '<b class="gold">' + r.here + '×</b>' : '—') + '</td>' +
-        '<td class="vol">' + (r.volume24h ? '$' + r.volume24h.toLocaleString() : '—') + '</td></tr>').join('') +
+        '<td class="vol">' + esc(rankShown(r)) + '</td></tr>').join('') +
       '</tbody></table>' +
       '<p class="sub" style="margin:10px 0 0">' + picked + ' ticked · about <b>' + cost + ' SOL</b> of rent</p>';
   }

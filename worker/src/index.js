@@ -1324,6 +1324,63 @@ function swapFee(inputMint, outputMint) {
 /// file was written. The output side is preferred, as before. The input side is
 /// only used for a classic SPL mint: taking a fee from a Token-2022 input has
 /// never been proven here, and a wrong guess fails the whole swap.
+// The fee-account page spends real rent, so it should be able to ask for
+// more than one idea of "worth it". Volume says what is busy today, market
+// cap what is established, liquidity what a swap will actually route through,
+// and Jupiter's organic score what is being traded by people rather than by
+// wash bots. Each is a different bet and none of them is obviously right.
+const SWAP_RANKS = {
+  volume: { label: 'Busiest — 24h volume', unit: 'usd', of: function (t) { return t.volume24h || 0; } },
+  mcap: { label: 'Biggest — market cap', unit: 'usd', of: function (t) { return t.mcap || 0; } },
+  liquidity: { label: 'Deepest liquidity', unit: 'usd', of: function (t) { return t.liquidity || 0; } },
+  organic: { label: 'Most organic — real trading', unit: 'score', of: function (t) { return t.organicScore || 0; } },
+  holders: { label: 'Most holders', unit: 'count', of: function (t) { return t.holders || 0; } }
+};
+
+function rankMenu() {
+  return Object.keys(SWAP_RANKS).map(function (k) {
+    return { id: k, label: SWAP_RANKS[k].label, unit: SWAP_RANKS[k].unit };
+  });
+}
+
+/// One pool for every ranking, built from Jupiter's three lists and deduped.
+/// Sorting the busiest list by market cap would only say which of today's
+/// busiest is biggest, which is not the question being asked.
+async function topTokenPool(env) {
+  const cache = caches.default;
+  const key = new Request('https://swap-pool.cache/toptokens');
+  const hit = await cache.match(key);
+  if (hit) return await hit.json();
+
+  const seen = {};
+  const pool = [];
+  for (const list of ['toptraded', 'toptrending', 'toporganicscore']) {
+    const res = await jupFetch(env, '/tokens/v2/' + list + '/24h?limit=100');
+    if (!res.ok) continue;
+    const rows = await res.json().catch(function () { return []; });
+    for (const t of Array.isArray(rows) ? rows : []) {
+      if (!t.id || seen[t.id]) continue;
+      seen[t.id] = true;
+      const s24 = t.stats24h || {};
+      pool.push({
+        mint: t.id, symbol: t.symbol || null, name: t.name || null, decimals: t.decimals,
+        verified: !!t.isVerified, tokenProgram: t.tokenProgram || null,
+        volume24h: Math.round((Number(s24.buyVolume) || 0) + (Number(s24.sellVolume) || 0)),
+        mcap: Math.round(Number(t.mcap) || 0),
+        liquidity: Math.round(Number(t.liquidity) || 0),
+        holders: Number(t.holderCount) || 0,
+        organicScore: Math.round((Number(t.organicScore) || 0) * 10) / 10
+      });
+    }
+  }
+  if (pool.length) {
+    await cache.put(key, new Response(JSON.stringify(pool), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=1800' }
+    }));
+  }
+  return pool;
+}
+
 async function swapFeeFor(env, inputMint, outputMint) {
   const known = swapFee(inputMint, outputMint);
   if (known) return known;
@@ -3423,26 +3480,24 @@ export default {
       // The busiest tokens on Solana right now, so the fee-account page can offer
       // them rather than making anyone hunt for mint addresses.
       if (path === '/api/swap/top' && request.method === 'GET') {
+        const asked = url.searchParams.get('rank');
+        const rank = SWAP_RANKS[asked] ? asked : 'volume';
         const cache = caches.default;
-        const key = new Request(new URL('/api/swap/top', url.origin).toString(), request);
+        const key = new Request(new URL('/api/swap/top?rank=' + rank, url.origin).toString(), request);
         const hit = await cache.match(key);
         if (hit) return hit;
 
-        // A hundred rather than fifty: the fee page fills a rent budget from
-        // this list, and after the ones that already collect and the ones the
-        // referral program refuses, fifty does not go far enough.
-        const res = await jupFetch(env, '/tokens/v2/toptraded/24h?limit=100');
-        if (!res.ok) return json(request, env, { error: 'could not read the top tokens' }, 502);
-        const list = await res.json().catch(function () { return []; });
-        const tokens = (Array.isArray(list) ? list : []).map(function (t) {
-          const s24 = t.stats24h || {};
-          return {
-            mint: t.id, symbol: t.symbol || null, name: t.name || null, decimals: t.decimals,
-            verified: !!t.isVerified, tokenProgram: t.tokenProgram || null,
-            volume24h: Math.round((Number(s24.buyVolume) || 0) + (Number(s24.sellVolume) || 0))
-          };
-        }).filter(function (t) { return t.mint; });
-        const out = json(request, env, { tokens: tokens });
+        let pool = [];
+        try {
+          pool = await topTokenPool(env);
+        } catch (e) {
+          await logError(env, 'swap.top', (e && e.message) || e);
+        }
+        if (!pool.length) return json(request, env, { error: 'could not read the top tokens' }, 502);
+
+        const by = SWAP_RANKS[rank].of;
+        const tokens = pool.slice().sort(function (a, b) { return by(b) - by(a); }).slice(0, 100);
+        const out = json(request, env, { rank: rank, ranks: rankMenu(), tokens: tokens });
         const cached = new Response(out.body, out);
         cached.headers.set('Cache-Control', 'public, max-age=1800');
         ctx.waitUntil(cache.put(key, cached.clone()));

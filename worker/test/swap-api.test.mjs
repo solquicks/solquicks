@@ -616,6 +616,53 @@ section('cleanup scan after closing accounts');
 
 // ═════════════════════════════════════════════════════════════════════════════
 
+section('ranking the tokens worth a fee account');
+{
+  const env = freshEnv();
+  // Three Jupiter lists, deliberately disagreeing: the busiest token is small,
+  // the biggest barely trades, and one appears on two lists.
+  const tok = (id, symbol, vol, mcap, liq, holders, organic) => ({
+    id, symbol, name: symbol, decimals: 6, isVerified: true,
+    tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    stats24h: { buyVolume: vol / 2, sellVolume: vol / 2 },
+    mcap, liquidity: liq, holderCount: holders, organicScore: organic
+  });
+  const busy = tok(wallet(70), 'BUSY', 9e6, 1e6, 5e4, 100, 10);
+  const big = tok(wallet(71), 'BIG', 1e4, 9e9, 2e6, 90000, 60);
+  const deep = tok(wallet(72), 'DEEP', 5e6, 5e6, 8e6, 500, 40);
+  const real = tok(wallet(73), 'REAL', 2e6, 3e6, 1e6, 4000, 99);
+  const restoreJup = chain.jup;
+  chain.jup = (u) => {
+    if (u.pathname.includes('toptraded')) return new Response(JSON.stringify([busy, deep]));
+    if (u.pathname.includes('toptrending')) return new Response(JSON.stringify([big, busy]));
+    if (u.pathname.includes('toporganicscore')) return new Response(JSON.stringify([real]));
+    return new Response('[]', { status: 404 });
+  };
+
+  const top = async (rank) => (await call(env, 'GET', '/api/swap/top' + (rank ? '?rank=' + rank : ''))).body;
+
+  const byVolume = await top();
+  eq('by default the busiest comes first', byVolume.tokens[0].symbol, 'BUSY');
+  eq('and the default is named', byVolume.rank, 'volume');
+  ok('the rankings on offer are published', byVolume.ranks.some((r) => r.id === 'mcap'), JSON.stringify(byVolume.ranks));
+
+  eq('by market cap, the biggest comes first', (await top('mcap')).tokens[0].symbol, 'BIG');
+  eq('by liquidity, the deepest', (await top('liquidity')).tokens[0].symbol, 'DEEP');
+  eq('by organic score, the realest', (await top('organic')).tokens[0].symbol, 'REAL');
+  eq('by holders, the widest held', (await top('holders')).tokens[0].symbol, 'BIG');
+  eq('a ranking nobody offers falls back to volume', (await top('nonsense')).rank, 'volume');
+
+  // The pool is the three lists merged: ranking by market cap must reach a
+  // token that never appears on the busiest list at all.
+  const pool = (await top('mcap')).tokens;
+  eq('every list feeds the pool, once each', pool.length, 4);
+  eq('a token on two lists is not counted twice',
+    pool.filter((t) => t.symbol === 'BUSY').length, 1);
+  ok('and every metric travels with it',
+    pool.every((t) => t.mcap !== undefined && t.liquidity !== undefined && t.organicScore !== undefined));
+  chain.jup = restoreJup;   // later sections want the ordinary stand-in back
+}
+
 section('which tokens are worth a fee account');
 {
   const env = freshEnv();
