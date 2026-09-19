@@ -705,6 +705,26 @@ try {
     ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
     ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));
     ok('it says the worker picks them up by itself', /15 minutes/.test(await fees.content()));
+    ok('and that the rent cannot be got back', /cannot get it back/.test(await fees.content()));
+
+    // xStocks: the busy ones only, because most of the 101 barely trade and
+    // rent spent on a token nobody swaps is gone.
+    const xs = JSON.parse(fs.readFileSync(path.join(ROOT, 'xstocks.json'), 'utf8'));
+    const busy = xs.tokens.filter((t) => t.busy);
+    ok('every xStock in the file is a Backed one', xs.tokens.every((t) => t.mint.startsWith('Xs')));
+    await fees.click('#xs-busy');
+    await fees.waitForFunction(() => document.getElementById('extra').value.length > 0, null, { timeout: 10000 });
+    const pasted = await fees.inputValue('#extra');
+    eq('the busy xStocks are filled in, not all 101', pasted.split('\n').filter(Boolean).length, busy.length);
+    ok('and they are the ones that trade', pasted.includes(busy[0].mint));
+    await fees.click('#xs-busy');
+    eq('pressing it twice does not double them up',
+      (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, busy.length);
+    await fees.click('#xs-all');
+    await fees.waitForFunction((n) => document.getElementById('extra').value.split('\n').filter(Boolean).length === n,
+      xs.tokens.length, { timeout: 10000 }).catch(() => {});
+    eq('the other button offers the whole set',
+      (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, xs.tokens.length);
     await fees.close();
   }
 

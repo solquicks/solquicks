@@ -62,6 +62,11 @@
     <div id="table-wrap"><span class="dim">Connect a wallet to load them.</span></div>
     <label for="extra">Any other mints, one per line</label>
     <textarea id="extra" spellcheck="false" placeholder="mint address"></textarea>
+    <p class="sub" style="margin:8px 0 0">
+      <button class="ghost" id="xs-busy" type="button">Add the busy xStocks</button>
+      <button class="ghost" id="xs-all" type="button">Add every xStock</button>
+      <span class="dim" id="xs-note"></span>
+    </p>
   </div>
 
   <div class="card">
@@ -159,6 +164,36 @@
       document.getElementById('check').click();
     } catch (e) { log('Connection cancelled.', 'dim'); }
   };
+
+  /// Backed Finance's tokenised equities. The list is a file in this repo
+  /// rather than a live search, because Jupiter's search returns twenty at a
+  /// time and the name "TSLAx" is worn by a great many pump.fun impostors.
+  /// Everything in the file is verified, minted to an Xs… vanity address and
+  /// named "… xStock", which no impostor in the sweep managed.
+  ///
+  /// Most of them barely trade: 22 of the 101 do over $100k a day and the rest
+  /// fall away to nothing, so the busy ones are offered separately. Rent is
+  /// spent for good, and an account on a token nobody swaps earns nothing.
+  async function addXStocks(onlyBusy) {
+    const note = document.getElementById('xs-note');
+    try {
+      const data = await (await fetch('xstocks.json')).json();
+      const want = data.tokens.filter((t) => !onlyBusy || t.busy);
+      const box = document.getElementById('extra');
+      const already = box.value.split(/\s+/).filter(Boolean);
+      const seen = {};
+      already.forEach((m) => { seen[m] = true; });
+      const added = want.filter((t) => !seen[t.mint]);
+      box.value = already.concat(added.map((t) => t.mint)).join('\n');
+      note.textContent = added.length + ' added (' + want.map((t) => t.symbol).slice(0, 6).join(', ') +
+        (want.length > 6 ? ' and ' + (want.length - 6) + ' more' : '') + ') · list from ' + data.generated;
+      if (!document.getElementById('check').disabled) document.getElementById('check').click();
+    } catch (e) {
+      note.textContent = 'could not load the xStocks list';
+    }
+  }
+  document.getElementById('xs-busy').onclick = function () { addXStocks(true); };
+  document.getElementById('xs-all').onclick = function () { addXStocks(false); };
 
   document.getElementById('check').onclick = async function () {
     const btn = document.getElementById('check');
