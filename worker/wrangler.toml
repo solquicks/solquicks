@@ -14,7 +14,7 @@ TREASURY_WALLET = "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc"
 # The soulbound collectible's Core collection, written by collectible/setup.mjs
 # into collectible/cache.mainnet.json. Empty until the mint opens: while it is
 # empty the store card says "opening soon" and no perks are granted.
-COLLECTIBLE_COLLECTION = ""
+COLLECTIBLE_COLLECTION = "GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW"
 
 # Flip to "true" at the mainnet cutover. Off-chain staking is a database row and
 # the escrow vault is a real account; if both accept new positions the two

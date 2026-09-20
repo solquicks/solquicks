@@ -1,0 +1,12 @@
+{
+  "cluster": "mainnet",
+  "collection": "GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW",
+  "candyMachine": "6wjQnzNY2yiRd2mFdkkjd8KzzHR31PRrdWmdpqi38rsH",
+  "candyGuard": "4XPdr5vnEMJAKzCuMUQBTsriuACEXxS6DtQ9zutCsEPA",
+  "authority": "U5M6butYfjeQxU4iZhCwMMysLxUFGWMCiFFymWuDNWu",
+  "treasury": "FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m",
+  "priceSol": 0.1,
+  "itemsAvailable": 100000,
+  "assetUri": "https://arweave.net/TOzcwLp7DP4QNSPCWlZVsNuTB9Bh-Ja_8lxXsaLidKo",
+  "createdAt": "2026-09-20T06:49:11.684Z"
+}

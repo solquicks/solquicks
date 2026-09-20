@@ -389,15 +389,29 @@ try {
 
   section('the collectible: the card');
   {
-    // Shipped unconfigured, the card must not look mintable.
+    // The addresses are real now, but the mint is closed until MINT.live is
+    // set — an ordinary visitor must not be able to buy one early.
     eq('before the mint opens it says so', (await page.textContent('#collectible-minted')).trim(), 'not open yet');
     eq('and the button cannot be pressed', await page.evaluate(() => document.getElementById('collectible-mint').disabled), true);
+    ok('the addresses are set, so only the switch is holding it shut',
+      await page.evaluate(() => !!(MINT.candyMachine && MINT.candyGuard && MINT.collection)));
+    eq('the page names the wallet the takings go to',
+      await page.evaluate(() => MINT.treasury), 'FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m');
+    ok('a preview link opens it for testing',
+      await page.evaluate(() => {
+        const real = location.search;
+        history.replaceState(null, '', location.pathname + '?mint=preview');
+        const open = mintConfigured();
+        history.replaceState(null, '', location.pathname + real);
+        return open;
+      }));
 
     // Once the addresses are in, it reads the count from the worker.
     await page.evaluate(() => {
       MINT.candyMachine = '11111111111111111111111111111112';
       MINT.candyGuard = '11111111111111111111111111111113';
       MINT.collection = '11111111111111111111111111111114';
+      MINT.live = true;               // as it will be once the mint opens
       collectibleLoaded = false;
       return loadCollectible();
     });

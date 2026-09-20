@@ -35,6 +35,13 @@ if (!fs.existsSync('./uploaded.json')) {
 }
 const uploaded = JSON.parse(fs.readFileSync('./uploaded.json', 'utf8'));
 
+// A collection that was already created — the candy machine can be made
+// against it without creating a second one.
+const existing = args.indexOf('--collection') >= 0 ? args[args.indexOf('--collection') + 1] : null;
+// A candy machine that was already created — finish the job and write the
+// cache rather than making a second one.
+const existingCm = args.indexOf('--candy-machine') >= 0 ? args[args.indexOf('--candy-machine') + 1] : null;
+
 const CACHE = './cache.' + cluster + '.json';
 if (fs.existsSync(CACHE)) {
   console.error(CACHE + ' already exists. Delete it only if you really mean to');
@@ -74,23 +81,55 @@ if (cluster === 'devnet' && balance.basisPoints < 100000000n) {
   }
 }
 console.log('balance   :', Number(balance.basisPoints) / 1e9, 'SOL');
-if (balance.basisPoints < 100000000n) {
-  console.error('\nNot enough SOL. Send at least 0.1 SOL to ' + authority.publicKey + ' and run again.');
+// Measured, not guessed: the collection costs 0.00204 and the candy machine
+// 0.00755, so 0.012 covers both with room for fees. This said 0.1 for a
+// while — the figure from before any of it had been run.
+const NEEDED = 12000000n;
+// Nothing is created when both already exist, so there is nothing to pay for.
+const willCreate = !existing || !existingCm;
+if (willCreate && balance.basisPoints < NEEDED) {
+  console.error('\nNot enough SOL. Setup costs about 0.0096; send at least ' +
+    (Number(NEEDED) / 1e9) + ' SOL to ' + authority.publicKey + ' and run again.');
   process.exit(1);
 }
 
+/// A confirmed transaction is not the same as an account every node can see.
+/// The candy machine's Initialize reads the collection, and reading one that
+/// has not arrived yet panics the program with "index out of bounds: the len
+/// is 0" — which is what a missing account looks like from inside. Locally
+/// there is one node and no gap; on mainnet there is.
+async function waitForAccount(address, what) {
+  for (let i = 0; i < 60; i++) {
+    const acc = await umi.rpc.getAccount(publicKey(address));
+    if (acc.exists && acc.data.length > 0) return;
+    if (i === 0) console.log('  waiting for the ' + what + ' to be visible…');
+    await new Promise(function (r) { setTimeout(r, 2000); });
+  }
+  throw new Error('the ' + what + ' never became readable — try again in a minute');
+}
+
 // ── the collection ──
-const collection = generateSigner(umi);
-console.log('\ncreating collection', collection.publicKey);
-await createCollection(umi, {
-  collection: collection,
-  name: config.collectionName,
-  uri: uploaded.collection,
-  plugins: [
-    { type: 'PermanentFreezeDelegate', frozen: true, authority: { type: 'None' } }
-  ]
-}).sendAndConfirm(umi, { confirm: { commitment: 'confirmed' } });
-console.log('  frozen for good, no thaw authority');
+let collectionAddress;
+if (existing) {
+  collectionAddress = publicKey(existing);
+  const acc = await umi.rpc.getAccount(collectionAddress);
+  if (!acc.exists) throw new Error('no collection at ' + existing);
+  console.log('\nusing the collection already created:', collectionAddress);
+} else {
+  const collection = generateSigner(umi);
+  console.log('\ncreating collection', collection.publicKey);
+  await createCollection(umi, {
+    collection: collection,
+    name: config.collectionName,
+    uri: uploaded.collection,
+    plugins: [
+      { type: 'PermanentFreezeDelegate', frozen: true, authority: { type: 'None' } }
+    ]
+  }).sendAndConfirm(umi, { confirm: { commitment: 'confirmed' } });
+  console.log('  frozen for good, no thaw authority');
+  collectionAddress = collection.publicKey;
+}
+await waitForAccount(collectionAddress, 'collection');
 
 // ── the candy machine ──
 // Hidden Settings rather than config lines: every collectible shares one name
@@ -101,10 +140,15 @@ const candyMachine = generateSigner(umi);
 const hash = new Uint8Array(32);
 new TextEncoder().encodeInto('solquicks-collectible-no-reveal', hash);
 
-console.log('creating candy machine', candyMachine.publicKey);
-const builder = await create(umi, {
+let candyMachineAddress;
+if (existingCm) {
+  candyMachineAddress = publicKey(existingCm);
+  console.log('using the candy machine already created:', candyMachineAddress);
+} else {
+  console.log('creating candy machine', candyMachine.publicKey);
+  const builder = await create(umi, {
   candyMachine: candyMachine,
-  collection: collection.publicKey,
+  collection: collectionAddress,
   collectionUpdateAuthority: umi.identity,
   itemsAvailable: config.itemsAvailable,
   isMutable: false,
@@ -124,13 +168,19 @@ const builder = await create(umi, {
     mintLimit: some({ id: 1, limit: config.mintLimitPerWallet })
   }
 });
-await builder.sendAndConfirm(umi, { confirm: { commitment: 'confirmed' } });
+  await builder.sendAndConfirm(umi, { confirm: { commitment: 'confirmed' } });
+  candyMachineAddress = candyMachine.publicKey;
+}
 
-const cm = await fetchCandyMachine(umi, candyMachine.publicKey);
+// The same wait as the collection: a confirmed send does not mean the next
+// read can see it, and fetching too early threw away a candy machine that
+// had in fact been created.
+await waitForAccount(candyMachineAddress, 'candy machine');
+const cm = await fetchCandyMachine(umi, candyMachineAddress);
 const cache = {
   cluster: cluster,
-  collection: collection.publicKey,
-  candyMachine: candyMachine.publicKey,
+  collection: collectionAddress,
+  candyMachine: candyMachineAddress,
   candyGuard: cm.mintAuthority,
   authority: authority.publicKey,
   treasury: config.treasury,

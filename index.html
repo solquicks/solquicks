@@ -3832,10 +3832,18 @@
     // While they are empty the store shows the card as "opening soon" and the
     // mint button stays disabled, so a half-configured site cannot take money.
     const MINT = {
-      candyMachine: '',
-      candyGuard: '',
-      collection: '',
-      treasury: 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc',
+      candyMachine: '6wjQnzNY2yiRd2mFdkkjd8KzzHR31PRrdWmdpqi38rsH',
+      candyGuard: '4XPdr5vnEMJAKzCuMUQBTsriuACEXxS6DtQ9zutCsEPA',
+      collection: 'GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW',
+      // Set true to open the mint to everyone. Until then it exists on chain
+      // but only answers to ?mint=preview, so the first one can be minted and
+      // checked before anybody else is invited to pay for one.
+      live: false,
+      // The collectible's takings go to the staking wallet, not the Seeker
+      // the rest of the site pays into. Must match the solPayment guard: the
+      // program checks it, so a mismatch fails the mint rather than paying
+      // the wrong address.
+      treasury: 'FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m',
       priceSol: 0.1,
       mintLimitId: 1,
       candyMachineProgram: 'CMACYFENjoBMHzapRXyo1JZkVS6EtaDDzkjMrmQLvr4J',
@@ -3847,7 +3855,9 @@
     };
 
     function mintConfigured() {
-      return !!(MINT.candyMachine && MINT.candyGuard && MINT.collection);
+      if (!(MINT.candyMachine && MINT.candyGuard && MINT.collection)) return false;
+      if (MINT.live) return true;
+      try { return new URLSearchParams(location.search).get('mint') === 'preview'; } catch (e) { return false; }
     }
 
     function w3() {
