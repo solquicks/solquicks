@@ -2359,15 +2359,16 @@
             <div class="product-stock" id="collectible-minted">—</div>
           </div>
           <ul class="mint-perks">
-            <li><strong>15 bps swap fee</strong> instead of 20 — a quarter off, for good</li>
-            <li><strong>7% off Book The Fox</strong></li>
+            <li><strong>25% off swap fees</strong>, for good</li>
+            <li><strong>5% off Book The Fox</strong></li>
             <li><strong>250 Fox Points</strong>, once, when you mint</li>
-            <li><strong>A badge</strong> beside your wallet on the swap leaderboard</li>
+            <li><strong>A rocket</strong> beside your wallet on the swap leaderboard</li>
           </ul>
           <p class="mint-warning">
             Soulbound means soulbound. It cannot be sold, sent or burned, by you
             or by us — there is no key anywhere that can unlock it. One per wallet.
-            Moon Rangers keep the better rates.
+            Already hold a Moon Ranger? You keep the better Ranger rates — this
+            adds nothing on top of them.
           </p>
           <button class="buy-btn" id="collectible-mint" onclick="mintCollectible()">Mint — 0.1 SOL</button>
           <div id="collectible-note" class="plushie-note"></div>
@@ -2606,9 +2607,9 @@
         <div class="moon-perks">
           <div class="moon-perks-title">What a Ranger gets you</div>
           <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>100 Fox Points a day</b>, for every Ranger you stake.</span></div>
-          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>Half price swaps</b> — 0.1% instead of 0.2%, on every pair.
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>50% off swap fees</b> — 0.1% instead of 0.2%, on every pair.
             <button type="button" onclick="switchTab('swap', tabButton('swap'))">Try the swap</button></span></div>
-          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>15% off Book The Fox</b> — every service, and the advertising space.
+          <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>30% off Book The Fox</b> — every service, and the advertising space.
             <button type="button" onclick="switchTab('book', tabButton('book'))">See the rates</button></span></div>
           <div class="moon-perk"><span class="moon-perk-mark">◆</span><span><b>Mission entries</b> — every day a Ranger stays staked builds entries for the quarterly draw.</span></div>
         </div>
@@ -5788,8 +5789,8 @@
     /// A small mark beside a wallet on the leaderboard. Rangers get the rocket
     /// they have always had a claim to; a collectible gets its own, smaller one.
     function tierBadge(tier) {
-      if (tier === 'ranger') return ' <span class="sw-badge" title="Moon Ranger holder">🚀</span>';
-      if (tier === 'collectible') return ' <span class="sw-badge" title="solquicks Collectible holder">🦊</span>';
+      if (tier === 'ranger') return ' <span class="sw-badge" title="Moon Ranger holder">🦊</span>';
+      if (tier === 'collectible') return ' <span class="sw-badge" title="solquicks soulbound holder">🚀</span>';
       return '';
     }
 
@@ -5958,9 +5959,13 @@
         // what a Moon Ranger saves on this swap, from the dollar value Jupiter reports
         if (d.holder && d.feeBps < d.fullFeeBps) {
           const savedUsd = Number(d.quote.swapUsdValue || 0) * (d.fullFeeBps - d.feeBps) / 10000;
+          // Said as a percentage off, not in basis points: "50% off" is a
+          // discount anyone can weigh, "10 bps" is a unit you have to know.
+          const off = Math.round((1 - d.feeBps / d.fullFeeBps) * 100);
+          const who = d.tier === 'collectible' ? 'Collectible' : 'Moon Ranger';
           const note = document.createElement('span');
           note.className = 'sw-saving';
-          note.textContent = 'Moon Ranger half off' + (savedUsd > 0
+          note.textContent = who + ' ' + off + '% off' + (savedUsd > 0
             ? ', saving ' + (savedUsd < 0.01 ? 'under $0.01' : fmtUsd(savedUsd)) : '');
           feeEl.appendChild(note);
         }

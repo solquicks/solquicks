@@ -2046,8 +2046,8 @@ async function verifyInvoice(env, wallet, signature, minUsdc, purpose) {
 
 const RUSH_HOURS = 48;
 const RUSH_PCT = 50;
-const HOLDER_DISCOUNT_PCT = 15;
-const COLLECTIBLE_DISCOUNT_PCT = 7;
+const HOLDER_DISCOUNT_PCT = 30;
+const COLLECTIBLE_DISCOUNT_PCT = 5;
 
 /// What comes off a booking for this wallet. Rangers first, as everywhere else.
 function discountPctFor(tier) {

@@ -72,7 +72,8 @@ for (const t of BOOKING_TYPES) {
 // ── holder discount ──
 for (const t of BOOKING_TYPES) {
   const q = quoteFor(t, later(), true);
-  eq(`${t.id}: holder pays ${100 - HOLDER_DISCOUNT_PCT}%`, q.total, Math.round(t.price * 0.85 * 100) / 100);
+  eq(`${t.id}: holder pays ${100 - HOLDER_DISCOUNT_PCT}%`, q.total,
+    Math.round(t.price * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100);
 }
 
 // ── the collectible discount, and the order the two perks come in ──
@@ -116,7 +117,10 @@ eq('a slot type with no date is not rushed', quoteFor(type('space'), null, false
 // ── rush and discount together ──
 {
   const q = quoteFor(type('space'), soon(), true);
-  eq('rush and holder together', q.total, 255); // 200 → 300 → −15%
+  // 200, +rush, then the holder discount — derived, so changing the rate
+  // changes the expectation with it rather than failing a stale number.
+  eq('rush and holder together', q.total,
+    Math.round(200 * (1 + RUSH_PCT / 100) * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100);
   eq('base is reported unchanged', q.base, 200);
   eq('discountPct is reported', q.discountPct, HOLDER_DISCOUNT_PCT);
 }
@@ -141,7 +145,7 @@ for (const t of BOOKING_TYPES) {
         const cents = Math.round(q.total * 100);
         if (q.total < 0) broke = `${t.id} went negative`;
         else if (q.total > t.price * 1.5 + 1e-9) broke = `${t.id} exceeded base +${RUSH_PCT}%`;
-        else if (q.total < t.price * 0.85 - 1e-9) broke = `${t.id} fell below the holder price`;
+        else if (q.total < t.price * (1 - HOLDER_DISCOUNT_PCT / 100) - 1e-9) broke = `${t.id} fell below the holder price`;
         else if (Math.abs(q.total * 100 - cents) > 1e-9) broke = `${t.id} is not a whole number of cents (${q.total})`;
         if (broke) break;
       }

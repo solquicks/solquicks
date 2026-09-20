@@ -16,6 +16,13 @@ const firstCalm = (list) => list.find((s) => !s.rush);
 const firstRush = (list) => list.find((s) => s.rush);
 const guest = { name: 'Test Guest', contact: '@guest' };
 
+// The discount the shipping code applies, read from it rather than copied.
+const HOLDER_DISCOUNT_PCT = Number(
+  /const HOLDER_DISCOUNT_PCT = (\d+)/.exec(
+    (await import('node:fs')).readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
+  )[1]
+);
+
 // ═════════════════════════════════════════════════════════════════════════════
 
 section('the calendar');
@@ -98,8 +105,11 @@ section('the price is decided by the server');
 
   const holderTok = signIn(env, wallet(1), { holder: true });
   const h = await call(env, 'POST', '/api/booking/hold', { token: holderTok, body: { type: 'space', startsAt: s.starts + 4 * HOUR, ...guest } });
-  eq('a signed-in holder pays $170', h.body.quote.total, 170);
-  eq('and is asked for 170 USDC', h.body.usdc, 170000000);
+  // Derived from the discount the code actually applies, so a change of rate
+  // updates the expectation instead of failing a number typed in months ago.
+  const holderPrice = Math.round(200 * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100;
+  eq('a signed-in holder pays the discounted price', h.body.quote.total, holderPrice);
+  eq('and is asked for that in USDC', h.body.usdc, Math.round(holderPrice * 1e6));
 
   const plainTok = signIn(env, wallet(2));
   const p = await call(env, 'POST', '/api/booking/hold', { token: plainTok, body: { type: 'space', startsAt: s.starts + 6 * HOUR, ...guest } });

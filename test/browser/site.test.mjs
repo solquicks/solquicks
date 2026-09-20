@@ -438,8 +438,11 @@ try {
     teaser: !document.getElementById('moon-teaser').hidden
   }));
   eq('the page says what a Ranger gets you', moon.perks.length, 4);
-  ok('including the half-price swaps', /Half price swaps/.test(moon.perks.join(' ')), moon.perks.join(' | '));
-  ok('and the booking discount', /15% off Book The Fox/.test(moon.perks.join(' ')));
+  // Said as a percentage off, which is what someone can actually weigh —
+  // "0.1%" alone means nothing without knowing the standard rate.
+  ok('including the swap discount, as a percentage',
+    /50% off swap fees/.test(moon.perks.join(' ')), moon.perks.join(' | '));
+  ok('and the booking discount', /30% off Book The Fox/.test(moon.perks.join(' ')));
   ok('how many are listed, out of the collection', moon.market.includes('24 listed for sale — 11% of the collection'), moon.market);
   ok('and what has traded this week', /0\.50 ◎ traded in the last 7 days/.test(moon.market), moon.market);
   ok('with somewhere to buy one', (moon.buy || '').includes('magiceden.io/marketplace/moonrangers'), moon.buy);
