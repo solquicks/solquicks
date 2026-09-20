@@ -391,52 +391,100 @@ if it lands, consider making it the default.
 
 ---
 
-## Soulbound collectible — built 2026-09-18, waiting on artwork
+## Soulbound collectible — live on mainnet 2026-09-20, mint still shut
 
-An open-edition Metaplex Core asset, 0.1 SOL, one per wallet, permanently
-non-transferable. Buyers mint themselves through a Candy Machine, so no key of
-ours is ever online and the price goes straight from the buyer to the Seeker.
+```
+collection     GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW
+candy machine  6wjQnzNY2yiRd2mFdkkjd8KzzHR31PRrdWmdpqi38rsH
+candy guard    4XPdr5vnEMJAKzCuMUQBTsriuACEXxS6DtQ9zutCsEPA
+setup wallet   U5M6butYfjeQxU4iZhCwMMysLxUFGWMCiFFymWuDNWu   (0.008 left)
+```
 
-**Perks** (Rangers stay ahead everywhere): 15 bps swap fee against 20 standard
-and the Rangers' 10 · 7% off Book The Fox against their 15% · 250 Fox Points
-once, on minting · a badge on the swap leaderboard. A wallet holding both is
-always charged the Ranger rate.
+`solquicks soulbound`, 0.1 SOL, one per wallet, 100,000 cap, frozen with no
+thaw authority. Takings go to the Sanctum staking wallet
+`FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m` — the only revenue that does
+not go to the Seeker. Setup cost 0.0055; a buyer pays 0.1044 all in.
 
-**Proved on a local validator running mainnet's own programs** (`collectible/test/rehearse.mjs`,
-8 checks): the price reaches the treasury, each is numbered, it belongs to the
-collection, transfers are refused, nobody can thaw it, one per wallet, and a
-different wallet can still mint.
+Verified by reading the chain rather than trusting the script: frozen true,
+thaw authority None, 100,000 items, 0.1 SOL to the right address, one per
+wallet, no bot tax.
 
-Three things the rehearsal caught that would have cost real money:
+**`MINT.live` is false.** The card is hidden and the mint answers only to
+`?mint=preview`. What is left:
 
-- **Devnet is a different program.** Devnet runs a newer Core Candy Machine
-  build than mainnet and rejects a setup mainnet accepts. A devnet rehearsal
-  would have sent us redesigning something that was never broken.
-- **A bot tax makes refusals look like successes.** With one configured, a
-  wallet that already owned a collectible could pay the tax, get nothing, and
-  see a confirmed transaction. Removed — an open edition at 0.1 SOL has nothing
-  to snipe. The page still checks the asset exists rather than trusting a
-  confirmed signature.
-- **Holding one and being paid for one are different facts.** A perk check that
-  found a collectible on chain used to write the same row the points claim
-  writes, so anyone whose collectible was noticed before they claimed would
-  never have been paid. Points are now claimed by their own update.
+1. Mint #0 from the preview link and confirm it arrives — **waiting on this**
+2. Flip `MINT.live = true` in index.html, deploy
+3. Announce it
+4. Years from now, withdraw the candy machine to reclaim ~0.0076 SOL
 
-**Still to do, in order:**
+### What mainnet taught that a local validator could not
 
-1. You supply the artwork — one square PNG, into `collectible/art/collectible.png`,
-   and a copy at `img/collectible.png` for the store card.
-2. `node upload.mjs` puts it and both metadata files on Arweave through Turbo.
-3. Fund the setup keypair with ~0.1 SOL. `setup.mjs` creates it and prints the
-   address on first run. It holds rent only; every 0.1 SOL of revenue goes
-   direct to `uPMPP…`. Most of the rent comes back when the mint is withdrawn.
-4. `node setup.mjs --cluster mainnet` — needs your explicit go-ahead, and the
-   permanent freeze cannot be undone afterwards.
-5. Paste the three addresses it prints into `MINT` in `index.html` and
-   `COLLECTIBLE_COLLECTION` in `worker/wrangler.toml`, then deploy both.
+- **A confirmed transaction is not a visible account.** The candy machine's
+  Initialize reads the collection, and reading one that has not propagated
+  panics the program with `index out of bounds: the len is 0` — which is what
+  a missing account looks like from inside it. The same gap then discarded a
+  candy machine that *had* been created, by fetching it too early. Both steps
+  now wait for the account to be readable, and both can be resumed with
+  `--collection` / `--candy-machine` so a stumble never creates a duplicate.
+  This also explains the devnet failures earlier blamed on a different program
+  build — that diagnosis was wrong.
+- **A bot tax turns a refusal into a successful transaction** that takes the
+  tax and creates nothing. Removed.
+- **Holding one and being paid for one are different facts**, and were the
+  same database row. Points are claimed by their own update now.
+- The funding check demanded 0.1 SOL, the figure from before anything had been
+  measured. It costs 0.0096.
 
-Until step 5 the card reads "opening soon", the button is disabled and no perks
-are granted, so a half-finished setup cannot take anyone's money.
+### Perks, as they now stand
+
+| | Moon Ranger | Collectible |
+|---|---|---|
+| Swap fee | 50% off (10 bps) | 25% off (15 bps) |
+| Book The Fox | 30% off | 5% off |
+| Fox Points | 100/day staked | 250 once, on minting |
+| Badge | 🦊 | 🚀 |
+
+They do not stack: `perkTier` checks Rangers first and returns, so a wallet
+holding both is charged the Ranger rate.
+
+---
+
+## Fee accounts — 2026-09-19 and 20
+
+Every token ever swapped on this site now collects its fee in-token, plus the
+76 busiest by market cap. Roughly 85 accounts created for about 0.13 SOL.
+
+- **The rent is not recoverable.** `close_referral_token_account` is signed by
+  the project admin, and the project is Jupiter's (`AfQ1oaud…`, read off the
+  chain). The page said "recoverable later" for weeks; it now says the
+  opposite.
+- **Rent is 0.00149, not 0.00204.** The higher figure was assumed and wrong by
+  a third, which mattered because it decides how many accounts a budget buys.
+  Both figures are read from the chain now.
+- **xStocks cannot have fee accounts at all.** They carry `ScaledUiAmount` and
+  `Pausable`, two Token-2022 extensions the referral program predates, and it
+  fails to deserialise the mint. Confirmed across issuers — OPENAI, DJT, MU,
+  DKNG all fail the same way, so it is the extensions, not Backed. Only
+  Jupiter can fix it. Those swaps still earn a SOL-side fee. A bug report is
+  written up in conversation but not sent.
+- The page ranks by volume, market cap, liquidity, organic score, holders or
+  age, fills a rent budget by simulating each candidate first, and ticks only
+  tokens swapped here or typed in by hand.
+
+---
+
+## Swap and site — 2026-09-19 and 20
+
+- The token picker no longer throws the keyboard up on a phone.
+- Amounts can be typed in dollars; defaults to the token every load.
+- A slippage refusal now carries the fix as a button.
+- The site installs to a home screen (manifest, icons at 192/512/maskable).
+- Swap, Store and Book moved into the nav bar; the menu keeps the rest.
+- **Fixed a leaderboard I broke:** `bind.apply(null, …)` gave D1 no statement,
+  so every leaderboard with a row in it 500ed and the whole "Top swappers"
+  box — Fox Points prizes and all — silently vanished. The test harness's
+  `bind` was an arrow function, so `this` never mattered and it passed there.
+  The harness now throws what real D1 throws.
 
 ---
 
@@ -453,16 +501,19 @@ costs nothing.
 
 ## Where this stands
 
-Done today: all of P0, the plushie leak, and `/api/migrate`. Both known ways to
-mint points without earning them are closed.
+The site earns on every swap, every token anyone trades here collects its fee
+in-token, and the collectible exists on chain waiting for one test mint.
 
-Open: **the two blank names** (needs the owners or the
-swap-store operator — not a code problem).
-The swap fees are deliberately parked until they outgrow the rent. The mainnet
-deploy sits blocked on ~1.8 SOL and nothing about it expires.
+Open and blocked: **moon-stake mainnet** on ~1.8 SOL. Nothing about it expires.
 
-One consequence worth deciding on: points earned before signing in now vanish
-when you connect, instead of carrying over. It's a handful of points from the
-daily visit and the games, and you can earn them again immediately once signed
-in — but if it bothers you, the cleaner fix is to stop awarding points to
-signed-out visitors at all, so the site never shows a number it won't honour.
+Open and decided but unbuilt: **a MoonPay onramp** — Jupiter has none to
+embed, and their Plugin would force a 50 bps floor against the 20 bps this
+site charges, so it is MoonPay or nothing. No cost to onboard, approval
+needed before going live.
+
+Open and undecided: points earned before signing in still vanish when you
+connect. The clean fix is to stop showing points to signed-out visitors so the
+site never displays a number it will not honour.
+
+Housekeeping: 58 dependency warnings, two critical, all in build tooling that
+never reaches the browser.
