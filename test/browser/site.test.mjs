@@ -543,6 +543,43 @@ try {
     ok('every icon it points at exists', Object.values(icons).every((c) => c === 200), JSON.stringify(icons));
   }
 
+  section('swap: a slippage refusal offers the fix');
+  {
+    // The setting that would have let it through is at the bottom of a panel
+    // most people never open, so the message carries it.
+    const shown = await page.evaluate(() => {
+      const msg = document.getElementById('sw-msg');
+      msg.textContent = '';
+      offerSlippageFix(new Error('Transaction failed: custom program error: 0x1771'));
+      const btn = msg.querySelector('.sw-fixbtn');
+      return btn ? btn.textContent : null;
+    });
+    eq('it offers the next step up, not an arbitrary number', shown, 'Allow 1% and re-price');
+
+    const after = await page.evaluate(() => {
+      document.querySelector('#sw-msg .sw-fixbtn').click();
+      return { slippage: swapSlippage, msg: document.getElementById('sw-msg').textContent };
+    });
+    eq('pressing it raises the tolerance', after.slippage, 100);
+    ok('and says so rather than leaving the error up', /now 1%/.test(after.msg), after.msg);
+
+    // It must not creep past the highest step, and must stay quiet for
+    // failures that have nothing to do with slippage.
+    const capped = await page.evaluate(() => {
+      setSlippage(300);
+      const msg = document.getElementById('sw-msg');
+      msg.textContent = '';
+      offerSlippageFix(new Error('custom program error: 0x1771'));
+      const atCap = !!msg.querySelector('.sw-fixbtn');
+      msg.textContent = '';
+      offerSlippageFix(new Error('User rejected the request'));
+      return { atCap, onCancel: !!msg.querySelector('.sw-fixbtn') };
+    });
+    ok('it stops at the top step', !capped.atCap);
+    ok('and says nothing when slippage was not the problem', !capped.onCancel);
+    await page.evaluate(() => { setSlippage('auto'); document.getElementById('sw-msg').textContent = ''; });
+  }
+
   section('swap: typing a dollar amount');
   {
     // The box means tokens until asked otherwise — that is the default, and

@@ -378,7 +378,7 @@
         mint: t.mint,
         symbol: t.symbol || knownSymbols[t.mint] || t.mint.slice(0, 4) + '…',
         volume24h: t.volume24h, mcap: t.mcap, liquidity: t.liquidity,
-        holders: t.holders, organicScore: t.organicScore,
+        holders: t.holders, organicScore: t.organicScore, createdAt: t.createdAt,
         here: tradedHere[t.mint] || 0,
         program: mintInfos[i] ? mintInfos[i].owner.toBase58() : null,
         fee: feeAddrs[i].toBase58(),
@@ -518,6 +518,7 @@
     if (rank === 'liquidity') return row.liquidity || 0;
     if (rank === 'organic') return row.organicScore || 0;
     if (rank === 'holders') return row.holders || 0;
+    if (rank === 'newest') return row.createdAt || 0;
     return row.volume24h || 0;
   }
 
@@ -527,6 +528,10 @@
     const unit = rankUnits[currentRank()];
     if (unit === 'usd') return '$' + Math.round(v).toLocaleString();
     if (unit === 'count') return Math.round(v).toLocaleString();
+    if (unit === 'date') {
+      const days = Math.floor((Date.now() - v) / 86400000);
+      return days < 1 ? 'today' : days === 1 ? 'yesterday' : days + ' days old';
+    }
     return String(v);
   }
 

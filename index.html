@@ -1443,6 +1443,12 @@
     }
     .sw-unit:hover { color: var(--orange-deep); border-color: var(--orange); }
     .sw-unit.on { background: var(--orange); border-color: var(--orange); color: #fff; }
+    .sw-fixbtn {
+      margin-top: 7px; cursor: pointer; font: inherit; font-size: 0.82rem; font-weight: 800;
+      background: var(--orange); color: #fff; border: 2px solid var(--ink);
+      border-radius: 999px; padding: 5px 12px;
+    }
+    .sw-fixbtn:hover { background: var(--orange-deep); }
     .sw-refresh {
       appearance: none; cursor: pointer; background: none; border: none; padding: 0 0 0 6px;
       font-family: inherit; font-size: 0.72rem; font-weight: 700; color: var(--muted);
@@ -6181,6 +6187,7 @@
       } catch (e) {
         msg.className = 'sw-msg bad';
         msg.textContent = friendlySwapError(e);
+        offerSlippageFix(e);
         go.textContent = 'Try again';
         reportSwapFailure(e);
       } finally {
@@ -6413,6 +6420,34 @@
 
     /// Swap failures are mostly slippage, and the raw program error says nothing
     /// useful about that.
+    /// A swap refused for slippage is one setting away from working, and that
+    /// setting is at the bottom of a panel most people never open. When that
+    /// is the reason, put the fix in the message itself — one step up from
+    /// wherever it is now, never past 3%, and it re-prices immediately so the
+    /// new tolerance is visible before anything is signed again.
+    const SLIPPAGE_STEPS = [50, 100, 300];
+
+    function offerSlippageFix(e) {
+      const m = String((e && e.message) || e || '');
+      if (!/0x1771|slippage|SlippageToleranceExceeded/i.test(m)) return;
+      const current = swapSlippage === 'auto' ? (swapQuote && swapQuote.slippageBps) || 50 : swapSlippage;
+      const next = SLIPPAGE_STEPS.find(function (bps) { return bps > current; });
+      if (!next) return;
+
+      const msg = document.getElementById('sw-msg');
+      const btn = document.createElement('button');
+      btn.className = 'sw-fixbtn';
+      btn.type = 'button';
+      btn.textContent = 'Allow ' + (next / 100) + '% and re-price';
+      btn.onclick = function () {
+        setSlippage(next);
+        msg.textContent = 'Max slippage is now ' + (next / 100) + '%. Check the new price, then swap.';
+        msg.className = 'sw-msg';
+      };
+      msg.appendChild(document.createElement('br'));
+      msg.appendChild(btn);
+    }
+
     function friendlySwapError(e) {
       const m = String((e && e.message) || e || '');
       if (/reject|denied|cancell?ed/i.test(m)) return 'You cancelled that in your wallet — nothing was swapped.';

@@ -1334,7 +1334,11 @@ const SWAP_RANKS = {
   mcap: { label: 'Biggest — market cap', unit: 'usd', of: function (t) { return t.mcap || 0; } },
   liquidity: { label: 'Deepest liquidity', unit: 'usd', of: function (t) { return t.liquidity || 0; } },
   organic: { label: 'Most organic — real trading', unit: 'score', of: function (t) { return t.organicScore || 0; } },
-  holders: { label: 'Most holders', unit: 'count', of: function (t) { return t.holders || 0; } }
+  holders: { label: 'Most holders', unit: 'count', of: function (t) { return t.holders || 0; } },
+  // Newest of the ones already trending. A fee account earns on everything
+  // swapped after it exists and nothing before, so the moment to add one is
+  // while a token is on the way up rather than after the run.
+  newest: { label: 'Newest', unit: 'date', of: function (t) { return t.createdAt || 0; } }
 };
 
 function rankMenu() {
@@ -1369,7 +1373,8 @@ async function topTokenPool(env) {
         mcap: Math.round(Number(t.mcap) || 0),
         liquidity: Math.round(Number(t.liquidity) || 0),
         holders: Number(t.holderCount) || 0,
-        organicScore: Math.round((Number(t.organicScore) || 0) * 10) / 10
+        organicScore: Math.round((Number(t.organicScore) || 0) * 10) / 10,
+        createdAt: t.createdAt ? Date.parse(t.createdAt) || 0 : 0
       });
     }
   }
