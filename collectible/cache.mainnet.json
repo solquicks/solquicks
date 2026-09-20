@@ -7,6 +7,9 @@
   "treasury": "FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m",
   "priceSol": 0.1,
   "itemsAvailable": 100000,
-  "assetUri": "https://arweave.net/TOzcwLp7DP4QNSPCWlZVsNuTB9Bh-Ja_8lxXsaLidKo",
-  "createdAt": "2026-09-20T06:49:11.684Z"
+  "assetUri": "https://arweave.net/9aXs3i3Ym4NLjisq6vZBBnw28NN_jOkW0sE6gzqSFWw",
+  "createdAt": "2026-09-20T06:49:11.684Z",
+  "renamedAt": "2026-09-20",
+  "collectionUri": "https://arweave.net/HUE36-uBbdFLr5qGk-GjQJ-LzbOf73fmgwuBsLSIlIQ",
+  "note": "Renamed to solquicks.com. Asset #0 (FGD7iLSqNPxeX7MN7u1c9Ge2Hvoaa6gEGh9YX8pWbR6F) keeps the original name and metadata by design."
 }
