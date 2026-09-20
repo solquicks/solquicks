@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS banner_bookings (
   total_usd REAL NOT NULL, sol_price REAL, lamports INTEGER, signature TEXT,
   status TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, hold_until INTEGER,
   name TEXT, contact TEXT, sponsor TEXT, headline TEXT, url TEXT, image_url TEXT,
-  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT);
+  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT);
 
 CREATE TABLE IF NOT EXISTS banner_stats (slot TEXT NOT NULL, day TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 0, clicks INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (slot, day));
 
@@ -92,10 +92,18 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL,
   hold_until INTEGER,
   name TEXT, contact TEXT, brief TEXT,
-  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT);
+  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT);
+
+-- A basket paid for in one go. The bookings and ad runs inside it each hold
+-- their own slot from the moment they are added; this row only carries the
+-- single payment that settles all of them. starts_at is always NULL: a cart
+-- has no time of its own, which is what lets it share the settlement path
+-- with bookings and ad runs.
+CREATE TABLE IF NOT EXISTS cart_groups (ref TEXT PRIMARY KEY, wallet TEXT, total_usd REAL NOT NULL, status TEXT NOT NULL, hold_until INTEGER, name TEXT, contact TEXT, created_at INTEGER NOT NULL, reference TEXT, signature TEXT, paid_at INTEGER, starts_at INTEGER);
 
 CREATE TABLE IF NOT EXISTS collectibles (wallet TEXT PRIMARY KEY, asset TEXT NOT NULL UNIQUE, signature TEXT NOT NULL, minted_at INTEGER NOT NULL, points INTEGER NOT NULL DEFAULT 0);
 
+-- which basket settled this row, if it was not paid for on its own
 CREATE TABLE IF NOT EXISTS error_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, route TEXT, message TEXT);
 
 CREATE TABLE IF NOT EXISTS flips (id INTEGER PRIMARY KEY AUTOINCREMENT, wallet TEXT NOT NULL, wager INTEGER NOT NULL, won INTEGER NOT NULL, ts INTEGER NOT NULL);

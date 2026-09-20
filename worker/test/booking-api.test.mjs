@@ -703,4 +703,94 @@ section('ad slot — the page and the wallet noticing one payment at once');
   eq('run paid, payment recorded once', adRow(env, a.body.ref).status + ' ' + payments(env), 'paid 1');
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+
+section('the basket — several things, one payment');
+{
+  const env = freshEnv();
+  const slots1 = await slots(env, 'space');
+  const a = await call(env, 'POST', '/api/booking/hold',
+    { body: { type: 'space', startsAt: firstCalm(slots1).starts, ...guest } });
+  const podSlots = await slots(env, 'podcast');
+  const b = await call(env, 'POST', '/api/booking/hold',
+    { body: { type: 'podcast', startsAt: firstCalm(podSlots).starts, ...guest } });
+  const ad = await adHold(env, 4);
+  eq('three things are held on their own', [a.status, b.status, ad.status].join(','), '200,200,200');
+
+  const basket = (items, extra = {}) => call(env, 'POST', '/api/cart/checkout',
+    { body: { items, name: 'Test Guest', contact: '@guest', ...extra } });
+
+  eq('an empty basket is refused', (await basket([])).status, 400);
+  eq('a basket with no contact is refused',
+    (await call(env, 'POST', '/api/cart/checkout', { body: { items: [{ kind: 'booking', ref: a.body.ref }], name: 'x' } })).status, 400);
+
+  const out = await basket([
+    { kind: 'booking', ref: a.body.ref },
+    { kind: 'booking', ref: b.body.ref },
+    { kind: 'banner', ref: ad.body.ref }
+  ]);
+  eq('the basket is accepted', out.status, 200);
+  eq('and asks for the sum of its lines', out.body.total,
+    Math.round((a.body.quote.total + b.body.quote.total + ad.body.totalUsd) * 100) / 100);
+  eq('in USDC', out.body.usdc, Math.round(out.body.total * 1e6));
+  eq('with all three lines', out.body.items.length, 3);
+
+  // every line now belongs to the basket and holds until the basket does
+  const held = env._db.prepare("SELECT ref, group_ref, hold_until FROM bookings WHERE group_ref = ?").all(out.body.ref);
+  eq('the bookings joined it', held.length, 2);
+  ok('and their holds were pushed out to match',
+    held.every((r) => r.hold_until === out.body.holdUntil), JSON.stringify(held.map((r) => r.hold_until)));
+
+  eq('a line cannot be put in two baskets',
+    (await basket([{ kind: 'booking', ref: a.body.ref }])).status, 409);
+
+  // one payment settles the lot
+  const signature = pay({ from: wallet(40), usdc: Math.round(out.body.total * 1e6), reference: out.body.reference });
+  const done = await call(env, 'POST', '/api/cart/confirm',
+    { token: signIn(env, wallet(40)), body: { ref: out.body.ref, signature } });
+  eq('one signature pays for everything', done.status, 200);
+  eq('and every line is paid', done.body.items.filter((i) => (i.booking || i).status === 'paid').length, 3);
+  eq('the basket itself is paid', env._db.prepare('SELECT status FROM cart_groups WHERE ref = ?').get(out.body.ref).status, 'paid');
+  eq('the ad run is paid too',
+    env._db.prepare('SELECT status FROM banner_bookings WHERE ref = ?').get(ad.body.ref).status, 'paid');
+  eq('paying twice records one payment', payments(env), 1);
+
+  const again = await call(env, 'POST', '/api/cart/confirm',
+    { token: signIn(env, wallet(40)), body: { ref: out.body.ref, signature } });
+  eq('confirming again is harmless', [again.status, String(again.body.alreadyPaid)].join(','), '200,true');
+}
+
+section('the basket — a line that goes while you are checking out');
+{
+  const env = freshEnv();
+  const s = firstCalm(await slots(env, 'space'));
+  const mine = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
+
+  // it expires, and somebody else takes the hour before checkout happens
+  env._db.prepare("UPDATE bookings SET status = 'expired' WHERE ref = ?").run(mine.body.ref);
+  const out = await call(env, 'POST', '/api/cart/checkout',
+    { body: { items: [{ kind: 'booking', ref: mine.body.ref }], name: 'Test Guest', contact: '@guest' } });
+  eq('checkout refuses a line that is no longer held', out.status, 409);
+  eq('and names the one that went', out.body.ref, mine.body.ref);
+  eq('no half-made basket is left behind', env._db.prepare('SELECT COUNT(*) AS n FROM cart_groups').get().n, 0);
+}
+
+section('the basket — abandoned');
+{
+  const env = freshEnv();
+  const s = firstCalm(await slots(env, 'space'));
+  const one = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
+  const out = await call(env, 'POST', '/api/cart/checkout',
+    { body: { items: [{ kind: 'booking', ref: one.body.ref }], name: 'Test Guest', contact: '@guest' } });
+  eq('a basket is waiting', out.status, 200);
+
+  // nobody pays; the hold runs out
+  advance(HOUR);
+  await call(env, 'GET', '/api/booking/types');     // any request runs the sweep
+  await new Promise((r) => setTimeout(r, 30));
+  eq('the hour is released', env._db.prepare('SELECT status FROM bookings WHERE ref = ?').get(one.body.ref).status, 'expired');
+  eq('and the basket is retired with it',
+    env._db.prepare('SELECT status FROM cart_groups WHERE ref = ?').get(out.body.ref).status, 'expired');
+}
+
 finish();

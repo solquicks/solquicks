@@ -1559,6 +1559,45 @@
 
     /* Seven options now, not three: let them wrap rather than forcing a
        three-wide grid that leaves a lonely square on the last row. */
+    /* The basket sits above everything in the tab, so it is on screen at
+       every step — browsing, choosing a time, or part-way through a form. */
+    .bk-cart {
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      box-shadow: var(--pop); padding: 12px 14px; margin-bottom: 14px;
+    }
+    .bk-cart-lines { display: flex; flex-direction: column; gap: 6px; }
+    .bk-cart-line {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.88rem; font-weight: 700; color: var(--ink);
+    }
+    .bk-cart-line > span:first-child { flex: 1; min-width: 0; }
+    .bk-cart-price { color: var(--orange-deep); white-space: nowrap; }
+    .bk-cart-x {
+      appearance: none; cursor: pointer; border: none; background: transparent;
+      color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 0 2px;
+    }
+    .bk-cart-x:hover { color: var(--crimson); }
+    .bk-cart-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin-top: 10px; padding-top: 10px; border-top: 2px dashed var(--line-soft, rgba(46,36,64,0.15));
+      font-size: 0.88rem; font-weight: 700;
+    }
+    .bk-cart-go {
+      appearance: none; cursor: pointer; font-family: inherit; font-weight: 800;
+      background: var(--orange); color: #fff; border: var(--line);
+      border-radius: 999px; padding: 7px 16px; font-size: 0.88rem;
+    }
+    .bk-cart-go:hover { background: var(--orange-deep); }
+    .bk-cart-review { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .bk-total { font-size: 1rem; font-weight: 800; margin: 10px 0 4px; }
+    .bk-add {
+      appearance: none; cursor: pointer; font-family: inherit; font-weight: 800;
+      width: 100%; margin-bottom: 8px; padding: 11px 16px; font-size: 0.95rem;
+      background: transparent; color: var(--ink); border: var(--line); border-radius: 999px;
+    }
+    .bk-add:hover { background: var(--orange-soft); }
+    .bk-add[disabled] { opacity: 0.55; cursor: not-allowed; }
+
     .bk-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin: 12px 0; }
     .bk-week {
       appearance: none; cursor: pointer; background: var(--cream);
@@ -2346,6 +2385,7 @@
       <div class="bk-intro">
         <div class="bk-lead">Book The Fox</div>
       </div>
+      <div class="bk-cart" id="bk-cart" hidden></div>
       <div class="bk-list" id="bk-list"></div>
       <div id="bk-flow" hidden></div>
     </div>
@@ -2851,7 +2891,10 @@
       if (tab === 'media') { runStatCounters(); }
       // Collection stats are public, so they load on tab open rather than
       // waiting for a wallet. Refresh only while the tab is actually showing.
-      if (tab === 'book' && !bkData && typeof loadBooking === 'function') loadBooking();
+      if (tab === 'book') {
+        if (!bkData && typeof loadBooking === 'function') loadBooking();
+        if (typeof paintCart === 'function') paintCart();
+      }
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
       if (tab === 'store' && typeof loadStore === 'function') { loadStore(); loadCollectible(); }
       if (tab === 'moon') {
@@ -6563,7 +6606,8 @@
 
     function startPayPolling(ref, kind, onPaid) {
       stopPayPolling();
-      const endpoint = kind === 'ad' ? '/api/banner/watch' : '/api/booking/watch';
+      const endpoint = kind === 'ad' ? '/api/banner/watch'
+        : kind === 'cart' ? '/api/cart/watch' : '/api/booking/watch';
       tickPayClock();
       payClock = setInterval(tickPayClock, 1000);
       payPoll = setInterval(async function () {
@@ -6706,6 +6750,7 @@
         '<div class="bk-field"><label for="ad-contact">How do I reach you?</label>' +
         '<input id="ad-contact" placeholder="@handle, email, or Telegram"></div>' +
         '<div id="ad-quote"></div>' +
+        '<button class="bk-add" id="ad-add" onclick="submitAd(true)">Add to basket</button>' +
         '<button class="bk-go" id="ad-submit" onclick="submitAd()">Continue to payment</button>' +
         '<div class="bk-msg" id="ad-msg"></div>' +
         '<p class="bk-policy"><strong>Approval.</strong> ' + escapeHtml(d.rules) +
@@ -6715,8 +6760,8 @@
 
     function pickWeeks(w) { adWeeks = w; renderAdForm(); }
 
-    async function submitAd() {
-      const btn = document.getElementById('ad-submit');
+    async function submitAd(toBasket) {
+      const btn = document.getElementById(toBasket ? 'ad-add' : 'ad-submit');
       const msg = document.getElementById('ad-msg');
       msg.className = 'bk-msg';
       msg.textContent = '';
@@ -6740,13 +6785,20 @@
         if (d.error) throw new Error(d.error);
         const runs = new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
           ' – ' + new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+        const label = 'Advertising · ' + runs;
+        if (toBasket) {
+          cartRememberDetails(name, contact);
+          cartAdd({ kind: 'banner', ref: d.ref, total: d.totalUsd, holdUntil: d.holdUntil, label: label });
+          backToRateCard();
+          return;
+        }
         renderPayment(d, 'ad', d.weeks + ' week' + (d.weeks > 1 ? 's' : '') + ' · ' + runs,
           function (sig) { renderAdCreative(d, sig); });
       } catch (e) {
         msg.className = 'bk-msg bad';
         msg.textContent = e.message || 'Something went wrong.';
         btn.disabled = false;
-        btn.textContent = 'Continue to payment';
+        btn.textContent = toBasket ? 'Add to basket' : 'Continue to payment';
       }
     }
 
@@ -6837,10 +6889,11 @@
       const d = bkData;
       const adCard = '<div class="bk-ad">' +
         '<div class="bk-top"><div class="bk-name">Advertising space</div>' +
-        '<div class="bk-price"><span style="font-size:0.7rem">from </span>$250<span style="font-size:0.7rem"> /week</span></div></div>' +
+        '<div class="bk-price"><span style="font-size:0.7rem">from </span>$180<span style="font-size:0.7rem"> /week</span></div></div>' +
         '<div class="bk-meta">Top of every tab · one advertiser at a time</div>' +
-        '<div class="bk-blurb">Your banner at the top of solquicks.com, exclusive for 1, 2 or 4 weeks. ' +
-        'Nobody else shares the spot.</div>' +
+        '<div class="bk-blurb">Your banner at the top of solquicks.com — by the week, by the month, ' +
+        'or the whole year. Nobody else shares the spot, and the longer the run the less it costs ' +
+        'per week.</div>' +
         '<button class="bk-go" onclick="startAdBooking()">Book the space</button></div>';
 
       list.innerHTML = adCard + d.types.map(function (t) {
@@ -6880,6 +6933,168 @@
     /// clicked may have been far down the page — leaving them mid-way through a
     /// long list with the back button scrolled out of sight. Bring each step's
     /// top, and its back button, into view.
+    // ── the basket ──
+    /// Each line is already held on the server from the moment it was added,
+    /// so this list is a record of reservations rather than a wish list. It
+    /// lives in localStorage so that wandering off to look at something else,
+    /// or reloading, does not lose what has been chosen.
+    const CART_KEY = 'sq.book.cart';
+
+    function cartRead() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(CART_KEY) || '[]');
+        if (!Array.isArray(raw)) return [];
+        // A hold that ran out is no longer a reservation, so it is not a line.
+        return raw.filter(function (i) { return i && i.ref && (!i.holdUntil || i.holdUntil > Date.now()); });
+      } catch (e) { return []; }
+    }
+
+    function cartWrite(items) {
+      try { localStorage.setItem(CART_KEY, JSON.stringify(items.slice(0, 12))); } catch (e) {}
+      paintCart();
+    }
+
+    function cartAdd(item) {
+      const items = cartRead();
+      if (items.some(function (i) { return i.ref === item.ref; })) return;
+      items.push(item);
+      cartWrite(items);
+    }
+
+    function cartRemove(ref) {
+      cartWrite(cartRead().filter(function (i) { return i.ref !== ref; }));
+    }
+
+    function cartClear() { cartWrite([]); }
+
+    function cartTotal(items) {
+      return Math.round((items || cartRead()).reduce(function (sum, i) { return sum + Number(i.total || 0); }, 0) * 100) / 100;
+    }
+
+    /// The bar is always on screen while there is something in the basket, on
+    /// every step of the booking tab, so checking out is never more than one
+    /// press away from wherever someone has wandered.
+    function paintCart() {
+      const bar = document.getElementById('bk-cart');
+      if (!bar) return;
+      const items = cartRead();
+      if (!items.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+      bar.hidden = false;
+      bar.innerHTML =
+        '<div class="bk-cart-lines">' + items.map(function (i) {
+          return '<div class="bk-cart-line"><span>' + escapeHtml(i.label) + '</span>' +
+            '<span class="bk-cart-price">$' + Number(i.total).toLocaleString() + '</span>' +
+            '<button class="bk-cart-x" title="Remove" onclick="cartDrop(\'' + escapeHtml(i.ref) + '\')">×</button></div>';
+        }).join('') + '</div>' +
+        '<div class="bk-cart-foot"><span><b>' + items.length + '</b> in your basket · <b>$' +
+          cartTotal(items).toLocaleString() + '</b></span>' +
+          '<button class="bk-cart-go" onclick="cartCheckout()">Checkout</button></div>';
+    }
+
+    /// Removing a line here only forgets it locally. The hold on the server
+    /// runs out on its own a few minutes later, which is the same thing that
+    /// happens when somebody closes the tab.
+    function cartDrop(ref) {
+      cartRemove(ref);
+      if (!cartRead().length) backToRateCard();
+    }
+
+    async function cartCheckout() {
+      const items = cartRead();
+      if (!items.length) return;
+      const flow = document.getElementById('bk-flow');
+      document.getElementById('bk-list').hidden = true;
+      flow.hidden = false;
+      flow.innerHTML = '<div class="bk-flow"><button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+        '<div class="bk-step">Your basket</div>' +
+        '<div class="bk-cart-review">' + items.map(function (i) {
+          return '<div class="bk-cart-line"><span>' + escapeHtml(i.label) + '</span>' +
+            '<span class="bk-cart-price">$' + Number(i.total).toLocaleString() + '</span></div>';
+        }).join('') + '</div>' +
+        '<p class="bk-total">Total <b>$' + cartTotal(items).toLocaleString() + '</b></p>' +
+        '<div class="bk-field"><label for="cart-name">Your name or project</label><input id="cart-name" autocomplete="organization"></div>' +
+        '<div class="bk-field"><label for="cart-contact">How do I reach you?</label><input id="cart-contact" placeholder="@handle, email, or Telegram" autocomplete="email"></div>' +
+        '<button class="bk-go" id="cart-go" onclick="cartPay()">Continue to payment</button>' +
+        '<div class="bk-msg" id="cart-msg"></div></div>';
+      const last = cartLastDetails();
+      if (last.name) document.getElementById('cart-name').value = last.name;
+      if (last.contact) document.getElementById('cart-contact').value = last.contact;
+      bkScrollTo('bk-flow');
+    }
+
+    /// Whoever booked the first line is almost certainly booking the rest, so
+    /// their details are offered again rather than asked for twice.
+    function cartLastDetails() {
+      try { return JSON.parse(localStorage.getItem('sq.book.who') || '{}') || {}; } catch (e) { return {}; }
+    }
+    function cartRememberDetails(name, contact) {
+      try { localStorage.setItem('sq.book.who', JSON.stringify({ name: name, contact: contact })); } catch (e) {}
+    }
+
+    async function cartPay() {
+      const btn = document.getElementById('cart-go');
+      const msg = document.getElementById('cart-msg');
+      const name = (document.getElementById('cart-name').value || '').trim();
+      const contact = (document.getElementById('cart-contact').value || '').trim();
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+      if (!name || !contact) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = 'I need a name and a way to reach you.';
+        return;
+      }
+      cartRememberDetails(name, contact);
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const items = cartRead().map(function (i) { return { kind: i.kind, ref: i.ref }; });
+        const res = await fetch(POINTS_API + '/api/cart/checkout', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify({ items: items, name: name, contact: contact })
+        });
+        const d = await res.json();
+        if (d.error) {
+          // A line that went while they were deciding is dropped by name,
+          // rather than failing the whole basket with nothing to act on.
+          if (d.gone && d.ref) {
+            cartRemove(d.ref);
+            msg.className = 'bk-msg bad';
+            msg.textContent = d.error + '. It has been taken out of your basket — the rest is still here.';
+            btn.disabled = false;
+            btn.textContent = 'Continue to payment';
+            cartCheckout();
+            return;
+          }
+          throw new Error(d.error);
+        }
+        renderPayment(d, 'cart', 'Your basket', function (sig) {
+          cartClear();
+          showCartDone(d, sig);
+        });
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Something went wrong. Try again.';
+        btn.disabled = false;
+        btn.textContent = 'Continue to payment';
+      }
+    }
+
+    function showCartDone(d, signature) {
+      const flow = document.getElementById('bk-flow');
+      flow.innerHTML = '<div class="bk-flow"><div class="bk-done">' +
+        '<div class="bk-done-tick">✓</div>' +
+        '<div class="bk-step">That is all booked</div>' +
+        '<p class="bk-hint">Reference <strong>' + escapeHtml(d.ref) + '</strong> — ' + d.items.length +
+        ' item' + (d.items.length === 1 ? '' : 's') + ', $' + Number(d.total).toLocaleString() + ' paid. ' +
+        'I will be in touch to confirm each one.</p>' +
+        (signature ? '<p class="bk-hint">Payment ' + escapeHtml(String(signature).slice(0, 12)) + '…</p>' : '') +
+        '<button class="bk-go" onclick="backToRateCard()">Book something else</button>' +
+        '</div></div>';
+      bkScrollTo('bk-flow');
+    }
+
     function bkScrollTo(id) {
       const el = document.getElementById(id);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -6890,6 +7105,7 @@
       document.getElementById('bk-flow').hidden = true;
       document.getElementById('bk-list').hidden = false;
       bkPick = { type: null, startsAt: null };
+      paintCart();          // the basket survives going back; that is the point
       bkScrollTo('bk-list');
     }
 
@@ -6981,6 +7197,7 @@
         (isEnquiry ? 'Event, city, dates you have in mind' : 'Topic, guests, links, anything I should know') +
         '"></textarea></div>' +
         '<div id="bk-quote"></div>' +
+        (isEnquiry ? '' : '<button class="bk-add" id="bk-add" onclick="submitBooking(true)">Add to basket</button>') +
         '<button class="bk-go" id="bk-submit" onclick="submitBooking()">' +
         (isEnquiry ? 'Send enquiry' : 'Continue to payment') + '</button>' +
         '<div class="bk-msg" id="bk-msg"></div>' +
@@ -6991,8 +7208,8 @@
       bkScrollTo('bk-flow');
     }
 
-    async function submitBooking() {
-      const btn = document.getElementById('bk-submit');
+    async function submitBooking(toBasket) {
+      const btn = document.getElementById(toBasket ? 'bk-add' : 'bk-submit');
       const msg = document.getElementById('bk-msg');
       const t = bkPick.type;
       msg.className = 'bk-msg';
@@ -7019,12 +7236,25 @@
         if (d.error) throw new Error(d.error);
 
         if (t.mode === 'enquiry') { showBookingDone(d, true); return; }
+        if (toBasket) {
+          // The hold is already made, which is what puts it in the basket:
+          // the slot is reserved from this moment, not from checkout.
+          cartRememberDetails(name, contact);
+          cartAdd({
+            kind: 'booking', ref: d.ref, total: d.quote.total, holdUntil: d.holdUntil,
+            label: t.name + (d.startsAt ? ' · ' + new Date(d.startsAt).toLocaleString(undefined,
+              { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '')
+          });
+          backToRateCard();
+          return;
+        }
         renderPayment(d, 'booking', t.name, function (sig) { showBookingDone(d, false, sig); });
       } catch (e) {
         msg.className = 'bk-msg bad';
         msg.textContent = e.message || 'Something went wrong. Try again.';
         btn.disabled = false;
-        btn.textContent = t.mode === 'enquiry' ? 'Send enquiry' : 'Continue to payment';
+        btn.textContent = toBasket ? 'Add to basket'
+          : t.mode === 'enquiry' ? 'Send enquiry' : 'Continue to payment';
       }
     }
 

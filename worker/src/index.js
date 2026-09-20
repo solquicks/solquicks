@@ -335,6 +335,8 @@ const RATE_RULES = [
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/cart/checkout', '/api/cart/confirm'], name: 'cartwrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/cart/watch'], name: 'cartwatch', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
@@ -2467,6 +2469,22 @@ const CHECKOUTS = {
         (b.starts_at ? ' on ' + new Date(b.starts_at).toISOString() : '') + '\n' + b.name + ' · ' + b.contact;
     }
   },
+  // A basket of the two above, settled by one payment. It holds no slot of
+  // its own — every member reserved its own the moment it was added — so it
+  // can never overlap anything, and it has no time that can pass.
+  cart: {
+    table: 'cart_groups',
+    purpose: 'cart:',
+    // Never matches — a basket reserves nothing of its own. The two
+    // placeholders are here because the settle statement always binds them
+    // for the overlap check, and a mismatched bind count is an error even
+    // when the clause can never be reached.
+    overlap: 'SELECT 1 WHERE 0 AND ? IS NOT NULL AND ? IS NOT NULL',
+    endOf: function () { return null; },
+    bookedAlert: function (g) {
+      return '🧺 Basket paid ' + g.ref + ' — $' + g.total_usd + '\n' + g.name + ' · ' + g.contact;
+    }
+  },
   banner: {
     table: 'banner_bookings',
     purpose: 'banner:',
@@ -2533,19 +2551,56 @@ async function settlePayment(env, kind, b, signature, wallet) {
   return { status: 'refund' };
 }
 
+const CART_MAX = 12;   // more than anyone books at once, and a cap on the damage
+
+/// Everything a basket is paying for, in the order it was added.
+async function cartItems(env, ref) {
+  const out = [];
+  const b = await env.DB.prepare('SELECT * FROM bookings WHERE group_ref = ? ORDER BY created_at').bind(ref).all();
+  for (const r of b.results || []) out.push({ kind: 'booking', booking: publicBooking(r) });
+  const a = await env.DB.prepare('SELECT * FROM banner_bookings WHERE group_ref = ? ORDER BY created_at').bind(ref).all();
+  for (const r of a.results || []) {
+    out.push({ kind: 'banner', ref: r.ref, weeks: r.weeks, startsAt: r.starts_at, endsAt: r.ends_at, total: r.total_usd, status: r.status });
+  }
+  return out;
+}
+
+/// One payment settled the basket, so every line in it is paid. Done after
+/// the group row is marked, never before: if this fails halfway the money is
+/// already recorded against the basket and the sweep can finish the job.
+async function markCartPaid(env, ref, signature) {
+  const now = Date.now();
+  for (const table of ['bookings', 'banner_bookings']) {
+    await env.DB.prepare(
+      'UPDATE ' + table + " SET status = 'paid', signature = ?, paid_at = ? " +
+      "WHERE group_ref = ? AND status IN ('held','expired')"
+    ).bind(signature, now, ref).run();
+  }
+  for (const it of await cartItems(env, ref)) {
+    const kind = it.kind === 'banner' ? CHECKOUTS.banner : CHECKOUTS.booking;
+    const row = await env.DB.prepare('SELECT * FROM ' + kind.table + ' WHERE ref = ?')
+      .bind(it.kind === 'banner' ? it.ref : it.booking.ref).first();
+    if (row) await alert(env, kind.bookedAlert(row));
+  }
+}
+
 /// The payment page only watches while it is open. This finds payments made
 /// after it closed — or after it stopped looking — so "the payment is still
 /// found" is true. Runs from the scheduled handler.
 async function reconcilePayments(env) {
   if (!env.TREASURY_WALLET || !env.HELIUS_API_KEY) return;
-  for (const kind of [CHECKOUTS.booking, CHECKOUTS.banner]) {
+  for (const kind of [CHECKOUTS.booking, CHECKOUTS.banner, CHECKOUTS.cart]) {
     const rows = await env.DB.prepare(
       'SELECT * FROM ' + kind.table + " WHERE status IN ('held','expired') AND reference IS NOT NULL " +
       'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
     ).bind(Date.now() - RECONCILE_HOURS * 3600000).all();
     for (const b of rows.results || []) {
       const sig = await findPaymentByReference(env, b.reference);
-      if (sig) await settlePayment(env, kind, b, sig, null);
+      if (!sig) continue;
+      const settled = await settlePayment(env, kind, b, sig, null);
+      // A basket found this way has to pass the payment on to its lines, the
+      // same as when the page confirms it.
+      if (kind === CHECKOUTS.cart && settled.status === 'paid') await markCartPaid(env, b.ref, sig);
     }
   }
 }
@@ -2712,6 +2767,12 @@ export default {
       ctx.waitUntil(env.DB.prepare(
         "UPDATE banner_bookings SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
       ).bind(Date.now()).run().catch(function () {}));
+      // The lines inside a basket expire on their own hold_until above, which
+      // the basket extended to its own. This retires the basket with them, so
+      // an abandoned one is not left looking live.
+      ctx.waitUntil(env.DB.prepare(
+        "UPDATE cart_groups SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
+      ).bind(Date.now()).run().catch(function () {}));
 
 
 
@@ -2723,6 +2784,8 @@ export default {
           path === '/api/booking/types' ||
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
+          path === '/api/cart/checkout' || path === '/api/cart/confirm' ||
+          path === '/api/cart/watch' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
           path === '/api/banner/hold' || path === '/api/banner/confirm' ||
           path === '/api/banner/creative' || path === '/api/booking/watch' ||
@@ -3916,6 +3979,102 @@ export default {
           serverNow: now,
           policy: BOOKING_POLICY
         });
+      }
+
+      // ── the basket ──
+      // Each line already holds its slot: adding to the basket calls the same
+      // hold the single-item flow always used. This only gathers them behind
+      // one payment, so somebody booking three things signs once.
+      if (path === '/api/cart/checkout' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const items = Array.isArray(body.items) ? body.items.slice(0, CART_MAX) : [];
+        const name = String(body.name || '').trim().slice(0, 120);
+        const contact = String(body.contact || '').trim().slice(0, 200);
+        if (!items.length) return json(request, env, { error: 'the basket is empty' }, 400);
+        if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
+
+        const now = Date.now();
+        const rows = [];
+        for (const it of items) {
+          const kind = it && it.kind === 'banner' ? CHECKOUTS.banner : CHECKOUTS.booking;
+          const ref = String((it && it.ref) || '').trim();
+          if (!ref) return json(request, env, { error: 'a line in the basket has no reference' }, 400);
+          const row = await env.DB.prepare('SELECT * FROM ' + kind.table + ' WHERE ref = ?').bind(ref).first();
+          if (!row) return json(request, env, { error: 'one of these is no longer there: ' + ref, ref: ref, gone: true }, 409);
+          if (row.status === 'paid') return json(request, env, { error: ref + ' is already paid for', ref: ref, gone: true }, 409);
+          if (row.status !== 'held') return json(request, env, { error: ref + ' is no longer held', ref: ref, gone: true }, 409);
+          if (row.group_ref) return json(request, env, { error: ref + ' is already in a basket', ref: ref, gone: true }, 409);
+          rows.push({ kind: kind, row: row });
+        }
+
+        const total = Math.round(rows.reduce(function (sum, r) { return sum + Number(r.row.total_usd || 0); }, 0) * 100) / 100;
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        const ref = bookingRef();
+        const reference = newReference();
+        const holdUntil = now + HOLD_MINUTES * 60000;
+
+        await env.DB.prepare(
+          'INSERT INTO cart_groups (ref, wallet, total_usd, status, hold_until, name, contact, created_at, reference) ' +
+          "VALUES (?, ?, ?, 'held', ?, ?, ?, ?, ?)"
+        ).bind(ref, wallet, total, holdUntil, name, contact, now, reference).run();
+
+        // Claim each line for this basket, and push its hold out to match, so
+        // the first thing added does not expire while the last is chosen.
+        for (const r of rows) {
+          const claimed = await env.DB.prepare(
+            'UPDATE ' + r.kind.table + ' SET group_ref = ?, hold_until = ?, name = ?, contact = ? ' +
+            "WHERE ref = ? AND status = 'held' AND group_ref IS NULL"
+          ).bind(ref, holdUntil, name, contact, r.row.ref).run();
+          if (claimed.meta.changes !== 1) {
+            // someone else took it in the last moment: undo and say which
+            await env.DB.prepare('UPDATE bookings SET group_ref = NULL WHERE group_ref = ?').bind(ref).run();
+            await env.DB.prepare('UPDATE banner_bookings SET group_ref = NULL WHERE group_ref = ?').bind(ref).run();
+            await env.DB.prepare('DELETE FROM cart_groups WHERE ref = ?').bind(ref).run();
+            return json(request, env, { error: r.row.ref + ' went while you were checking out', ref: r.row.ref, gone: true }, 409);
+          }
+        }
+
+        return json(request, env, {
+          ref: ref,
+          reference: reference,
+          total: total,
+          usdc: usdcUnits(total),
+          usdcMint: USDC_MINT,
+          payTo: env.TREASURY_WALLET || null,
+          holdUntil: holdUntil,
+          serverNow: now,
+          items: rows.map(function (r) {
+            return { kind: r.kind === CHECKOUTS.banner ? 'banner' : 'booking', ref: r.row.ref, total: r.row.total_usd };
+          }),
+          policy: BOOKING_POLICY
+        });
+      }
+
+      if (path === '/api/cart/confirm' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const signature = String(body.signature || '').trim();
+        if (!ref || !signature) return json(request, env, { error: 'reference and signature are both needed' }, 400);
+
+        const g = await env.DB.prepare('SELECT * FROM cart_groups WHERE ref = ?').bind(ref).first();
+        if (!g) return json(request, env, { error: 'no basket with that reference' }, 404);
+        if (g.status === 'paid') {
+          return json(request, env, { ok: true, alreadyPaid: true, items: await cartItems(env, ref) });
+        }
+        if (!env.TREASURY_WALLET) return json(request, env, { error: 'payments are not switched on yet' }, 503);
+
+        const payer = g.wallet || (await getSession(request, env).catch(function () { return null; }));
+        if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
+
+        const settled = await settlePayment(env, CHECKOUTS.cart, g, signature, payer);
+        if (settled.status === 'unpaid') return json(request, env, { error: settled.error }, 402);
+        if (settled.status === 'settling') return json(request, env, { pending: true }, 202);
+        if (settled.status === 'paid') await markCartPaid(env, ref, signature);
+        return json(request, env, { ok: true, items: await cartItems(env, ref) });
+      }
+
+      if (path === '/api/cart/watch' && request.method === 'GET') {
+        return await watchPayment(request, env, CHECKOUTS.cart, String(url.searchParams.get('ref') || '').trim());
       }
 
       if (path === '/api/booking/confirm' && request.method === 'POST') {

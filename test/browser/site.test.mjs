@@ -147,6 +147,52 @@ function workerAnswer(p, url) {
   if (p === '/api/cleanup/scan') return cleanupScan();
   if (p === '/api/cleanup/award') return { awarded: 6, burned: 0, closed: 3, player: { points: 6 } };
   if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
+  // ── the booking tab, enough of it to walk the basket through ──
+  if (p === '/api/booking/types') return {
+    types: [
+      { id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
+        blurb: 'I host the Space.', includes: ['Guests', 'Agenda'], format: 'live' },
+      { id: 'custom', name: 'Custom content', mode: 'async', minutes: null, price: 250,
+        blurb: 'Made for you.', includes: ['A video'] }
+    ],
+    policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
+      rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
+    rushHours: 48, rushPct: 50, holderDiscountPct: 30, collectibleDiscountPct: 5,
+    holder: false, tier: null, discountPct: 0, payTo: TREASURY
+  };
+  if (p === '/api/booking/slots') return { slots: [
+    { starts: Date.now() + 5 * 86400000, rush: false },
+    { starts: Date.now() + 6 * 86400000, rush: false }
+  ] };
+  if (p === '/api/booking/hold') {
+    net.holds = (net.holds || 0) + 1;
+    return { ref: 'BK-' + net.holds, reference: 'REF' + net.holds, type: 'space', mode: 'slot',
+      startsAt: Date.now() + 5 * 86400000, minutes: 60,
+      quote: { base: 200, rush: false, rushPct: 0, discountPct: 0, total: 200 },
+      usdc: 200000000, usdcMint: USDC, payTo: TREASURY,
+      holdUntil: Date.now() + 20 * 60000, serverNow: Date.now(), policy: {} };
+  }
+  if (p === '/api/banner/rates') return {
+    rates: [
+      { weeks: 1, price: 250, label: '1 week', startsAt: Date.now() + 86400000 },
+      { weeks: 52, price: 9360, label: '1 year', startsAt: Date.now() + 86400000 }
+    ],
+    nextFree: Date.now() + 86400000, taken: false, payTo: TREASURY, rules: 'Reviewed before it runs.'
+  };
+  if (p === '/api/banner/hold') return {
+    ref: 'AD-1', reference: 'REFAD', weeks: 1, startsAt: Date.now() + 86400000,
+    endsAt: Date.now() + 8 * 86400000, totalUsd: 250, usdc: 250000000, usdcMint: USDC,
+    payTo: TREASURY, holdUntil: Date.now() + 20 * 60000, serverNow: Date.now()
+  };
+  if (p === '/api/cart/checkout') {
+    net.cartPosts = (net.cartPosts || 0) + 1;
+    return { ref: 'CART-1', reference: 'REFCART', total: 450, usdc: 450000000, usdcMint: USDC,
+      payTo: TREASURY, holdUntil: Date.now() + 20 * 60000, serverNow: Date.now(),
+      items: [{ kind: 'booking', ref: 'BK-1', total: 200 }, { kind: 'banner', ref: 'AD-1', total: 250 }],
+      policy: {} };
+  }
+  if (p === '/api/cart/watch') return { status: 'held' };
+
   if (p === '/api/swap/top') {
     // Deliberately disagreeing metrics, so a test can tell which one the page
     // is actually ranking by: USDC is the busiest, BONK the biggest.
@@ -529,6 +575,68 @@ try {
   });
   ok('a staked Ranger shows its days and points', /3 days · 300 pts/.test(mine[0]), JSON.stringify(mine));
   ok('an unstaked one shows no earnings', !/pts/.test(mine[1]), JSON.stringify(mine));
+
+  section('booking: a basket survives wandering off and coming back');
+  {
+    await page.evaluate(() => { try { localStorage.removeItem('sq.book.cart'); } catch (e) {} });
+    await page.click('.nav-quick-btn[data-tab="book"]');
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+
+    // one Space into the basket
+    await page.locator('.bk-card', { hasText: 'Hosted X Space' }).locator('button.bk-go').click();
+    await page.waitForSelector('.bk-slot', { timeout: 10000 });
+    await page.locator('.bk-slot').first().click();
+    await page.fill('#bk-name', 'Test Guest');
+    await page.fill('#bk-contact', '@guest');
+    await page.click('#bk-add');
+    await page.waitForFunction(() => !document.getElementById('bk-cart').hidden, null, { timeout: 10000 });
+
+    eq('adding one puts it in the basket',
+      await page.$$eval('#bk-cart .bk-cart-line', (e) => e.length), 1);
+    eq('and hands you back the full list of services',
+      await page.evaluate(() => document.getElementById('bk-list').hidden), false);
+
+    // wander off to another tab entirely and come back
+    await page.click('.nav-quick-btn[data-tab="swap"]');
+    await page.click('.nav-quick-btn[data-tab="book"]');
+    eq('the basket is still there after leaving the tab',
+      await page.$$eval('#bk-cart .bk-cart-line', (e) => e.length), 1);
+
+    // now the advertising slot, from the same basket
+    await page.locator('.bk-ad button.bk-go').click();
+    await page.waitForSelector('#ad-add', { timeout: 10000 });
+    await page.fill('#ad-name', 'Test Guest');
+    await page.fill('#ad-contact', '@guest');
+    await page.click('#ad-add');
+    await page.waitForFunction(() => document.querySelectorAll('#bk-cart .bk-cart-line').length === 2, null, { timeout: 10000 });
+    ok('a service and an ad sit in the basket together', true);
+    ok('and it adds up', /\$450/.test(await page.textContent('#bk-cart')), await page.textContent('#bk-cart'));
+
+    // a reload must not lose reservations that are already held on the server
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+    await page.click('.nav-quick-btn[data-tab="book"]');
+    await page.waitForSelector('#bk-cart .bk-cart-line', { timeout: 15000 });
+    eq('and it survives a reload', await page.$$eval('#bk-cart .bk-cart-line', (e) => e.length), 2);
+
+    // checkout, from wherever you happen to be
+    await page.click('.bk-cart-go');
+    await page.waitForSelector('#cart-go', { timeout: 10000 });
+    eq('the basket is reviewed before paying',
+      await page.$$eval('.bk-cart-review .bk-cart-line', (e) => e.length), 2);
+    ok('with the details already filled in from the first booking',
+      (await page.inputValue('#cart-name')) === 'Test Guest');
+    await page.click('#cart-go');
+    await page.waitForSelector('#pay-status', { timeout: 15000 });
+    eq('one payment covers the lot', net.cartPosts, 1);
+
+    // and a line can be taken out again
+    await page.click('.bk-back');
+    await page.waitForSelector('#bk-cart .bk-cart-x', { timeout: 10000 });
+    await page.locator('#bk-cart .bk-cart-x').first().click();
+    eq('removing a line leaves the rest', await page.$$eval('#bk-cart .bk-cart-line', (e) => e.length), 1);
+    await page.evaluate(() => { cartClear(); });
+  }
 
   section('swap: quote');
   await page.click('.nav-quick-btn[data-tab="swap"]');
