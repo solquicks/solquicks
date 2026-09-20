@@ -435,6 +435,8 @@ try {
       return { w: img ? img.naturalWidth : 0, placeholder: !!document.querySelector('.mint-art-missing') };
     });
     eq('the artwork loads at full size', art.w, 687);
+    ok('and is served from a path that never 404ed, so no stale miss is cached',
+      await page.evaluate(() => /soulbound\.jpg/.test(document.getElementById('collectible-art').src)));
     ok('so no "artwork coming" placeholder is shown', !art.placeholder);
 
     // The plushie's carousel runs every few seconds over every .carousel-img
