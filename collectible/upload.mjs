@@ -7,6 +7,7 @@
 //
 // Run:  node upload.mjs
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import bs58 from 'bs58';
 import { TurboFactory } from '@ardrive/turbo-sdk';
 
@@ -55,34 +56,38 @@ console.log('credit before :', (await turbo.getBalance()).winc);
 
 const ext = config.artwork.split('.').pop().toLowerCase();
 const imageType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/' + ext;
-const image = await put(config.artwork, imageType);
-console.log('\nartwork       :', image);
-console.log('  reads back  :', (await readsBack(image, function (r) { return r.headers.get('content-type') === imageType; })) || 'not yet — try again in a minute');
+
+// Arweave is permanent, so re-running this to fix a description should not
+// leave a second copy of the same picture up there for good.
+const artHash = crypto.createHash('sha256').update(fs.readFileSync(config.artwork)).digest('hex');
+const previous = fs.existsSync('./uploaded.json') ? JSON.parse(fs.readFileSync('./uploaded.json', 'utf8')) : {};
+let image;
+if (previous.image && previous.artHash === artHash) {
+  image = previous.image;
+  console.log('\nartwork       :', image, '(unchanged, not uploaded again)');
+} else {
+  image = await put(config.artwork, imageType);
+  console.log('\nartwork       :', image);
+  console.log('  reads back  :', (await readsBack(image, function (r) { return r.headers.get('content-type') === imageType; })) || 'not yet — try again in a minute');
+}
 
 // Every collectible shares one metadata file: same art, same perks, and the
 // number lives in the on-chain name rather than in the JSON.
+// Wording and traits come from config.json: they are the part that gets
+// argued over, and they should not need a code change to settle.
 const asset = {
   name: config.assetName,
   symbol: config.symbol,
-  description:
-    'Soulbound. Bound to the wallet that minted it, for good — it can never be ' +
-    'transferred, sold or burned. Carries a cheaper swap fee on solquicks.com, a ' +
-    'discount on Book The Fox, and a one-off grant of Fox Points.',
+  description: config.description,
   image: image,
   external_url: 'https://solquicks.com',
-  attributes: [
-    { trait_type: 'Type', value: 'Soulbound' },
-    { trait_type: 'Edition', value: 'Genesis' },
-    { trait_type: 'Year', value: String(new Date().getUTCFullYear()) }
-  ],
+  attributes: config.attributes,
   properties: { files: [{ uri: image, type: imageType }], category: 'image' }
 };
 const collection = {
   name: config.collectionName,
   symbol: config.symbol,
-  description:
-    'Soulbound collectibles from solquicks.com. One per wallet, 0.1 SOL, ' +
-    'non-transferable for good.',
+  description: config.collectionDescription,
   image: image,
   external_url: 'https://solquicks.com',
   properties: { files: [{ uri: image, type: imageType }], category: 'image' }
@@ -104,6 +109,6 @@ console.log('  reads back  :', (await readsBack(collectionUri, async function (r
   return JSON.parse(await r.text()).name === config.collectionName;
 })) || 'not yet — try again in a minute');
 
-fs.writeFileSync('./uploaded.json', JSON.stringify({ image: image, asset: assetUri, collection: collectionUri }, null, 2));
+fs.writeFileSync('./uploaded.json', JSON.stringify({ image: image, artHash: artHash, asset: assetUri, collection: collectionUri }, null, 2));
 console.log('\ncredit after  :', (await turbo.getBalance()).winc);
 console.log('\nWrote uploaded.json. Next: node setup.mjs --cluster devnet');

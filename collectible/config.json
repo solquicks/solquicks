@@ -1,10 +1,46 @@
 {
-  "collectionName": "solquicks Collectibles",
-  "assetName": "solquicks Collectible",
+  "collectionName": "solquicks soulbound",
+  "assetName": "solquicks soulbound",
   "symbol": "QUICKS",
   "priceSol": 0.1,
-  "treasury": "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc",
+  "treasury": "FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m",
   "itemsAvailable": 100000,
   "mintLimitPerWallet": 1,
-  "artwork": "art/collectible.png"
+  "artwork": "art/collectible.png",
+  "description": "Exclusive access to the tools at solquicks.com. Soulbound NFT.",
+  "collectionDescription": "Soulbound collectibles from solquicks.com. One per wallet, non-transferable for good.",
+  "attributes": [
+    {
+      "trait_type": "Fur",
+      "value": "Fox"
+    },
+    {
+      "trait_type": "Eyes",
+      "value": "Cyborg"
+    },
+    {
+      "trait_type": "Head",
+      "value": "Headset"
+    },
+    {
+      "trait_type": "Mouth",
+      "value": "Grin"
+    },
+    {
+      "trait_type": "Flight Jacket",
+      "value": "Racer"
+    },
+    {
+      "trait_type": "Moon Gun",
+      "value": "Blaster"
+    },
+    {
+      "trait_type": "Background",
+      "value": "Hangar"
+    },
+    {
+      "trait_type": "Type",
+      "value": "Soulbound"
+    }
+  ]
 }

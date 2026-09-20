@@ -18,11 +18,16 @@ import {
 import { mplCore, createCollection, fetchAsset, transferV1 } from '@metaplex-foundation/mpl-core';
 import { create, mplCandyMachine, mintV1, fetchCandyMachine } from '@metaplex-foundation/mpl-core-candy-machine';
 import { setComputeUnitLimit } from '@metaplex-foundation/mpl-toolbox';
+import fs from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const TREASURY = publicKey('uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc');
-const PRICE = 0.1;
+// Read from the files that will actually be used, so this rehearses the real
+// thing rather than a copy of it that can drift.
+const config = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const uploaded = JSON.parse(fs.readFileSync(new URL('../uploaded.json', import.meta.url), 'utf8'));
+const TREASURY = publicKey(config.treasury);
+const PRICE = config.priceSol;
 
 const umi = createUmi('http://127.0.0.1:8899').use(mplCore()).use(mplCandyMachine());
 const authority = generateSigner(umi);
@@ -32,8 +37,8 @@ await umi.rpc.airdrop(authority.publicKey, sol(100));
 const collection = generateSigner(umi);
 await createCollection(umi, {
   collection: collection,
-  name: 'solquicks Collectibles',
-  uri: 'https://example.com/collection.json',
+  name: config.collectionName,
+  uri: uploaded.collection,
   plugins: [{ type: 'PermanentFreezeDelegate', frozen: true, authority: { type: 'None' } }]
 }).sendAndConfirm(umi);
 
@@ -42,17 +47,17 @@ await (await create(umi, {
   candyMachine: candyMachine,
   collection: collection.publicKey,
   collectionUpdateAuthority: umi.identity,
-  itemsAvailable: 100000,
+  itemsAvailable: config.itemsAvailable,
   isMutable: false,
   configLineSettings: none(),
   hiddenSettings: some({
-    name: 'solquicks Collectible #$ID$',
-    uri: 'https://example.com/asset.json',
+    name: config.assetName + ' #$ID$',
+    uri: uploaded.asset,
     hash: new Uint8Array(32)
   }),
   guards: {
     solPayment: some({ lamports: sol(PRICE), destination: TREASURY }),
-    mintLimit: some({ id: 1, limit: 1 })
+    mintLimit: some({ id: 1, limit: config.mintLimitPerWallet })
   }
 })).sendAndConfirm(umi);
 
@@ -86,8 +91,17 @@ test('the buyer owns the asset', async function () {
 test('each collectible is numbered', async function () {
   const a = await fetchAsset(umi, asset.publicKey);
   // $ID$ is replaced with the mint index, so the first is #0.
-  assert.match(a.name, /^solquicks Collectible #\d+$/);
-  assert.ok(!a.name.includes('$ID$'), 'the template was left unsubstituted: ' + a.name);
+  assert.equal(a.name, config.assetName + ' #0');
+});
+
+test('it points at the metadata that was actually published', async function () {
+  const a = await fetchAsset(umi, asset.publicKey);
+  assert.equal(a.uri, uploaded.asset);
+  const res = await fetch(uploaded.asset.replace('arweave.net', 'vilenarios.com'));
+  const meta = await res.json();
+  assert.equal(meta.name, config.assetName);
+  assert.equal(meta.description, config.description);
+  assert.equal(meta.attributes.length, config.attributes.length);
 });
 
 test('it belongs to the collection', async function () {
