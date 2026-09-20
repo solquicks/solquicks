@@ -391,7 +391,8 @@ try {
   {
     // The addresses are real now, but the mint is closed until MINT.live is
     // set — an ordinary visitor must not be able to buy one early.
-    eq('before the mint opens it says so', (await page.textContent('#collectible-minted')).trim(), 'not open yet');
+    eq('before the mint opens the card is not shown at all',
+      await page.evaluate(() => document.getElementById('collectible-card').hidden), true);
     eq('and the button cannot be pressed', await page.evaluate(() => document.getElementById('collectible-mint').disabled), true);
     ok('the addresses are set, so only the switch is holding it shut',
       await page.evaluate(() => !!(MINT.candyMachine && MINT.candyGuard && MINT.collection)));
@@ -416,12 +417,23 @@ try {
       return loadCollectible();
     });
     await page.waitForFunction(() => document.getElementById('collectible-minted').textContent === '37 minted', null, { timeout: 10000 });
+    eq('opening the mint shows the card', await page.evaluate(() => document.getElementById('collectible-card').hidden), false);
     eq('the count comes from the worker', (await page.textContent('#collectible-minted')).trim(), '37 minted');
     eq('and the button opens up', await page.evaluate(() => document.getElementById('collectible-mint').disabled), false);
     ok('the page says it can never be moved',
       /cannot be sold, sent or burned/.test(await page.textContent('.mint-warning')));
-    eq('a missing artwork file says what it is, not "art lost"',
-      (await page.textContent('.mint-art-missing')).trim(), 'artwork coming');
+    // The image is lazy and the card was hidden, so it only fetches once the
+    // mint opens — which is the behaviour, not a delay to work around.
+    await page.waitForFunction(() => {
+      const img = document.getElementById('collectible-art');
+      return img && img.complete && img.naturalWidth > 0;
+    }, null, { timeout: 15000 }).catch(() => {});
+    const art = await page.evaluate(() => {
+      const img = document.getElementById('collectible-art');
+      return { w: img ? img.naturalWidth : 0, placeholder: !!document.querySelector('.mint-art-missing') };
+    });
+    eq('the artwork loads at full size', art.w, 687);
+    ok('so no "artwork coming" placeholder is shown', !art.placeholder);
   }
 
   section('the Moon Rangers page');

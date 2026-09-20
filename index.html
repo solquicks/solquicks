@@ -2345,7 +2345,7 @@
         </div>
       </div>
 
-      <div class="product-card" id="collectible-card">
+      <div class="product-card" id="collectible-card" hidden>
         <div class="product-img-wrap">
           <div class="product-badge" id="collectible-badge">SOULBOUND</div>
           <img class="carousel-img active" id="collectible-art" src="img/collectible.png"
@@ -7338,13 +7338,18 @@
     async function loadCollectible() {
       const card = document.getElementById('collectible-card');
       const button = document.getElementById('collectible-mint');
+      // Hidden until the mint is open. A card nobody can buy from is not a
+      // teaser, it is an unfinished shop — and the artwork should not be on
+      // display before the thing it sells exists.
       if (!mintConfigured()) {
+        card.hidden = true;
         document.getElementById('collectible-badge').textContent = 'OPENING SOON';
         document.getElementById('collectible-minted').textContent = 'not open yet';
         button.disabled = true;
         button.textContent = 'Opening soon';
         return;
       }
+      card.hidden = false;
       button.disabled = false;
       if (collectibleLoaded && !Wallet.pubkey) return;
       try {
