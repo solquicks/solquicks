@@ -549,43 +549,7 @@
     .buy-btn:hover { background: var(--orange-deep); transform: translate(-1px, -2px); box-shadow: 5px 6px 0 rgba(46, 36, 64, 0.22); }
     .buy-btn:active { transform: translate(1px, 2px); box-shadow: 1px 1px 0 rgba(46, 36, 64, 0.25); }
 
-    .plushie-redeem { margin-top: 14px; }
-    .plushie-redeem label {
-      display: block;
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-bottom: 7px;
-      line-height: 1.45;
-    }
-    .plushie-row { display: flex; gap: 8px; }
-    .plushie-row input {
-      flex: 1;
-      min-width: 0;
-      background: var(--bg);
-      border: var(--line);
-      border-radius: 12px;
-      padding: 11px 13px;
-      font: inherit;
-      font-size: 0.92rem;
-      letter-spacing: 0.04em;
-      color: var(--ink);
-      text-transform: uppercase;
-    }
-    .plushie-row input::placeholder { color: var(--muted); letter-spacing: 0.06em; text-transform: none; }
-    .plushie-row input:focus { outline: 2px solid var(--orange); outline-offset: 1px; }
-    .plushie-row button {
-      flex-shrink: 0;
-      background: var(--cream);
-      border: var(--line);
-      border-radius: 12px;
-      padding: 11px 17px;
-      font: inherit;
-      font-weight: 800;
-      color: var(--ink);
-      cursor: pointer;
-    }
-    .plushie-row button:hover { background: var(--orange); color: #fff; }
-    .mint-perks {
+                                .mint-perks {
       list-style: none; margin: 14px 0 0; padding: 0;
       display: flex; flex-direction: column; gap: 6px;
     }
@@ -2343,14 +2307,6 @@
             <div class="bonding-bar"><div class="bonding-fill" id="store-fill"></div></div>
           </div>
           <a href="https://store.fun/quicks/quicks-plushie" target="_blank" rel="noopener" class="buy-btn">Buy Now →</a>
-          <form id="plushie-redeem" class="plushie-redeem" autocomplete="off">
-            <label for="plushie-code">Already bought one? Redeem the code from your order for 500 Fox Points.</label>
-            <div class="plushie-row">
-              <input id="plushie-code" type="text" placeholder="Your code" spellcheck="false"/>
-              <button type="submit">Redeem</button>
-            </div>
-            <div id="plushie-note" class="plushie-note"></div>
-          </form>
         </div>
       </div>
 
@@ -2375,8 +2331,7 @@
           <p class="mint-warning">
             Soulbound means soulbound. It cannot be sold, sent or burned, by you
             or by us — there is no key anywhere that can unlock it. One per wallet.
-            Already hold a Moon Ranger? You keep the better Ranger rates — this
-            adds nothing on top of them.
+            Already hold a Moon Ranger? You keep the better Ranger rates.
           </p>
           <button class="buy-btn" id="collectible-mint" onclick="mintCollectible()">Mint — 0.1 SOL</button>
           <div id="collectible-note" class="plushie-note"></div>
@@ -3399,47 +3354,6 @@
       const s = FoxPoints.loadToken();
       if (s) { FoxPoints.token = s.token; FoxPoints.refresh(); }
       FoxPoints.render();
-    })();
-
-    // The Buy Now click used to award the plushie points outright, which meant
-    // 500 points for opening a tab and buying nothing. Points now come from
-    // redeeming the code that ships with a real order.
-    (function() {
-      const form = document.getElementById('plushie-redeem');
-      if (!form) return;
-      const input = document.getElementById('plushie-code');
-      const note = document.getElementById('plushie-note');
-      form.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        const code = input.value.trim();
-        if (!code) return;
-        note.textContent = 'Checking…';
-        note.className = 'plushie-note';
-        if (!FoxPoints.token) {
-          note.textContent = 'Connect your wallet first, then redeem.';
-          note.className = 'plushie-note bad';
-          return;
-        }
-        try {
-          const res = await FoxPoints.api('/api/plushie/redeem', {
-            method: 'POST', body: { code: code }
-          });
-          if (res && res.awarded) {
-            note.textContent = '+' + res.awarded + ' Fox Points. Thanks for the support.';
-            note.className = 'plushie-note ok';
-            input.value = '';
-            if (res.player) FoxPoints.server = res.player;
-            FoxPoints.render();
-            renderLeaderboard();
-          } else {
-            note.textContent = (res && res.error) || 'That code did not work.';
-            note.className = 'plushie-note bad';
-          }
-        } catch (err) {
-          note.textContent = 'Could not reach the server. Try again in a moment.';
-          note.className = 'plushie-note bad';
-        }
-      });
     })();
 
     // ── SOLANA WALLET (dependency-free, Wallet Standard + injected fallback) ──
