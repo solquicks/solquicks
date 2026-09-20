@@ -436,6 +436,18 @@ try {
     });
     eq('the artwork loads at full size', art.w, 687);
     ok('so no "artwork coming" placeholder is shown', !art.placeholder);
+
+    // The plushie's carousel runs every few seconds over every .carousel-img
+    // on the page. The collectible had that class, so it was being treated as
+    // a fourth slide of the plushie and left invisible.
+    const shown = await page.evaluate(() => {
+      goSlide(1); goSlide(2);           // as the timer does, on its own
+      const img = document.getElementById('collectible-art');
+      const r = img.getBoundingClientRect();
+      return { opacity: getComputedStyle(img).opacity, width: Math.round(r.width) };
+    });
+    eq('the carousel cannot fade the collectible out', shown.opacity, '1');
+    ok('and it keeps its width', shown.width > 100, JSON.stringify(shown));
   }
 
   section('the Moon Rangers page');

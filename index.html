@@ -445,6 +445,15 @@
       height: 420px;
       overflow: hidden;
     }
+    /* A single still, not a slide. It had the carousel's class, so goSlide()
+       — which runs every 3.5 seconds over every .carousel-img on the page —
+       stripped its `active` and left it at opacity 0. The plushie's carousel
+       was quietly treating the collectible as a fourth slide of itself. */
+    .product-photo {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
     .carousel-img {
       position: absolute;
       inset: 0;
@@ -2348,7 +2357,7 @@
       <div class="product-card" id="collectible-card" hidden>
         <div class="product-img-wrap">
           <div class="product-badge" id="collectible-badge">SOULBOUND</div>
-          <img class="carousel-img active" id="collectible-art" src="img/collectible.png"
+          <img class="product-photo" id="collectible-art" src="img/collectible.png"
                alt="solquicks.com soulbound NFT" loading="lazy" onerror="collectibleArtMissing(this)"/>
         </div>
         <div class="product-info">
@@ -2359,7 +2368,7 @@
             <div class="product-stock" id="collectible-minted">—</div>
           </div>
           <ul class="mint-perks">
-            <li><strong>25% off swap fees</strong>, for good</li>
+            <li><strong>25% off swap fees</strong></li>
             <li><strong>5% off Book The Fox</strong></li>
             <li><strong>250 Fox Points</strong>, once, when you mint</li>
             <li><strong>A rocket</strong> beside your wallet on the swap leaderboard</li>
