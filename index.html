@@ -3836,10 +3836,10 @@
       candyMachine: '6wjQnzNY2yiRd2mFdkkjd8KzzHR31PRrdWmdpqi38rsH',
       candyGuard: '4XPdr5vnEMJAKzCuMUQBTsriuACEXxS6DtQ9zutCsEPA',
       collection: 'GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW',
-      // Set true to open the mint to everyone. Until then it exists on chain
-      // but only answers to ?mint=preview, so the first one can be minted and
-      // checked before anybody else is invited to pay for one.
-      live: false,
+      // Open. #0 was minted and checked first: it arrived, the 0.1 reached the
+      // treasury in the same transaction, and a transfer of it is refused by
+      // the chain rather than merely discouraged.
+      live: true,
       // The collectible's takings go to the staking wallet, not the Seeker
       // the rest of the site pays into. Must match the solPayment guard: the
       // program checks it, so a mismatch fails the mint rather than paying

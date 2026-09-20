@@ -389,23 +389,25 @@ try {
 
   section('the collectible: the card');
   {
-    // The addresses are real now, but the mint is closed until MINT.live is
-    // set — an ordinary visitor must not be able to buy one early.
-    eq('before the mint opens the card is not shown at all',
-      await page.evaluate(() => document.getElementById('collectible-card').hidden), true);
-    eq('and the button cannot be pressed', await page.evaluate(() => document.getElementById('collectible-mint').disabled), true);
-    ok('the addresses are set, so only the switch is holding it shut',
-      await page.evaluate(() => !!(MINT.candyMachine && MINT.candyGuard && MINT.collection)));
+    // The mint is open. The card is on the shelf and the button works.
+    eq('the card is on show', await page.evaluate(() => document.getElementById('collectible-card').hidden), false);
+    eq('and the button can be pressed', await page.evaluate(() => document.getElementById('collectible-mint').disabled), false);
     eq('the page names the wallet the takings go to',
       await page.evaluate(() => MINT.treasury), 'FndhEjYMXMhihnoUfZbgm7mTWgCpcwoT3NikTABLV37m');
-    ok('a preview link opens it for testing',
-      await page.evaluate(() => {
-        const real = location.search;
-        history.replaceState(null, '', location.pathname + '?mint=preview');
-        const open = mintConfigured();
-        history.replaceState(null, '', location.pathname + real);
-        return open;
-      }));
+
+    // The switch that kept it shut still works, because it is what a future
+    // pause would use.
+    eq('turning it off hides the card again', await page.evaluate(() => {
+      MINT.live = false;
+      collectibleLoaded = false;
+      loadCollectible();
+      const hidden = document.getElementById('collectible-card').hidden;
+      MINT.live = true;
+      collectibleLoaded = false;
+      return hidden;
+    }), true);
+    await page.evaluate(() => loadCollectible());
+    await page.waitForFunction(() => document.getElementById('collectible-card').hidden === false, null, { timeout: 10000 });
 
     // Once the addresses are in, it reads the count from the worker.
     await page.evaluate(() => {
