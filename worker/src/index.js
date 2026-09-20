@@ -2589,10 +2589,19 @@ function bookingRef() {
 // the fox's name and next to his wallet connect, so every booking waits on
 // approval — and is refundable until it runs.
 
+// Sold in the units people think in — weeks, then months, then a year — with
+// the per-week price falling to a floor of $180 and staying there. Past about
+// three months the discount stops: there is one slot on the site, so a long
+// booking is not just a bigger sale, it is every other advertiser turned away
+// for that whole period, at today's price however much the site grows.
 const BANNER_RATES = [
-  { weeks: 1, price: 250 },
-  { weeks: 2, price: 450 },
-  { weeks: 4, price: 800 }
+  { weeks: 1, price: 250, label: '1 week' },
+  { weeks: 2, price: 450, label: '2 weeks' },
+  { weeks: 3, price: 630, label: '3 weeks' },
+  { weeks: 4, price: 800, label: '1 month' },
+  { weeks: 13, price: 2340, label: '3 months' },
+  { weeks: 26, price: 4680, label: '6 months' },
+  { weeks: 52, price: 9360, label: '1 year' }
 ];
 
 function bannerRate(weeks) {
@@ -3677,7 +3686,7 @@ export default {
         const runs = await bannerRuns(env, soonest);
         // a shorter run may fit a gap a longer one cannot, so each has its own date
         const rates = BANNER_RATES.map(function (r) {
-          return { weeks: r.weeks, price: r.price, startsAt: earliestBannerStart(runs, soonest, r.weeks) };
+          return { weeks: r.weeks, price: r.price, label: r.label, startsAt: earliestBannerStart(runs, soonest, r.weeks) };
         });
         return json(request, env, {
           rates: rates,

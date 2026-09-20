@@ -483,8 +483,25 @@ section('ad slot — holding a run');
 {
   const env = freshEnv();
   eq('with nothing booked, the next run starts in a day', (await adRates(env)).nextFree - clock, DAY);
-  eq('an unoffered length is refused', (await adHold(env, 3)).status, 400);
+  // Derived, not picked: "3" was the example of an unoffered length until
+  // three weeks went on sale, at which point the test booked a run and the
+  // next assertion failed for a reason that had nothing to do with it.
+  const offered = new Set((await adRates(env)).rates.map((r) => r.weeks));
+  let unoffered = 1;
+  while (offered.has(unoffered)) unoffered++;
+  eq('an unoffered length is refused', (await adHold(env, unoffered)).status, 400);
   eq('a hold with no contact is refused', (await call(env, 'POST', '/api/banner/hold', { body: { weeks: 1, name: 'x' } })).status, 400);
+
+  // The long runs are the point of the new pricing, so check the curve holds
+  // and that a year can actually be booked rather than merely listed.
+  const rates = (await adRates(env)).rates;
+  eq('seven lengths are offered', rates.length, 7);
+  eq('and they are labelled in weeks, months and a year',
+    rates.map((r) => r.label).join(', '),
+    '1 week, 2 weeks, 3 weeks, 1 month, 3 months, 6 months, 1 year');
+  const perWeek = rates.map((r) => Math.round(r.price / r.weeks));
+  ok('the per-week price never rises with length', perWeek.every((p, i) => i === 0 || p <= perWeek[i - 1]), perWeek.join(','));
+  eq('and flattens at $180 rather than falling forever', perWeek.slice(-3).join(','), '180,180,180');
 
   const a = await adHold(env, 1);
   eq('a one-week run is held', a.status, 200);

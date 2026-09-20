@@ -1557,7 +1557,9 @@
     }
     @media (prefers-reduced-motion: reduce) { .bk-ad-flash { animation: none; } }
 
-    .bk-weeks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+    /* Seven options now, not three: let them wrap rather than forcing a
+       three-wide grid that leaves a lonely square on the last row. */
+    .bk-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin: 12px 0; }
     .bk-week {
       appearance: none; cursor: pointer; background: var(--cream);
       border: 2px solid #E7DFD2; border-radius: 12px; padding: 12px 8px;
@@ -6688,13 +6690,15 @@
         (d.taken ? '<p class="bk-hint">The slot is running someone else\'s campaign right now. ' +
           'Yours would start when theirs ends.</p>' : '') +
         '<p class="bk-blurb">A 3:1 banner above the fold, on every tab of the site. ' +
-          'Yours alone for the whole run — no rotation.</p>' +
+          'Yours alone for the whole run — no rotation, no one else sharing it. ' +
+          'Book it by the week, by the month, or take the year: the longer the run, ' +
+          'the less it costs per week, down to a floor at three months.</p>' +
         '<div class="bk-weeks">' + d.rates.map(function (r) {
           const perWeek = r.price / r.weeks;
           const saving = Math.round((1 - perWeek / base) * 100);
           return '<button class="bk-week' + (r.weeks === adWeeks ? ' on' : '') +
             '" onclick="pickWeeks(' + r.weeks + ')">' +
-            '<b>$' + r.price + '</b><span>' + r.weeks + ' week' + (r.weeks > 1 ? 's' : '') + '</span>' +
+            '<b>$' + r.price.toLocaleString() + '</b><span>' + escapeHtml(r.label || (r.weeks + ' weeks')) + '</span>' +
             (saving > 0 ? '<em>save ' + saving + '%</em>' : '<em>&nbsp;</em>') + '</button>';
         }).join('') + '</div>' +
         '<p class="bk-hint">Runs from <strong>' + escapeHtml(starts) + '</strong>.</p>' +
