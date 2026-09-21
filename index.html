@@ -6806,9 +6806,12 @@
     function renderAdCreative(d, sig) {
       const flow = document.getElementById('bk-flow');
       flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
         '<div class="bk-step">Paid · reference ' + escapeHtml(d.ref) + '</div>' +
         '<p class="bk-blurb">Now the artwork. I review every banner before it runs — ' +
-        'if I turn yours down you get a full refund.</p>' +
+        'if I turn yours down you get a full refund. ' +
+        'Nothing is lost if you leave this page: the slot is paid for and held. ' +
+        'Keep the reference above and send the artwork whenever you have it.</p>' +
         '<div class="bk-field"><label for="ad-sponsor">Name shown on the banner</label><input id="ad-sponsor" maxlength="60"></div>' +
         '<div class="bk-field"><label for="ad-headline">Headline</label>' +
         '<input id="ad-headline" maxlength="90" placeholder="One line, about 60 characters">' +
@@ -7083,6 +7086,10 @@
 
     function showCartDone(d, signature) {
       const flow = document.getElementById('bk-flow');
+      // An ad that is paid for but has no artwork never runs, and the single
+      // item flow collects it straight after payment. A basket has to offer
+      // the same, per ad, or buying one this way would quietly skip it.
+      const ads = (d.items || []).filter(function (i) { return i.kind === 'banner'; });
       flow.innerHTML = '<div class="bk-flow"><div class="bk-done">' +
         '<div class="bk-done-tick">✓</div>' +
         '<div class="bk-step">That is all booked</div>' +
@@ -7090,9 +7097,19 @@
         ' item' + (d.items.length === 1 ? '' : 's') + ', $' + Number(d.total).toLocaleString() + ' paid. ' +
         'I will be in touch to confirm each one.</p>' +
         (signature ? '<p class="bk-hint">Payment ' + escapeHtml(String(signature).slice(0, 12)) + '…</p>' : '') +
-        '<button class="bk-go" onclick="backToRateCard()">Book something else</button>' +
+        ads.map(function (a) {
+          return '<button class="bk-go" onclick="adCreativeFor(\'' + escapeHtml(a.ref) + '\')">' +
+            'Add your banner artwork</button>';
+        }).join('') +
+        '<button class="bk-go ghost" style="margin-top:10px" onclick="backToRateCard()">Book something else</button>' +
         '</div></div>';
       bkScrollTo('bk-flow');
+    }
+
+    /// The artwork form for one ad run, reachable after a basket as well as
+    /// after buying the slot on its own.
+    function adCreativeFor(ref) {
+      renderAdCreative({ ref: ref }, null);
     }
 
     function bkScrollTo(id) {

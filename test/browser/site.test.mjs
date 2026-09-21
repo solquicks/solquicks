@@ -630,6 +630,16 @@ try {
     await page.waitForSelector('#pay-status', { timeout: 15000 });
     eq('one payment covers the lot', net.cartPosts, 1);
 
+    // An ad paid for inside a basket still has to hand over its artwork, or
+    // it is paid for and never runs.
+    await page.evaluate(() => showCartDone(window._pay.d, 'sig123'));
+    const adBtn = page.locator('button', { hasText: 'Add your banner artwork' });
+    eq('the basket asks for the banner artwork afterwards', await adBtn.count(), 1);
+    await adBtn.click();
+    await page.waitForSelector('#ad-url', { timeout: 10000 });
+    ok('and the form asks where the click should go', true);
+    ok('with a way back out of it', await page.locator('#bk-flow .bk-back').count() > 0);
+
     // and a line can be taken out again
     await page.click('.bk-back');
     await page.waitForSelector('#bk-cart .bk-cart-x', { timeout: 10000 });

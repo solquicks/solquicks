@@ -499,6 +499,47 @@ costs nothing.
 
 ---
 
+## MoonPay onramp — planned 2026-09-20, not started
+
+Buying crypto with a card or Apple Pay, so somebody with no SOL can still use
+the site. Jupiter has no onramp to embed — their whole developer surface is
+swap, trigger, recurring and prediction markets — and adopting their Plugin
+would force Ultra's 50 bps floor against the 20 bps charged here. So it is
+MoonPay or nothing.
+
+It also answers "can we take Apple Pay for bookings": not directly, but a
+customer can buy USDC with Apple Pay and pay the invoice with it. The
+alternative, a card processor taking fiat straight to a bank, brings
+chargebacks — someone can reverse a payment weeks after a Space has been
+hosted, with nothing to dispute it with. Every payment here is final today
+and that is worth keeping.
+
+**Theirs, and the slow part — start these first:**
+
+1. Create a partner account at dashboard.moonpay.com. Free since April 2026.
+2. Complete business verification (KYB). Days, not minutes.
+3. Hand over the publishable key (`pk_live_…`) — safe in the page by design.
+4. Put the secret in the worker personally: `npx wrangler secret put MOONPAY_SECRET`.
+5. Set the partner fee and allowlist solquicks.com in their dashboard.
+
+**Mine, and none of it waits on the above:**
+
+6. Build against the sandbox with test keys — a buy button on the swap, and a
+   card path on bookings.
+7. Sign widget URLs in the worker. Live mode requires it and signing needs the
+   secret, so it cannot happen in the browser.
+8. Prefill the connected wallet as the destination.
+9. Handle the return, so the swap or booking carries on where it left off.
+10. Widen `connect-src` for MoonPay's domain — small, but that policy is what
+    stops the page talking to anywhere unexpected.
+11. Tests: the sandbox flow end to end, and the signature against known values.
+
+**Together:** their go-live review, then live keys, one small real purchase,
+then announce. The hosted widget keeps most compliance obligations on their
+side, which is why it beats building a quote screen here.
+
+---
+
 ## Where this stands
 
 The site earns on every swap, every token anyone trades here collects its fee
