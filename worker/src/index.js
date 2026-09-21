@@ -335,6 +335,7 @@ const RATE_RULES = [
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/booking/brief'], name: 'bookbrief', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/cart/checkout', '/api/cart/confirm'], name: 'cartwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/cart/watch'], name: 'cartwatch', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
@@ -2086,6 +2087,19 @@ function tzOffsetMinutes(ts) {
 
 const BOOKING_TYPES = [
   {
+    // Paid here, scheduled on Calendly: the hour is picked there rather than
+    // duplicating a calendar this site would have to keep in step. The link
+    // comes from config, so changing the event never needs a deploy.
+    id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
+    blurb: 'An hour, one to one, on whatever you are building — the token, the launch, the community, or what to do next.',
+    includes: [
+      'A full hour on a call, just your project',
+      'An honest read on where you are',
+      'What I would do next, in order',
+      'Follow-up notes afterwards'
+    ]
+  },
+  {
     id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
     blurb: 'I host the Space, schedule the guests, drive the conversation and bring the foxy energy.',
     includes: [
@@ -2151,6 +2165,14 @@ const BOOKING_POLICY = {
 
 function bookingType(id) {
   return BOOKING_TYPES.find(function (t) { return t.id === id; }) || null;
+}
+
+/// The consulting hour is paid here and scheduled on Calendly, so without that
+/// link there is nothing to hand someone who has just paid $100. Rather than
+/// take the money and apologise, the service is not offered at all until the
+/// link exists: it disappears from the rate card and a hold is refused.
+function bookable(env, t) {
+  return t.id !== 'consult' || !!env.CONSULT_CALENDLY;
 }
 
 /// SOL/USD, cached for five minutes. Bookings are quoted, not streamed, so a
@@ -2784,6 +2806,7 @@ export default {
           path === '/api/booking/types' ||
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
+          path === '/api/booking/brief' ||
           path === '/api/cart/checkout' || path === '/api/cart/confirm' ||
           path === '/api/cart/watch' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
@@ -3887,7 +3910,13 @@ export default {
         const wallet = await getSession(request, env).catch(function () { return null; });
         const holder = wallet ? await perkTier(env, wallet) : null;
         return json(request, env, {
-          types: BOOKING_TYPES,
+          types: BOOKING_TYPES.filter(function (t) {
+            return bookable(env, t);
+          }).map(function (t) {
+            // Only the consulting hour is scheduled elsewhere. The link is
+            // carried on the type so the page can show it the moment it is paid.
+            return t.id === 'consult' ? Object.assign({}, t, { calendly: env.CONSULT_CALENDLY }) : t;
+          }),
           policy: BOOKING_POLICY,
           rushHours: RUSH_HOURS,
           rushPct: RUSH_PCT,
@@ -3904,7 +3933,7 @@ export default {
 
       if (path === '/api/booking/slots' && request.method === 'GET') {
         const type = bookingType(url.searchParams.get('type'));
-        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+        if (!type || !bookable(env, type)) return json(request, env, { error: 'unknown booking type' }, 400);
         return json(request, env, { type: type.id, minutes: type.minutes, slots: await openSlots(env, type) });
       }
 
@@ -3913,7 +3942,7 @@ export default {
       if (path === '/api/booking/hold' && request.method === 'POST') {
         const body = await request.json().catch(function () { return {}; });
         const type = bookingType(body.type);
-        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+        if (!type || !bookable(env, type)) return json(request, env, { error: 'unknown booking type' }, 400);
 
         const name = String(body.name || '').trim().slice(0, 120);
         const contact = String(body.contact || '').trim().slice(0, 200);
@@ -3968,6 +3997,7 @@ export default {
           reference: reference,
           type: type.id,
           mode: type.mode,
+          calendly: type.id === 'consult' ? (env.CONSULT_CALENDLY || null) : null,
           startsAt: startsAt,
           minutes: type.minutes,
           quote: q,
@@ -4117,12 +4147,44 @@ export default {
         return json(request, env, { ok: true, booking: publicBooking(fresh) });
       }
 
+      // What is needed to actually do the work, asked once the booking is
+      // paid for. It cannot cost a sale — the money has already moved — and
+      // it saves chasing the same questions through DMs afterwards.
+      if (path === '/api/booking/brief' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const details = String(body.details || '').trim().slice(0, 4000);
+        if (!ref || !details) return json(request, env, { error: 'reference and details are both needed' }, 400);
+
+        const b = await env.DB.prepare('SELECT ref, type_id, status, name, contact FROM bookings WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (b.status !== 'paid' && b.status !== 'enquiry') {
+          return json(request, env, { error: 'that booking is not paid for yet' }, 409);
+        }
+        await env.DB.prepare('UPDATE bookings SET details = ? WHERE ref = ?').bind(details, ref).run();
+        await alert(env, '📝 Details for ' + ref + ' — ' + b.type_id + '\n' + b.name + ' · ' + b.contact + '\n' + details);
+        return json(request, env, { ok: true });
+      }
+
       if (path === '/api/booking/lookup' && request.method === 'GET') {
         const ref = String(url.searchParams.get('ref') || '').trim();
         if (!ref) return json(request, env, { error: 'which booking?' }, 400);
         const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
-        if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
-        return json(request, env, { booking: publicBooking(b) });
+        if (b) return json(request, env, { kind: 'booking', booking: publicBooking(b), details: b.details || null });
+        // An advertiser looking for the run they paid for, most likely to
+        // finish the artwork they left behind.
+        const a = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (a) {
+          return json(request, env, {
+            kind: 'banner',
+            banner: {
+              ref: a.ref, weeks: a.weeks, startsAt: a.starts_at, endsAt: a.ends_at,
+              total: a.total_usd, status: a.status, approved: !!a.approved,
+              hasCreative: !!(a.headline || a.image_url)
+            }
+          });
+        }
+        return json(request, env, { error: 'no booking with that reference' }, 404);
       }
 
       // ── public: leaderboard ──

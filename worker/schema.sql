@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL,
   hold_until INTEGER,
   name TEXT, contact TEXT, brief TEXT,
-  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT);
+  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT, details TEXT);
 
 -- A basket paid for in one go. The bookings and ad runs inside it each hold
 -- their own slot from the moment they are added; this row only carries the

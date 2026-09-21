@@ -153,7 +153,10 @@ function workerAnswer(p, url) {
       { id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
         blurb: 'I host the Space.', includes: ['Guests', 'Agenda'], format: 'live' },
       { id: 'custom', name: 'Custom content', mode: 'async', minutes: null, price: 250,
-        blurb: 'Made for you.', includes: ['A video'] }
+        blurb: 'Made for you.', includes: ['A video'] },
+      { id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
+        blurb: 'An hour on your project.', includes: ['A full hour'],
+        calendly: 'https://calendly.com/solquicks/secret-hour' }
     ],
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
       rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
@@ -192,6 +195,16 @@ function workerAnswer(p, url) {
       policy: {} };
   }
   if (p === '/api/cart/watch') return { status: 'held' };
+  if (p === '/api/booking/brief') { net.briefs = (net.briefs || 0) + 1; return { ok: true }; }
+  if (p === '/api/booking/lookup') {
+    const ref = url.searchParams.get('ref');
+    if (ref === 'FOX-AD0001') return { kind: 'banner', banner: { ref, weeks: 1,
+      startsAt: Date.now() + 86400000, endsAt: Date.now() + 8 * 86400000,
+      total: 250, status: 'paid', approved: false, hasCreative: false } };
+    if (ref === 'FOX-BK0001') return { kind: 'booking', details: 'guests: @a',
+      booking: { ref, type: 'space', status: 'paid', totalUsd: 200, startsAt: Date.now() + 5 * 86400000 } };
+    return { error: 'no booking with that reference' };
+  }
 
   if (p === '/api/swap/top') {
     // Deliberately disagreeing metrics, so a test can tell which one the page
@@ -646,6 +659,52 @@ try {
     await page.locator('#bk-cart .bk-cart-x').first().click();
     eq('removing a line leaves the rest', await page.$$eval('#bk-cart .bk-cart-line', (e) => e.length), 1);
     await page.evaluate(() => { cartClear(); });
+  }
+
+  section('booking: what happens after the money moves');
+  {
+    await page.click('.nav-quick-btn[data-tab="book"]');
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+
+    // A paid Space asks for what is needed to run it, while they are still here
+    await page.evaluate(() => showBookingDone(
+      { ref: 'FOX-BK0001', type: 'space', startsAt: Date.now() + 5 * 86400000 }, false, 'sigabc'));
+    ok('a paid booking asks for the details I need',
+      await page.locator('#bk-brief-after').count() > 0);
+    ok('and says what to put in it',
+      /Guest handles/.test(await page.textContent('.bk-brief-box')), await page.textContent('.bk-brief-box'));
+    await page.fill('#bk-brief-after', 'guests: @a, @b · topic: the launch');
+    await page.click('#bk-brief-send');
+    await page.waitForFunction(() => /Got it/.test(document.getElementById('bk-brief-msg').textContent), null, { timeout: 10000 });
+    eq('the details reach me', net.briefs, 1);
+
+    // The consulting hour sends them to Calendly to pick a time
+    await page.evaluate(() => showBookingDone(
+      { ref: 'FOX-CN0001', type: 'consult', calendly: 'https://calendly.com/solquicks/secret-hour' }, false, null));
+    const pick = page.locator('a.bk-go', { hasText: 'Pick your hour' });
+    eq('consulting hands over the scheduling link', await pick.count(), 1);
+    eq('pointing at the configured event', await pick.getAttribute('href'), 'https://calendly.com/solquicks/secret-hour');
+    ok('and it still asks what the call is about', await page.locator('#bk-brief-after').count() > 0);
+
+    // Coming back later with only a reference
+    await page.evaluate(() => backToRateCard());
+    await page.waitForSelector('#bk-find', { timeout: 10000 });
+    await page.fill('#bk-find', 'FOX-AD0001');
+    await page.click('.bk-find-row button');
+    await page.waitForSelector('#bk-flow .bk-step', { timeout: 10000 });
+    ok('an advertiser can find the run they paid for',
+      /advertising/.test(await page.textContent('#bk-flow .bk-step')));
+    const send = page.locator('button', { hasText: 'Send the artwork' });
+    eq('and finish the artwork they never sent', await send.count(), 1);
+    await send.click();
+    await page.waitForSelector('#ad-url', { timeout: 10000 });
+    ok('which opens the same artwork form', true);
+
+    await page.evaluate(() => backToRateCard());
+    await page.fill('#bk-find', 'FOX-NOPE99');
+    await page.click('.bk-find-row button');
+    await page.waitForFunction(() => /no booking/i.test(document.getElementById('bk-find-msg').textContent), null, { timeout: 10000 });
+    ok('a reference nobody holds says so plainly', true);
   }
 
   section('swap: quote');

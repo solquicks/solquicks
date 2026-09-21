@@ -793,4 +793,61 @@ section('the basket — abandoned');
     env._db.prepare('SELECT status FROM cart_groups WHERE ref = ?').get(out.body.ref).status, 'expired');
 }
 
+section('after paying — the details I actually need');
+{
+  const env = freshEnv();
+  const s0 = firstCalm(await slots(env, 'space'));
+  const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s0.starts, ...guest } });
+
+  const brief = (ref, details) => call(env, 'POST', '/api/booking/brief', { body: { ref, details } });
+  eq('details before paying are refused', (await brief(h.body.ref, 'guests: @a')).status, 409);
+
+  const sig = pay({ from: wallet(50), usdc: 200e6, reference: h.body.reference });
+  await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(50)), body: { ref: h.body.ref, signature: sig } });
+  eq('once paid they are taken', (await brief(h.body.ref, 'guests: @a, @b · topic: launch')).status, 200);
+  eq('and stored against the booking',
+    env._db.prepare('SELECT details FROM bookings WHERE ref = ?').get(h.body.ref).details, 'guests: @a, @b · topic: launch');
+  eq('an empty note is refused', (await brief(h.body.ref, '   ')).status, 400);
+  eq('a reference nobody holds is refused', (await brief('NOPE', 'x')).status, 404);
+
+  const look = await call(env, 'GET', '/api/booking/lookup?ref=' + h.body.ref);
+  eq('lookup finds the booking', look.body.kind, 'booking');
+  eq('and returns what was told to me', look.body.details, 'guests: @a, @b · topic: launch');
+
+  const ad = await adHold(env, 1);
+  const adLook = await call(env, 'GET', '/api/booking/lookup?ref=' + ad.body.ref);
+  eq('lookup finds an ad run too', adLook.body.kind, 'banner');
+  eq('and says whether the artwork has arrived', adLook.body.banner.hasCreative, false);
+}
+
+section('the consulting hour');
+{
+  const env = freshEnv({ CONSULT_CALENDLY: 'https://calendly.com/solquicks/secret-hour' });
+  const types = (await call(env, 'GET', '/api/booking/types')).body.types;
+  const consult = types.find((t) => t.id === 'consult');
+  ok('it is on the rate card', !!consult, types.map((t) => t.id).join(','));
+  eq('at $100 for an hour', consult.price + '/' + consult.minutes, '100/60');
+  eq('with no calendar of its own', consult.mode, 'async');
+  eq('and the scheduling link comes from config', consult.calendly, 'https://calendly.com/solquicks/secret-hour');
+
+  const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'consult', ...guest } });
+  eq('it can be booked', h.status, 200);
+  eq('the link comes back with the booking', h.body.calendly, 'https://calendly.com/solquicks/secret-hour');
+  eq('and it is paid for like anything else', h.body.usdc, 100000000);
+
+  // Without a link there is nothing to hand someone who has just paid $100, so
+  // the hour is not sold at all rather than sold and apologised for.
+  const bare = freshEnv();
+  const card = (await call(bare, 'GET', '/api/booking/types')).body.types;
+  ok('with no link configured it is off the rate card entirely',
+    !card.some((t) => t.id === 'consult'), card.map((t) => t.id).join(','));
+  ok('the other services are unaffected', card.length === types.length - 1,
+    `${card.length} without the link, ${types.length} with it`);
+
+  const blocked = await call(bare, 'POST', '/api/booking/hold', { body: { type: 'consult', ...guest } });
+  eq('and it cannot be booked by hand either', blocked.status, 400);
+  const paid = await call(bare, 'GET', '/api/booking/slots?type=consult');
+  eq('nor can its slots be listed', paid.status, 400);
+}
+
 finish();

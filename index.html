@@ -1561,6 +1561,28 @@
        three-wide grid that leaves a lonely square on the last row. */
     /* The basket sits above everything in the tab, so it is on screen at
        every step — browsing, choosing a time, or part-way through a form. */
+    .bk-lookup {
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      padding: 12px 14px; margin-bottom: 14px;
+    }
+    .bk-lookup label { display: block; font-weight: 800; font-size: 0.92rem; }
+    .bk-find-row { display: flex; gap: 8px; margin-top: 8px; }
+    .bk-find-row input {
+      flex: 1; min-width: 0; font: inherit; font-weight: 700; letter-spacing: 0.06em;
+      padding: 9px 12px; border: var(--line); border-radius: 999px; background: var(--cream);
+    }
+    .bk-find-row button {
+      appearance: none; cursor: pointer; font: inherit; font-weight: 800;
+      padding: 9px 16px; border: var(--line); border-radius: 999px;
+      background: transparent; color: var(--ink);
+    }
+    .bk-find-row button:hover { background: var(--orange-soft); }
+    .bk-brief-box { text-align: left; margin-top: 16px; }
+    .bk-brief-box label { display: block; font-weight: 800; font-size: 0.92rem; }
+    .bk-brief-box textarea {
+      width: 100%; font: inherit; padding: 10px 12px; margin-top: 6px;
+      border: var(--line); border-radius: 14px; background: var(--cream); resize: vertical;
+    }
     .bk-cart {
       background: var(--card); border: var(--line); border-radius: var(--radius);
       box-shadow: var(--pop); padding: 12px 14px; margin-bottom: 14px;
@@ -6899,7 +6921,14 @@
         'per week.</div>' +
         '<button class="bk-go" onclick="startAdBooking()">Book the space</button></div>';
 
-      list.innerHTML = adCard + d.types.map(function (t) {
+      const lookup = '<div class="bk-lookup">' +
+        '<label for="bk-find">Already booked something?</label>' +
+        '<div class="bk-hint">Put your reference in to see it, or to finish sending a banner.</div>' +
+        '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-XXXXXX" spellcheck="false">' +
+        '<button onclick="findBooking()">Find it</button></div>' +
+        '<div class="bk-msg" id="bk-find-msg"></div></div>';
+
+      list.innerHTML = adCard + lookup + d.types.map(function (t) {
         const label = t.mode === 'enquiry' ? 'Ask about a date'
           : t.mode === 'async' ? 'Order this' : 'Pick a time';
         const meta = t.mode === 'enquiry' ? 'In person · travel included'
@@ -6936,6 +6965,62 @@
     /// clicked may have been far down the page — leaving them mid-way through a
     /// long list with the back button scrolled out of sight. Bring each step's
     /// top, and its back button, into view.
+    /// Somebody who closed the tab, or is coming back days later. The
+    /// reference is the only thing they were asked to keep, so it is the only
+    /// thing this asks for.
+    async function findBooking() {
+      const msg = document.getElementById('bk-find-msg');
+      const ref = (document.getElementById('bk-find').value || '').trim().toUpperCase();
+      msg.className = 'bk-msg';
+      if (!ref) { msg.className = 'bk-msg bad'; msg.textContent = 'Put your reference in first.'; return; }
+      msg.textContent = 'Looking…';
+      try {
+        const res = await fetch(POINTS_API + '/api/booking/lookup?ref=' + encodeURIComponent(ref));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        msg.textContent = '';
+        showFound(d, ref);
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Nothing found with that reference.';
+      }
+    }
+
+    function showFound(d, ref) {
+      const flow = document.getElementById('bk-flow');
+      document.getElementById('bk-list').hidden = true;
+      flow.hidden = false;
+
+      if (d.kind === 'banner') {
+        const b = d.banner;
+        const runs = new Date(b.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
+          ' – ' + new Date(b.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+        flow.innerHTML = '<div class="bk-flow">' +
+          '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+          '<div class="bk-step">' + escapeHtml(ref) + ' · advertising</div>' +
+          '<p class="bk-hint">' + escapeHtml(runs) + ' · $' + Number(b.total).toLocaleString() +
+          ' · ' + escapeHtml(b.status) + (b.approved ? ' · approved' : '') + '</p>' +
+          (b.status === 'paid' && !b.hasCreative
+            ? '<p class="bk-blurb">Your artwork has not arrived yet — you can send it now.</p>' +
+              '<button class="bk-go" onclick="adCreativeFor(\'' + escapeHtml(ref) + '\')">Send the artwork</button>'
+            : b.hasCreative
+              ? '<p class="bk-blurb">Artwork received. I review every banner before it runs.</p>'
+              : '<p class="bk-blurb">This run is not paid for yet.</p>') +
+          '</div>';
+      } else {
+        const b = d.booking;
+        flow.innerHTML = '<div class="bk-flow">' +
+          '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+          '<div class="bk-step">' + escapeHtml(ref) + ' · ' + escapeHtml(b.type) + '</div>' +
+          '<p class="bk-hint">' + (b.startsAt
+            ? new Date(b.startsAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + ' · '
+            : '') + '$' + Number(b.totalUsd).toLocaleString() + ' · ' + escapeHtml(b.status) + '</p>' +
+          (d.details ? '<p class="bk-blurb">You sent: ' + escapeHtml(d.details) + '</p>' : '') +
+          '</div>';
+      }
+      bkScrollTo('bk-flow');
+    }
+
     // ── the basket ──
     /// Each line is already held on the server from the moment it was added,
     /// so this list is a record of reservations rather than a wish list. It
@@ -7285,8 +7370,24 @@
       return m || 'The payment did not go through.';
     }
 
+    /// What is still worth asking once the money has moved. It cannot cost a
+    /// sale at this point, and it saves the same questions being chased
+    /// through messages afterwards.
+    const BRIEF_PROMPTS = {
+      space: 'Guest handles, the account to co-host from, the topic, and anything to steer clear of.',
+      podcast: 'Guest handles, the topic, links I should read first, and anything to steer clear of.',
+      stream: 'What we are streaming, which account it runs from, and anything to steer clear of.',
+      custom: 'What you want made, any references, and when you need it.',
+      consult: 'What you are building, where you are stuck, and links I should look at before the call.'
+    };
+
     function showBookingDone(d, isEnquiry, sig) {
       const flow = document.getElementById('bk-flow');
+      // Normally the flow is already on screen by the time anything is paid
+      // for, but this is the screen that must never fail to appear.
+      flow.hidden = false;
+      document.getElementById('bk-list').hidden = true;
+      const prompt = BRIEF_PROMPTS[d.type];
       flow.innerHTML = '<div class="bk-flow bk-done">' +
         '<div class="bk-tick">' + (isEnquiry ? '📬' : '🦊') + '</div>' +
         '<div class="bk-lead">' + (isEnquiry ? 'Enquiry sent' : 'Booked') + '</div>' +
@@ -7297,7 +7398,48 @@
         '<p class="bk-hint">Keep that reference.' +
         (sig ? ' <a href="https://solscan.io/tx/' + encodeURIComponent(sig) + '" target="_blank" rel="noopener noreferrer">View receipt</a>' : '') +
         '</p>' +
+        // The consulting hour is scheduled on Calendly rather than here, so
+        // the link is the next thing they need — and the only thing standing
+        // between paying and having a time.
+        (d.calendly
+          ? '<a class="bk-go" href="' + escapeHtml(d.calendly) + '" target="_blank" rel="noopener noreferrer" ' +
+            'style="display:block;text-align:center;text-decoration:none;margin-top:12px">Pick your hour →</a>'
+          : d.type === 'consult'
+            ? '<p class="bk-hint">I\'ll send you a link to pick your hour.</p>' : '') +
+        (isEnquiry || !prompt ? '' :
+          '<div class="bk-brief-box">' +
+          '<label for="bk-brief-after">One more thing, while you are here</label>' +
+          '<div class="bk-hint">' + escapeHtml(prompt) + '</div>' +
+          '<textarea id="bk-brief-after" rows="4"></textarea>' +
+          '<button class="bk-go" id="bk-brief-send" onclick="sendBrief(\'' + escapeHtml(d.ref) + '\')">Send these details</button>' +
+          '<div class="bk-msg" id="bk-brief-msg"></div></div>') +
         '<button class="bk-go ghost" style="margin-top:14px" onclick="backToRateCard()">Book something else</button></div>';
+    }
+
+    async function sendBrief(ref) {
+      const btn = document.getElementById('bk-brief-send');
+      const msg = document.getElementById('bk-brief-msg');
+      const details = (document.getElementById('bk-brief-after').value || '').trim();
+      msg.className = 'bk-msg';
+      if (!details) { msg.className = 'bk-msg bad'; msg.textContent = 'Nothing to send yet.'; return; }
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        const res = await fetch(POINTS_API + '/api/booking/brief', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref: ref, details: details })
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        msg.className = 'bk-msg good';
+        msg.textContent = 'Got it — thank you.';
+        btn.textContent = 'Sent ✓';
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = (e.message || 'That did not send.') + ' Your booking is safe either way.';
+        btn.disabled = false;
+        btn.textContent = 'Send these details';
+      }
     }
 
     // ── COLLECTION ANALYTICS ──
