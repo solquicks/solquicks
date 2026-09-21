@@ -490,6 +490,24 @@ Every token ever swapped on this site now collects its fee in-token, plus the
 
 ## Blocked
 
+**12. The consulting hour is built but not on sale.**
+Committed 2026-09-20, not deployed. Two things are needed, both yours:
+
+1. A Calendly **secret event** for the hour, set as a worker secret:
+   `npx wrangler secret put CONSULT_CALENDLY`. A public Calendly link would
+   be forwardable — someone who never paid could book the hour. Until the
+   secret exists the service is absent from the rate card and `/hold`
+   refuses it, so nothing can be sold that cannot be scheduled.
+2. `ALTER TABLE bookings ADD COLUMN details TEXT` on production D1, which
+   is where a paid booking's brief is stored. Then deploy the worker, then
+   push — in that order. The page's "send the details" button calls
+   `/api/booking/brief`, so pushing the site first would put a button live
+   against a worker that does not yet answer it.
+
+The blurb currently reads: "An hour, one to one, on whatever you are
+building — the token, the launch, the community, or what to do next."
+You said you had wording for it; swap it in `BOOKING_TYPES` before deploying.
+
 **11. moon-stake mainnet.**
 Needs ~1.8 SOL for program rent. Everything else is ready: 28 tests passing,
 `stake-init.html` verified against the chain, `settle-stakers.mjs` dry-run
