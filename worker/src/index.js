@@ -2135,6 +2135,11 @@ const BOOKING_TYPES = [
     // duplicating a calendar this site would have to keep in step. The link
     // comes from config, so changing the event never needs a deploy.
     id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
+    // Its own wording, because the defaults for an async booking ("no calendar
+    // needed", "Order this") are written for something made and delivered, not
+    // for an hour spent on a call together.
+    meta: '60 minutes · one to one · we agree a time after you book',
+    cta: 'Book an hour',
     blurb: 'An hour, one to one, on whatever you are building — growth, revenue, and what to do next.',
     includes: [
       'Consulting and advisory for your project',
@@ -2212,14 +2217,6 @@ const BOOKING_POLICY = {
 
 function bookingType(id) {
   return BOOKING_TYPES.find(function (t) { return t.id === id; }) || null;
-}
-
-/// The consulting hour is paid here and scheduled on Calendly, so without that
-/// link there is nothing to hand someone who has just paid $100. Rather than
-/// take the money and apologise, the service is not offered at all until the
-/// link exists: it disappears from the rate card and a hold is refused.
-function bookable(env, t) {
-  return t.id !== 'consult' || !!env.CONSULT_CALENDLY;
 }
 
 /// SOL/USD, cached for five minutes. Bookings are quoted, not streamed, so a
@@ -4113,12 +4110,12 @@ export default {
         const wallet = await getSession(request, env).catch(function () { return null; });
         const holder = wallet ? await perkTier(env, wallet) : null;
         return json(request, env, {
-          types: BOOKING_TYPES.filter(function (t) {
-            return bookable(env, t);
-          }).map(function (t) {
-            // Only the consulting hour is scheduled elsewhere. The link is
-            // carried on the type so the page can show it the moment it is paid.
-            return t.id === 'consult' ? Object.assign({}, t, { calendly: env.CONSULT_CALENDLY }) : t;
+          types: BOOKING_TYPES.map(function (t) {
+            // The hour is arranged by hand. If a scheduling link is ever
+            // configured it is carried on the type and the page offers it the
+            // moment the hour is paid for, instead of asking for availability.
+            return t.id === 'consult' && env.CONSULT_CALENDLY
+              ? Object.assign({}, t, { calendly: env.CONSULT_CALENDLY }) : t;
           }),
           policy: BOOKING_POLICY,
           rushHours: RUSH_HOURS,
@@ -4136,7 +4133,7 @@ export default {
 
       if (path === '/api/booking/slots' && request.method === 'GET') {
         const type = bookingType(url.searchParams.get('type'));
-        if (!type || !bookable(env, type)) return json(request, env, { error: 'unknown booking type' }, 400);
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
         return json(request, env, { type: type.id, minutes: type.minutes, slots: await openSlots(env, type) });
       }
 
@@ -4145,7 +4142,7 @@ export default {
       if (path === '/api/booking/hold' && request.method === 'POST') {
         const body = await request.json().catch(function () { return {}; });
         const type = bookingType(body.type);
-        if (!type || !bookable(env, type)) return json(request, env, { error: 'unknown booking type' }, 400);
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
 
         const name = String(body.name || '').trim().slice(0, 120);
         const contact = String(body.contact || '').trim().slice(0, 200);

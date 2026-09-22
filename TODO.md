@@ -513,23 +513,15 @@ stays out of the menu until it is not. Each entry needs `name`, `url`, a logo
 in `img/referrals/`, `what` the platform does and `youGet`. Waiting on the ten
 links, logos and blurbs.
 
-**12. The consulting hour is built but not on sale.**
-Committed 2026-09-20, not deployed. Two things are needed, both yours:
+**12. ~~The consulting hour~~** — live 2026-09-22. Scheduled by hand rather
+than through Calendly, whose free plan allows one event type and the 30-minute
+link is using it. After paying, the form asks for a timezone and some times
+that suit; you come back with one. Nothing recurring to pay for, and only
+people who have actually paid ever get a slot.
 
-1. A Calendly **secret event** for the hour, set as a worker secret:
-   `npx wrangler secret put CONSULT_CALENDLY`. A public Calendly link would
-   be forwardable — someone who never paid could book the hour. Until the
-   secret exists the service is absent from the rate card and `/hold`
-   refuses it, so nothing can be sold that cannot be scheduled.
-2. `ALTER TABLE bookings ADD COLUMN details TEXT` on production D1, which
-   is where a paid booking's brief is stored. Then deploy the worker, then
-   push — in that order. The page's "send the details" button calls
-   `/api/booking/brief`, so pushing the site first would put a button live
-   against a worker that does not yet answer it.
-
-The wording is in: seven lines covering advisory, growth and revenue, GTM,
-marketing, community, Solana networking and events. Pinned by tests on both
-sides, so an accidental edit fails rather than ships.
+If that becomes tedious, `npx wrangler secret put CONSULT_CALENDLY` with a
+secret-event link makes the page hand that over instead — no code change, no
+deploy. Cal.com's free tier allows unlimited event types if Calendly's does not.
 
 **11. moon-stake mainnet.**
 Needs ~1.8 SOL for program rent. Everything else is ready: 28 tests passing,

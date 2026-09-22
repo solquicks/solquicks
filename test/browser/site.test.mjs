@@ -190,7 +190,8 @@ function workerAnswer(p, url) {
         includes: ['Consulting and advisory for your project', 'An idea session focused on growth and revenue',
           'Go-to-market strategy', 'Marketing advisory', 'Community building strategy',
           'Solana networking', 'Events planning'],
-        calendly: 'https://calendly.com/solquicks/secret-hour' }
+        meta: '60 minutes · one to one · we agree a time after you book',
+        cta: 'Book an hour' }
     ],
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
       rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
@@ -713,6 +714,17 @@ try {
     // Seven lines are served and seven have to appear. A card that quietly
     // renders the first few would sell an hour on a shorter promise than the
     // one that was made.
+    // Its own wording. The default for an async booking says "no calendar
+    // needed · made for you", which is not an hour on a call.
+    eq('the hour says how it is scheduled',
+      (await consult.locator('.bk-meta').first().textContent()).trim(),
+      '60 minutes · one to one · we agree a time after you book');
+    eq('and the button asks for an hour',
+      (await consult.locator('button.bk-go').first().textContent()).trim(), 'Book an hour');
+    eq('while the other async service keeps the default wording',
+      (await page.locator('.bk-card', { hasText: 'Custom content' }).locator('.bk-meta').first().textContent()).trim(),
+      'No calendar needed · made for you');
+
     const lines = await consult.locator('.bk-inc li').allTextContents();
     eq('everything the hour covers is listed, not just the first few', lines.length, 7);
     eq('in the order it was written', lines.map((t) => t.trim()).join(' · '),
@@ -810,12 +822,22 @@ try {
     await page.waitForFunction(() => /Got it/.test(document.getElementById('bk-brief-msg').textContent), null, { timeout: 10000 });
     eq('the details reach me', net.briefs, 1);
 
-    // The consulting hour sends them to Calendly to pick a time
+    // With no scheduling link — how it actually ships — the hour is arranged
+    // by hand, so the next thing needed is when they are free.
+    await page.evaluate(() => showBookingDone({ ref: 'FOX-CN0001', type: 'consult' }, false, null));
+    eq('with no link it offers no button to pick a time',
+      await page.locator('a.bk-go', { hasText: 'Pick your hour' }).count(), 0);
+    ok('and says a time will be agreed instead',
+      /Tell me when you are free/.test(await page.textContent('.bk-done')), await page.textContent('.bk-done'));
+    ok('asking for a timezone and some times that suit',
+      /timezone/.test(await page.textContent('.bk-brief-box')), await page.textContent('.bk-brief-box'));
+
+    // And if a link is ever configured, it takes over.
     await page.evaluate(() => showBookingDone(
       { ref: 'FOX-CN0001', type: 'consult', calendly: 'https://calendly.com/solquicks/secret-hour' }, false, null));
     const pick = page.locator('a.bk-go', { hasText: 'Pick your hour' });
-    eq('consulting hands over the scheduling link', await pick.count(), 1);
-    eq('pointing at the configured event', await pick.getAttribute('href'), 'https://calendly.com/solquicks/secret-hour');
+    eq('a configured link is handed over instead', await pick.count(), 1);
+    eq('pointing at the event', await pick.getAttribute('href'), 'https://calendly.com/solquicks/secret-hour');
     ok('and it still asks what the call is about', await page.locator('#bk-brief-after').count() > 0);
 
     // Coming back later with only a reference

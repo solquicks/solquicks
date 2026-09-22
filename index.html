@@ -7063,11 +7063,13 @@
         '<div class="bk-msg" id="bk-find-msg"></div></div>';
 
       list.innerHTML = adCard + lookup + d.types.map(function (t) {
-        const label = t.mode === 'enquiry' ? 'Ask about a date'
-          : t.mode === 'async' ? 'Order this' : 'Pick a time';
-        const meta = t.mode === 'enquiry' ? 'In person · travel included'
+        // A type can carry its own wording. The defaults below describe a
+        // thing made and delivered, which is wrong for an hour on a call.
+        const label = t.cta || (t.mode === 'enquiry' ? 'Ask about a date'
+          : t.mode === 'async' ? 'Order this' : 'Pick a time');
+        const meta = t.meta || (t.mode === 'enquiry' ? 'In person · travel included'
           : t.mode === 'async' ? 'No calendar needed · made for you'
-          : t.minutes + ' minutes · ' + (t.format || 'live');
+          : t.minutes + ' minutes · ' + (t.format || 'live'));
         // The worker works out which perk applies and sends the percentage
         // for this wallet, so a collectible holder is not shown a Ranger's
         // discount and charged something else at checkout.
@@ -7512,7 +7514,8 @@
       podcast: 'Guest handles, the topic, links I should read first, and anything to steer clear of.',
       stream: 'What we are streaming, which account it runs from, and anything to steer clear of.',
       custom: 'What you want made, any references, and when you need it.',
-      consult: 'What you are building, where you are stuck, and links I should look at before the call.'
+      consult: 'Your timezone and a few times that suit you, plus what you are building, ' +
+        'where you are stuck, and links I should look at before we talk.'
     };
 
     function showBookingDone(d, isEnquiry, sig) {
@@ -7532,14 +7535,15 @@
         '<p class="bk-hint">Keep that reference.' +
         (sig ? ' <a href="https://solscan.io/tx/' + encodeURIComponent(sig) + '" target="_blank" rel="noopener noreferrer">View receipt</a>' : '') +
         '</p>' +
-        // The consulting hour is scheduled on Calendly rather than here, so
-        // the link is the next thing they need — and the only thing standing
+        // The hour is arranged by hand: the next thing needed is when they are
+        // free, which the box below asks for. If a scheduling link is ever
+        // configured it replaces that, and becomes the only thing standing
         // between paying and having a time.
         (d.calendly
           ? '<a class="bk-go" href="' + escapeHtml(d.calendly) + '" target="_blank" rel="noopener noreferrer" ' +
             'style="display:block;text-align:center;text-decoration:none;margin-top:12px">Pick your hour →</a>'
           : d.type === 'consult'
-            ? '<p class="bk-hint">I\'ll send you a link to pick your hour.</p>' : '') +
+            ? '<p class="bk-hint">Tell me when you are free below and I\'ll come back with a time.</p>' : '') +
         (isEnquiry || !prompt ? '' :
           '<div class="bk-brief-box">' +
           '<label for="bk-brief-after">One more thing, while you are here</label>' +

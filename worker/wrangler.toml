@@ -26,15 +26,17 @@ STAKING_ONCHAIN = "false"
 [triggers]
 crons = ["*/30 * * * *"]
 
-# CONSULT_CALENDLY is deliberately NOT here. It is a Calendly secret-event link,
-# shown only to someone who has paid, and this file is in a public repo — so it
-# is set as a secret instead:
+# The consulting hour is arranged by hand — Calendly's free plan allows one
+# event type and the 30-minute link is using it — so the page asks for
+# availability once the hour is paid for. No config is needed for that.
+#
+# If a scheduling link is ever wanted, set CONSULT_CALENDLY as a secret rather
+# than a var here: it would be a secret-event link shown only to someone who has
+# paid, and this file is in a public repo.
 #
 #   npx wrangler secret put CONSULT_CALENDLY
 #
-# Until it is set, the consulting hour is not offered at all: it is absent from
-# the rate card and a hold for it is refused, so nobody can pay for an hour that
-# cannot yet be scheduled.
+# With one set, the page offers it instead of asking when they are free.
 
 [[d1_databases]]
 binding = "DB"

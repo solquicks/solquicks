@@ -842,19 +842,26 @@ section('the consulting hour');
   eq('the link comes back with the booking', h.body.calendly, 'https://calendly.com/solquicks/secret-hour');
   eq('and it is paid for like anything else', h.body.usdc, 100000000);
 
-  // Without a link there is nothing to hand someone who has just paid $100, so
-  // the hour is not sold at all rather than sold and apologised for.
+  // Calendly's free plan allows one event type and the 30-minute link is
+  // using it, so the hour is arranged by hand: sold with no link at all, and
+  // the page asks for availability once it is paid for.
   const bare = freshEnv();
   const card = (await call(bare, 'GET', '/api/booking/types')).body.types;
-  ok('with no link configured it is off the rate card entirely',
-    !card.some((t) => t.id === 'consult'), card.map((t) => t.id).join(','));
-  ok('the other services are unaffected', card.length === types.length - 1,
-    `${card.length} without the link, ${types.length} with it`);
+  const noLink = card.find((t) => t.id === 'consult');
+  ok('with no link configured the hour is still on sale', !!noLink, card.map((t) => t.id).join(','));
+  eq('and carries no link to offer', noLink.calendly, undefined);
+  eq('every service is on the card either way', card.length, types.length);
 
-  const blocked = await call(bare, 'POST', '/api/booking/hold', { body: { type: 'consult', ...guest } });
-  eq('and it cannot be booked by hand either', blocked.status, 400);
-  const paid = await call(bare, 'GET', '/api/booking/slots?type=consult');
-  eq('nor can its slots be listed', paid.status, 400);
+  const held = await call(bare, 'POST', '/api/booking/hold', { body: { type: 'consult', ...guest } });
+  eq('it can be booked without one', held.status, 200);
+  eq('and the booking says there is no link', held.body.calendly, null);
+
+  // Its own wording: the defaults for an async booking describe something
+  // made and delivered, which is not an hour spent on a call.
+  ok('the card does not call it a thing with no calendar',
+    !/no calendar needed/i.test(noLink.meta || ''), noLink.meta);
+  ok('it says a time is agreed after booking', /after you book/.test(noLink.meta), noLink.meta);
+  eq('and the button asks for an hour', noLink.cta, 'Book an hour');
 }
 
 finish();
