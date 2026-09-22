@@ -527,9 +527,9 @@ Committed 2026-09-20, not deployed. Two things are needed, both yours:
    `/api/booking/brief`, so pushing the site first would put a button live
    against a worker that does not yet answer it.
 
-The blurb currently reads: "An hour, one to one, on whatever you are
-building — the token, the launch, the community, or what to do next."
-You said you had wording for it; swap it in `BOOKING_TYPES` before deploying.
+The wording is in: seven lines covering advisory, growth and revenue, GTM,
+marketing, community, Solana networking and events. Pinned by tests on both
+sides, so an accidental edit fails rather than ships.
 
 **11. moon-stake mainnet.**
 Needs ~1.8 SOL for program rent. Everything else is ready: 28 tests passing,
