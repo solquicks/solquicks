@@ -827,6 +827,13 @@ section('the consulting hour');
   const consult = types.find((t) => t.id === 'consult');
   ok('it is on the rate card', !!consult, types.map((t) => t.id).join(','));
   eq('at $100 for an hour', consult.price + '/' + consult.minutes, '100/60');
+
+  // The seven lines solquicks wrote, served as written. This is what a
+  // customer reads before paying $100, so a silent edit should fail here.
+  eq('and lists what the hour covers, in full', consult.includes.join(' · '),
+    'Consulting and advisory for your project · An idea session focused on growth and revenue · ' +
+    'Go-to-market strategy · Marketing advisory · Community building strategy · ' +
+    'Solana networking · Events planning');
   eq('with no calendar of its own', consult.mode, 'async');
   eq('and the scheduling link comes from config', consult.calendly, 'https://calendly.com/solquicks/secret-hour');
 

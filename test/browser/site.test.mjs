@@ -155,7 +155,12 @@ function workerAnswer(p, url) {
       { id: 'custom', name: 'Custom content', mode: 'async', minutes: null, price: 250,
         blurb: 'Made for you.', includes: ['A video'] },
       { id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
-        blurb: 'An hour on your project.', includes: ['A full hour'],
+        blurb: 'An hour on your project.',
+        // As many lines as the real one has: the page has to render every one
+        // it is given, not the first few.
+        includes: ['Consulting and advisory for your project', 'An idea session focused on growth and revenue',
+          'Go-to-market strategy', 'Marketing advisory', 'Community building strategy',
+          'Solana networking', 'Events planning'],
         calendly: 'https://calendly.com/solquicks/secret-hour' }
     ],
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
@@ -389,6 +394,12 @@ try {
   // Swap, Store and Book sit in the bar itself; the rest are behind the menu.
   const quick = await page.$$eval('.nav-quick-btn[data-tab]', (els) => els.map((e) => e.dataset.tab));
   eq('the three that earn are in the bar', quick.join(','), 'swap,store,book');
+  // The bar, the panel heading and every perk line that mentions it have to
+  // agree — including the capital T the rest of the site uses.
+  eq('and the booking one is named in full',
+    (await page.textContent('.nav-quick-btn[data-tab="book"]')).trim(), 'Book The Fox');
+  eq('matching the heading of the page it opens',
+    (await page.textContent('#panel-book .bk-lead')).trim(), 'Book The Fox');
   ok('and are not also buried in the menu',
     (await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab)))
       .every((t) => !quick.includes(t)));
@@ -651,6 +662,26 @@ try {
   });
   ok('a staked Ranger shows its days and points', /3 days · 300 pts/.test(mine[0]), JSON.stringify(mine));
   ok('an unstaked one shows no earnings', !/pts/.test(mine[1]), JSON.stringify(mine));
+
+  section('booking: the rate card');
+  {
+    await page.evaluate(() => switchTab('book'));
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+
+    const consult = page.locator('.bk-card', { hasText: 'Project consulting' });
+    eq('the consulting hour is on the card', await consult.count(), 1);
+    eq('at its price', (await consult.locator('.bk-price').first().textContent()).replace(/\s+/g, ' ').trim().slice(0, 4), '$100');
+
+    // Seven lines are served and seven have to appear. A card that quietly
+    // renders the first few would sell an hour on a shorter promise than the
+    // one that was made.
+    const lines = await consult.locator('.bk-inc li').allTextContents();
+    eq('everything the hour covers is listed, not just the first few', lines.length, 7);
+    eq('in the order it was written', lines.map((t) => t.trim()).join(' · '),
+      'Consulting and advisory for your project · An idea session focused on growth and revenue · ' +
+      'Go-to-market strategy · Marketing advisory · Community building strategy · ' +
+      'Solana networking · Events planning');
+  }
 
   section('booking: a basket survives wandering off and coming back');
   {
