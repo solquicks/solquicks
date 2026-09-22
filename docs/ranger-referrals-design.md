@@ -1,10 +1,12 @@
-# Ranger referral rewards — design, not yet built
+# Ranger referral rewards — design, built 2026-09-22
 
 A Ranger shares a link. Someone arrives, connects a wallet, and that wallet is
 tied to the Ranger for good. From then on, every swap the referred wallet makes
 on this site earns the Ranger points and a share of the fee.
 
-Nothing here is live. This is the thing to argue with before any of it is built.
+Built and tested; not yet deployed. Everything below was decided before any of
+it was written, and the code follows it — `worker/test/invite.test.mjs` holds
+each rule down, including the ones about what must never be paid.
 
 ## Where the numbers actually are
 

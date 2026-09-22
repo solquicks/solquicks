@@ -543,6 +543,35 @@
        that still reads as "started". The count beside it stays exact. */
     .bonding-fill.started { min-width: 6px; }
 
+    .iv-lead { color: var(--muted); font-size: 0.9rem; margin: 0 0 10px; line-height: 1.5; }
+    .iv-link-row { display: flex; gap: 8px; }
+    .iv-link-row input {
+      flex: 1; min-width: 0; font: inherit; font-weight: 700; font-size: 0.88rem;
+      padding: 9px 12px; border: var(--line); border-radius: 999px; background: var(--cream);
+      color: var(--ink);
+    }
+    .iv-copy {
+      appearance: none; cursor: pointer; font-family: 'Baloo 2', sans-serif; font-weight: 800;
+      padding: 9px 16px; border: var(--line); border-radius: 999px;
+      background: var(--orange); color: #fff; white-space: nowrap;
+    }
+    .iv-copy:hover { background: var(--orange-deep); }
+    .iv-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+    .iv-stat {
+      background: var(--cream); border: var(--line); border-radius: 14px;
+      padding: 10px 8px; text-align: center;
+    }
+    .iv-stat b { display: block; font-size: 1.15rem; }
+    .iv-stat span { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+    .iv-claim { margin-top: 12px; }
+    .iv-claim button {
+      appearance: none; cursor: pointer; width: 100%; font-family: 'Baloo 2', sans-serif;
+      font-weight: 800; padding: 10px; border: var(--line); border-radius: 999px;
+      background: var(--orange); color: #fff;
+    }
+    .iv-claim button:disabled { background: var(--cream); color: var(--muted); cursor: default; }
+    .iv-note { font-size: 0.8rem; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+
     .ref-list { display: grid; gap: 12px; }
     .ref-card {
       display: grid; grid-template-columns: 56px 1fr; gap: 14px; align-items: start;
@@ -2324,6 +2353,32 @@
         <button class="daily-claim" id="daily-claim" onclick="claimDaily()" hidden></button>
       </div>
 
+      <!-- Invite. Sits with the rest of what a wallet has earned, and stays
+           hidden until there is a wallet to earn for. -->
+      <div class="lb-card iv-card" id="iv-card" hidden>
+        <div class="lb-title">📣 Invite</div>
+        <p class="iv-lead" id="iv-lead"></p>
+        <div class="iv-link-row">
+          <input id="iv-link" readonly spellcheck="false" onclick="this.select()"/>
+          <button class="iv-copy" id="iv-copy" onclick="copyInviteLink()">Copy</button>
+        </div>
+        <div class="iv-stats" id="iv-stats"></div>
+        <div class="iv-claim" id="iv-claim"></div>
+        <div class="bk-msg" id="iv-msg"></div>
+      </div>
+
+      <!-- Somebody who arrived with a code, or was given one later. Hidden once
+           a code is in, because it can never be changed. -->
+      <div class="lb-card iv-card" id="iv-enter-card" hidden>
+        <div class="lb-title">🎟️ Got a code?</div>
+        <p class="iv-lead" id="iv-enter-lead"></p>
+        <div class="iv-link-row">
+          <input id="iv-code" placeholder="FOX-XXXX" spellcheck="false" maxlength="8"/>
+          <button class="iv-copy" onclick="useInviteCode()">Use it</button>
+        </div>
+        <div class="bk-msg" id="iv-enter-msg"></div>
+      </div>
+
       <div class="lb-card">
         <div class="lb-title">🏆 Top Foxes</div>
         <div id="lb-table">
@@ -3367,6 +3422,12 @@
       clearToken() {
         try { localStorage.removeItem('fox_session'); } catch (e) {}
         this.token = null; this.server = null;
+        // These are one wallet's earnings and its own code. They belong to
+        // nobody the moment that wallet is gone.
+        for (const id of ['iv-card', 'iv-enter-card']) {
+          const el = document.getElementById(id);
+          if (el) el.hidden = true;
+        }
       },
 
       // points still accruing from staking count toward the displayed total,
@@ -3401,6 +3462,7 @@
         if (typeof loadRangers === 'function') loadRangers();
         if (typeof loadMission === 'function') loadMission();
         if (typeof loadSwapPoints === 'function') loadSwapPoints().then(flushSwapPoints);
+        if (typeof loadInvite === 'function') loadInvite();
       },
 
       render() {
@@ -7752,6 +7814,139 @@
           note('collectible-note', 'One per wallet, and yours is already in there.', 'ok');
         }
       } catch (e) { /* the card still says what it costs */ }
+    }
+
+    // ── invite ────────────────────────────────────────────────────────────
+    // Somebody arrives on a shared link before they have a wallet, connects
+    // one some minutes later, and only then can be tied to whoever sent them.
+    // The code has to survive that gap, so it is kept here until a wallet
+    // exists to bind it to.
+    const INVITE_PENDING_KEY = 'fox_invite_code';
+    let inviteData = null;
+
+    function inviteFromUrl() {
+      try {
+        const code = new URLSearchParams(location.search).get('r');
+        if (!code) return;
+        localStorage.setItem(INVITE_PENDING_KEY, code.trim().toUpperCase().slice(0, 8));
+        // Taken out of the address bar so it is not carried into anything the
+        // visitor shares from here, which would pass on somebody else's code.
+        const url = new URL(location.href);
+        url.searchParams.delete('r');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+      } catch (e) { /* a code is a nicety, never a blocker */ }
+    }
+    inviteFromUrl();
+
+    function pendingInvite() {
+      try { return localStorage.getItem(INVITE_PENDING_KEY) || ''; } catch (e) { return ''; }
+    }
+    function clearPendingInvite() {
+      try { localStorage.removeItem(INVITE_PENDING_KEY); } catch (e) { /* nothing to clear */ }
+    }
+
+    function inviteLinkFor(code) {
+      return location.origin + location.pathname + '?r=' + encodeURIComponent(code);
+    }
+
+    /// Everything this wallet has earned by inviting people, and the box for
+    /// anyone who arrived with a code of their own. Both cards stay hidden
+    /// until there is a wallet, because neither means anything without one.
+    async function loadInvite() {
+      const card = document.getElementById('iv-card');
+      const enter = document.getElementById('iv-enter-card');
+      if (!card) return;
+      if (!FoxPoints || !FoxPoints.token) { card.hidden = true; enter.hidden = true; return; }
+
+      const d = await FoxPoints.api('/api/invite');
+      if (!d || d.error || !d.code) { card.hidden = true; enter.hidden = true; return; }
+
+      // Arrived on somebody's link. Binding needs a wallet, which only exists
+      // now, so this is the first moment it can be done.
+      const waiting = pendingInvite();
+      if (waiting && !d.invitedBy) {
+        const r = await FoxPoints.api('/api/invite/bind', { method: 'POST', body: { code: waiting } });
+        clearPendingInvite();
+        if (r && r.ok) return loadInvite();
+      } else if (waiting && d.invitedBy) {
+        clearPendingInvite();
+      }
+
+      inviteData = d;
+      card.hidden = false;
+      document.getElementById('iv-link').value = inviteLinkFor(d.code);
+      document.getElementById('iv-lead').innerHTML =
+        'Share this and you earn <strong>' + d.sharePct + '% of the swap fee</strong> from every wallet that ' +
+        'arrives through it — for as long as they keep swapping. ' +
+        (d.sharePct === d.rangerPct
+          ? 'That is the Moon Ranger rate.'
+          : 'Hold a Moon Ranger and it goes up to ' + d.rangerPct + '%.');
+
+      document.getElementById('iv-stats').innerHTML =
+        '<div class="iv-stat"><b>' + d.invited + '</b><span>Invited</span></div>' +
+        '<div class="iv-stat"><b>' + d.traded + '</b><span>Swapped</span></div>' +
+        '<div class="iv-stat"><b>$' + d.earnedUsd.toFixed(2) + '</b><span>Earned</span></div>';
+
+      // Said plainly, because at this volume the honest number is small and a
+      // dashboard that hides that is the thing that loses trust.
+      const claim = document.getElementById('iv-claim');
+      claim.innerHTML =
+        '<button id="iv-claim-btn" onclick="claimInvite()"' + (d.claimable ? '' : ' disabled') + '>' +
+        (d.claimable ? 'Claim $' + d.availableUsd.toFixed(2) : '$' + d.availableUsd.toFixed(2) + ' so far') +
+        '</button>' +
+        '<p class="iv-note">Paid in USDC once you have $' + d.claimMinUsd + '. ' +
+        'Nothing is paid for a signup — only for swaps the people you invite actually make.' +
+        (d.queuedClaims.length
+          ? ' <strong>$' + d.queuedClaims.reduce(function (n, c) { return n + c.usd; }, 0).toFixed(2) +
+            ' is queued for payment.</strong>'
+          : '') +
+        '</p>';
+
+      // Only shown while it can still be used: a code can never be changed.
+      enter.hidden = !!d.invitedBy;
+      if (!d.invitedBy) {
+        document.getElementById('iv-enter-lead').textContent =
+          'Someone send you here? Put their code in and you earn ' + d.refereePoints +
+          ' Fox Points on your first swap of $' + d.refereeMinUsd + ' or more.';
+        if (waiting) document.getElementById('iv-code').value = waiting;
+      }
+    }
+
+    async function copyInviteLink() {
+      const link = document.getElementById('iv-link').value;
+      try {
+        await navigator.clipboard.writeText(link);
+        note('iv-msg', 'Link copied.', 'ok');
+      } catch (e) {
+        document.getElementById('iv-link').select();
+        note('iv-msg', 'Press copy — the link is selected.', '');
+      }
+    }
+
+    async function useInviteCode() {
+      const el = document.getElementById('iv-code');
+      const code = (el.value || '').trim().toUpperCase();
+      if (!code) { note('iv-enter-msg', 'Put a code in first.', 'bad'); return; }
+      note('iv-enter-msg', 'Checking…', '');
+      const r = await FoxPoints.api('/api/invite/bind', { method: 'POST', body: { code: code } });
+      if (!r || r.error) { note('iv-enter-msg', (r && r.error) || 'That did not work.', 'bad'); return; }
+      clearPendingInvite();
+      note('iv-enter-msg', r.note || 'Code accepted.', 'ok');
+      loadInvite();
+    }
+
+    async function claimInvite() {
+      const btn = document.getElementById('iv-claim-btn');
+      if (btn) btn.disabled = true;
+      note('iv-msg', 'Asking…', '');
+      const r = await FoxPoints.api('/api/invite/claim', { method: 'POST' });
+      if (!r || r.error) {
+        note('iv-msg', (r && r.error) || 'Could not claim right now.', 'bad');
+        if (btn) btn.disabled = false;
+        return;
+      }
+      note('iv-msg', '$' + Number(r.claimed).toFixed(2) + ' queued — it is paid in USDC by hand, so give it a day or two.', 'ok');
+      loadInvite();
     }
 
     /// The platforms worth passing on. Content lives in referrals.json so a new

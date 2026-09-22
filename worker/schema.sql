@@ -149,3 +149,31 @@ CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet, ts);
 -- what stops a second run of the scheduled job paying anyone twice.
 CREATE TABLE IF NOT EXISTS swap_weekly_awards (week TEXT NOT NULL, rank INTEGER NOT NULL, wallet TEXT NOT NULL, usd REAL NOT NULL, points INTEGER NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (week, rank));
 CREATE INDEX IF NOT EXISTS idx_swaps_ts ON swaps(ts);
+
+-- ── invites ─────────────────────────────────────────────────────────────────
+-- A wallet shares a code; wallets that arrive through it are tied to it for
+-- good, and every swap they make pays the referrer a share of the fee this site
+-- collected. Nothing is ever paid for a signup — see
+-- docs/ranger-referrals-design.md for why that single rule is what makes the
+-- whole thing unfarmable without any identity checks.
+
+-- One code per wallet, handed out the first time it is asked for.
+CREATE TABLE IF NOT EXISTS invite_codes (wallet TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+
+-- Who brought whom. One referrer per wallet, first touch, never reassigned —
+-- the primary key is what enforces that. bonus_paid marks the referee's one-off
+-- points, which are earned by swapping rather than by arriving.
+CREATE TABLE IF NOT EXISTS invites (wallet TEXT PRIMARY KEY, referrer TEXT NOT NULL, code TEXT NOT NULL, bound_at INTEGER NOT NULL, bonus_paid INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_invites_referrer ON invites(referrer);
+
+-- What a referred swap earned its referrer. Keyed by the swap's signature, so a
+-- reconciler that walks the same transaction twice cannot pay for it twice.
+-- share_pct is stored rather than recomputed: the rate depends on whether the
+-- referrer held a Ranger at the time, and that changes.
+CREATE TABLE IF NOT EXISTS invite_earnings (signature TEXT PRIMARY KEY, referrer TEXT NOT NULL, referee TEXT NOT NULL, usd REAL NOT NULL, points INTEGER NOT NULL DEFAULT 0, share_pct INTEGER NOT NULL, fee_usd REAL NOT NULL, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_invite_earnings_referrer ON invite_earnings(referrer, ts);
+
+-- A request to be paid out. Claimed, not airdropped: this row is what is owed,
+-- and it is settled by hand in USDC. Nothing here signs anything.
+CREATE TABLE IF NOT EXISTS invite_claims (id INTEGER PRIMARY KEY AUTOINCREMENT, wallet TEXT NOT NULL, usd REAL NOT NULL, status TEXT NOT NULL, requested_at INTEGER NOT NULL, paid_at INTEGER, signature TEXT);
+CREATE INDEX IF NOT EXISTS idx_invite_claims_wallet ON invite_claims(wallet, requested_at);

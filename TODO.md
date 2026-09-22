@@ -490,14 +490,18 @@ Every token ever swapped on this site now collects its fee in-token, plus the
 
 ## Next, once the above is unblocked
 
-**Ranger referral rewards.** Designed and decided, not built — see
+**Ranger referral rewards — built 2026-09-22, not deployed.** Design in
 `docs/ranger-referrals-design.md`. Rangers earn 50% of the fee on wallets they
 bring in, everyone else 20%; balances are claimed and paid by hand; the referee
-earns 250 points after their first $50 swap. The one rule it rests on is that
-nothing is ever paid for a signup, only for fees generated, which is what makes
-it unfarmable without any identity checks. Call it "Invite" on the Fox Points
-tab — the Referrals tab is the outbound one and sharing the word will confuse
-both.
+earns 250 points after their first $50 swap. Nothing is ever paid for a signup,
+only for fees generated, which is what makes it unfarmable without any identity
+checks. Lives on the Fox Points tab as "Invite".
+
+Before it goes live it needs the four invite tables applied to production D1
+(`invite_codes`, `invites`, `invite_earnings`, `invite_claims` — all four are in
+`worker/schema.sql`). Paying out is `GET /api/admin/invite/claims` to see what is
+owed and `POST /api/admin/invite/paid` with the id and the USDC signature once
+it has been sent.
 
 ---
 

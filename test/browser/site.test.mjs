@@ -55,7 +55,8 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
-const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false };
+const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
+  invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
 const cleanupScan = () => ({
@@ -83,6 +84,19 @@ const HOLDINGS = [
   { mint: 'SPAMaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'CLAIMNOW', name: 'Visit claim-site', decimals: 6, verified: false, amount: 1000, price: null, usd: null },
   { mint: 'DUSTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'DUST', name: 'Worth almost nothing', decimals: 6, verified: false, amount: 5, price: 0.0001, usd: 0.0005 }
 ];
+
+// What the invite endpoint would say, given what the test has done to it so far.
+function inviteState() {
+  return {
+    code: 'FOX-MINE', sharePct: net.invite.ranger ? 50 : 20, rangerPct: 50, basePct: 20,
+    pointsPct: 10, refereePoints: 250, refereeMinUsd: 50, claimMinUsd: 10,
+    invited: net.invite.invited, traded: net.invite.traded,
+    earnedUsd: net.invite.earned, availableUsd: net.invite.available, claimedUsd: net.invite.claimed,
+    pointsEarned: 120, paidSwaps: 4, claimable: net.invite.claimable,
+    queuedClaims: net.invite.claimed ? [{ id: 1, usd: net.invite.claimed, requested_at: Date.now() }] : [],
+    invitedBy: net.invite.invitedBy
+  };
+}
 
 function workerAnswer(p, url) {
   if (p === '/api/swap/tokens') return { tokens: [
@@ -144,6 +158,21 @@ function workerAnswer(p, url) {
       { mint: 'm4', name: 'Ranger #4', image: 'https://gone.test/4', imageAlt: null, rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
     ]
   };
+  if (p === '/api/invite') return inviteState();
+  if (p === '/api/invite/bind') {
+    const code = (net.lastBody && net.lastBody.code) || '';
+    if (code === 'FOX-MINE') return { error: 'that is your own code' };
+    if (code !== 'FOX-GOOD') return { error: 'no such code' };
+    net.invite.invitedBy = code;
+    return { ok: true, code: code, note: 'Swap $50 or more and you earn 250 Fox Points.' };
+  }
+  if (p === '/api/invite/claim') {
+    if (!net.invite.claimable) return { error: 'there is $2.40 to claim, and the minimum is $10' };
+    net.invite.claimed = net.invite.available;
+    net.invite.available = 0;
+    net.invite.claimable = false;
+    return { ok: true, claimed: net.invite.claimed };
+  }
   if (p === '/api/cleanup/scan') return cleanupScan();
   if (p === '/api/cleanup/award') return { awarded: 6, burned: 0, closed: 3, player: { points: 6 } };
   if (p === '/api/store') return { product: { name: 'quicks Plushie', priceUsdc: 40, quantity: 100, sold: 12, available: 88, soldOut: false } };
@@ -293,6 +322,11 @@ async function standIns(context) {
     if (url.startsWith(WORKER)) {
       const u = new URL(url);
       net.worker.push(u.pathname);
+      // POSTed bodies, so a stub can answer differently depending on what was
+      // actually sent rather than only on the path.
+      if (req.method() === 'POST') {
+        try { net.lastBody = JSON.parse(req.postData() || '{}'); } catch (e) { net.lastBody = {}; }
+      }
       if (u.pathname === '/api/swap/quote') {
         net.lastQuote = u.searchParams.get('in');
         net.lastQuoteAmount = u.searchParams.get('amount');
@@ -372,6 +406,10 @@ const context = await browser.newContext({ viewport: { width: 430, height: 900 }
 await standIns(context);
 await context.addInitScript(testWallet, WALLET);
 const page = await context.newPage();
+// The invite stub's state lives in Node. These let a test drive it from inside
+// the page, which is where loadInvite runs.
+await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
+await page.exposeFunction('net_invite', () => net.invite);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 const cspBlocks = [];
@@ -1271,6 +1309,127 @@ try {
     eq('the other button offers the whole set',
       (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, xs.tokens.length);
     await fees.close();
+  }
+
+  section('invite: the link, and what it honestly says it pays');
+  {
+    // Signed out, neither card means anything.
+    await page.evaluate(() => switchTab('leaderboard'));
+    eq('signed out there is no invite card',
+      await page.evaluate(() => document.getElementById('iv-card').hidden), true);
+
+    // Stand in a session. The page only ever asks whether it has a token.
+    await page.evaluate(() => { FoxPoints.token = 'test-session'; return loadInvite(); });
+    await page.waitForSelector('#iv-card', { state: 'visible', timeout: 10000 });
+
+    eq('the link is this site, carrying the code',
+      await page.evaluate(() => document.getElementById('iv-link').value),
+      (await page.evaluate(() => location.origin + location.pathname)) + '?r=FOX-MINE');
+
+    const lead = await page.textContent('#iv-lead');
+    ok('the rate is stated up front', /20% of the swap fee/.test(lead), lead);
+    ok('and says what a Ranger would earn instead', /goes up to 50%/.test(lead), lead);
+
+    // Invited, and how many of those actually swapped. The gap between the two
+    // is the only honest measure of whether any of this is working.
+    const stats = await page.$$eval('.iv-stat',
+      (els) => els.map((e) => e.querySelector('b').textContent + ' ' + e.querySelector('span').textContent));
+    eq('how many arrived', stats[0], '6 Invited');
+    eq('and how many of them actually swapped', stats[1], '2 Swapped');
+    eq('and what that earned', stats[2], '$2.40 Earned');
+
+    // The honest bit. A dashboard that implies money is coming, at a volume
+    // where it is not, is the thing that loses trust.
+    const claim = await page.textContent('#iv-claim');
+    ok('a balance under the floor says what it is rather than offering a button',
+      /\$2\.40 so far/.test(claim), claim);
+    eq('and the button cannot be pressed',
+      await page.evaluate(() => document.getElementById('iv-claim-btn').disabled), true);
+    ok('with the floor named', /\$10/.test(claim), claim);
+    ok('and it says plainly that signups pay nothing',
+      /Nothing is paid for a signup/.test(claim), claim);
+
+    // Over the floor.
+    await page.evaluate(async () => {
+      await net_setInvite({ available: 42.5, earned: 42.5, claimable: true });
+      return loadInvite();
+    });
+    await page.waitForFunction(() => /Claim/.test(document.getElementById('iv-claim').textContent), null, { timeout: 10000 });
+    eq('over the floor the button offers the amount',
+      (await page.textContent('#iv-claim-btn')).trim(), 'Claim $42.50');
+    await page.click('#iv-claim-btn');
+    await page.waitForFunction(() => /queued/.test(document.getElementById('iv-msg').textContent), null, { timeout: 10000 });
+    ok('claiming says it is paid by hand rather than pretending it is instant',
+      /by hand/.test(await page.textContent('#iv-msg')), await page.textContent('#iv-msg'));
+    await page.waitForFunction(() => /queued for payment/.test(document.getElementById('iv-claim').textContent), null, { timeout: 10000 });
+    ok('and the card then shows it as queued',
+      /\$42\.50 is queued/.test(await page.textContent('#iv-claim')), await page.textContent('#iv-claim'));
+
+    // Signing out takes one wallet's earnings off the screen with it.
+    await page.evaluate(() => FoxPoints.clearToken());
+    eq('signing out hides the card',
+      await page.evaluate(() => document.getElementById('iv-card').hidden), true);
+  }
+
+  section('invite: arriving on somebody else\'s link');
+  {
+    // The whole point: the code arrives long before there is a wallet to tie
+    // it to, and has to survive the gap.
+    await page.goto(SITE + '?r=fox-good', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+
+    eq('the code is kept for when a wallet shows up',
+      await page.evaluate(() => localStorage.getItem('fox_invite_code')), 'FOX-GOOD');
+    ok('and taken out of the address bar, so it is not passed on by accident',
+      !/[?&]r=/.test(await page.evaluate(() => location.href)), await page.evaluate(() => location.href));
+
+    await page.evaluate(async () => {
+      await net_setInvite({ invitedBy: null });
+      switchTab('leaderboard');
+      FoxPoints.token = 'test-session';
+      return loadInvite();
+    });
+    await page.waitForSelector('#iv-card', { state: 'visible', timeout: 10000 });
+    await page.waitForFunction(
+      () => document.getElementById('iv-enter-card').hidden === true, null, { timeout: 10000 });
+
+    eq('connecting a wallet binds it on its own',
+      await page.evaluate(async () => (await net_invite()).invitedBy), 'FOX-GOOD');
+    eq('and the kept code is used up', await page.evaluate(() => localStorage.getItem('fox_invite_code')), null);
+    eq('so the box asking for one is gone',
+      await page.evaluate(() => document.getElementById('iv-enter-card').hidden), true);
+  }
+
+  section('invite: typing a code in by hand');
+  {
+    await page.evaluate(async () => {
+      localStorage.removeItem('fox_invite_code');
+      await net_setInvite({ invitedBy: null });
+      switchTab('leaderboard');
+      FoxPoints.token = 'test-session';
+      return loadInvite();
+    });
+    await page.waitForSelector('#iv-enter-card', { state: 'visible', timeout: 10000 });
+    ok('the box says what using a code is worth',
+      /250 Fox Points on your first swap of \$50/.test(await page.textContent('#iv-enter-lead')),
+      await page.textContent('#iv-enter-lead'));
+
+    await page.fill('#iv-code', 'FOX-MINE');
+    await page.click('#iv-enter-card .iv-copy');
+    await page.waitForFunction(() => /own code/.test(document.getElementById('iv-enter-msg').textContent), null, { timeout: 10000 });
+    ok('your own code is refused, and says so',
+      /own code/.test(await page.textContent('#iv-enter-msg')));
+    eq('and the box stays open', await page.evaluate(() => document.getElementById('iv-enter-card').hidden), false);
+
+    await page.fill('#iv-code', 'nonsense');
+    await page.click('#iv-enter-card .iv-copy');
+    await page.waitForFunction(() => /no such code/.test(document.getElementById('iv-enter-msg').textContent), null, { timeout: 10000 });
+
+    await page.fill('#iv-code', 'fox-good');
+    await page.click('#iv-enter-card .iv-copy');
+    await page.waitForFunction(() => document.getElementById('iv-enter-card').hidden === true, null, { timeout: 10000 });
+    eq('a good one is accepted, however it is typed',
+      await page.evaluate(async () => (await net_invite()).invitedBy), 'FOX-GOOD');
   }
 
   section('referrals: a page that only exists when it has something in it');

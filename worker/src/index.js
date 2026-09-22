@@ -352,6 +352,11 @@ const RATE_RULES = [
   { match: ['/api/cleanup/scan'], name: 'cleanscan', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/cleanup/award'], name: 'cleanaward', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/invite'], name: 'inviteread', by: 'wallet', limit: 60, windowMs: 60000 },
+  // A code is 31^4, and guessing one only ever gives a stranger a referee —
+  // there is nothing on the other side of this worth brute-forcing. The limit
+  // is here so nobody can hammer it anyway.
+  { match: ['/api/invite/bind', '/api/invite/claim'], name: 'invitewrite', by: 'wallet', limit: 10, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
@@ -1530,6 +1535,31 @@ async function autoSlippageBps(env, inputMint, outputMint) {
   return 300;
 }
 
+// ── invites ─────────────────────────────────────────────────────────────────
+// A referrer earns a share of the fee this site collected on swaps by wallets
+// they brought in. Holding a Ranger more than doubles the rate — that is the
+// perk. The share comes out of this site's cut; nobody referred pays more.
+//
+// Nothing is ever paid for a signup. A bounty for arriving is free money for a
+// script with a hundred wallets; a share of fees costs a farmer more than it
+// returns at every rate below 100%. Wash-trading $10k through your own code
+// pays $40 in fees to get $20 back. That one rule is why none of this needs
+// identity checks. See docs/ranger-referrals-design.md.
+const INVITE_RANGER_PCT = 50;
+const INVITE_BASE_PCT = 20;
+// What the referrer earns in points, as a share of what the referee's swap is
+// worth in points. Minted fresh — the referee's own award is untouched.
+const INVITE_POINTS_PCT = 10;
+// Bounded per day for the same reason a wallet's own swap points are: points
+// feed missions and draws, and an unbounded number is worth bounding before it
+// matters rather than after.
+const INVITE_POINTS_DAILY_CAP = 500;
+// The referee's one-off bonus, earned by swapping rather than by arriving.
+const INVITE_REFEREE_POINTS = 250;
+const INVITE_REFEREE_MIN_USD = 50;
+// Below this a payout costs more in attention than it is worth.
+const INVITE_CLAIM_MIN_USD = 10;
+
 const SWAP_POINTS_PER_USD = 1;
 const SWAP_POINTS_DAILY_CAP = 500;
 const SWAP_POINTS_MIN_USD = 5;
@@ -1795,6 +1825,16 @@ async function recordSwap(env, signature) {
     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
   ).bind(row.signature, row.wallet, row.in_mint, row.in_symbol, row.in_amount, row.out_mint, row.out_symbol,
     row.out_amount, row.usd, row.fee_mint, row.fee_amount, row.fee_bps, row.saved_usd, row.ts).run();
+
+  // Every swap passes through here exactly once — from the page, from the
+  // reconciler, and from the history backfill — which makes it the one place
+  // an invite can be paid without counting a swap twice. A failure here must
+  // not lose the swap itself, which is the record everything else is built on.
+  try {
+    await accrueInvite(env, row);
+  } catch (e) {
+    await logError(env, 'invite.accrue', (e && e.message) || e);
+  }
   return { ok: true, swap: row };
 }
 
@@ -2375,6 +2415,125 @@ async function badgesFor(env, wallets) {
 
 /// What this wallet is entitled to, as one word. Rangers are checked first and
 /// win, so holding both never costs someone the better rate.
+// ── invites ─────────────────────────────────────────────────────────────────
+
+/// A code that survives being read aloud and typed back in: no O/0, no I/1, and
+/// the same alphabet booking references use. 4 characters from 31 is about a
+/// million codes, which is plenty and still short enough to say on a stream.
+function inviteCode() {
+  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  let out = 'FOX-';
+  for (const b of bytes) out += s[b % s.length];
+  return out;
+}
+
+/// This wallet's code, made the first time it is wanted. The unique index on
+/// code is what decides a collision, so a clash retries rather than overwriting
+/// somebody else's.
+async function inviteCodeFor(env, wallet) {
+  const row = await env.DB.prepare('SELECT code FROM invite_codes WHERE wallet = ?').bind(wallet).first();
+  if (row) return row.code;
+  for (let i = 0; i < 5; i++) {
+    const code = inviteCode();
+    const wrote = await env.DB.prepare(
+      'INSERT INTO invite_codes (wallet, code, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING'
+    ).bind(wallet, code, Date.now()).run();
+    if (wrote.meta.changes === 1) return code;
+    // Either this wallet was given one by a request that raced this, or the
+    // code was taken. Re-read before trying again.
+    const now = await env.DB.prepare('SELECT code FROM invite_codes WHERE wallet = ?').bind(wallet).first();
+    if (now) return now.code;
+  }
+  return null;
+}
+
+/// What this referrer earns per dollar of fee, as a percentage. Read at the
+/// moment of the swap rather than stored on the invite: selling the Ranger
+/// drops the rate from then on, and does not claw back what was already earned.
+async function inviteSharePct(env, referrer) {
+  return (await isRangerHolder(env, referrer)) ? INVITE_RANGER_PCT : INVITE_BASE_PCT;
+}
+
+/// Everything owed to a wallet and everything already asked for. The balance is
+/// what has been earned minus what has been claimed, including claims still
+/// queued — otherwise the same dollar could be claimed twice while the first
+/// payment was being made by hand.
+async function inviteBalance(env, wallet) {
+  const earned = await env.DB.prepare(
+    'SELECT COALESCE(SUM(usd), 0) AS usd, COALESCE(SUM(points), 0) AS points, COUNT(*) AS swaps ' +
+    'FROM invite_earnings WHERE referrer = ?'
+  ).bind(wallet).first();
+  const claimed = await env.DB.prepare(
+    "SELECT COALESCE(SUM(usd), 0) AS usd FROM invite_claims WHERE wallet = ? AND status IN ('queued', 'paid')"
+  ).bind(wallet).first();
+  const round = function (n) { return Math.round(n * 100) / 100; };
+  return {
+    earnedUsd: round((earned && earned.usd) || 0),
+    claimedUsd: round((claimed && claimed.usd) || 0),
+    available: round(Math.max(0, ((earned && earned.usd) || 0) - ((claimed && claimed.usd) || 0))),
+    points: (earned && earned.points) || 0,
+    swaps: (earned && earned.swaps) || 0
+  };
+}
+
+/// Pays a referrer for one swap by someone they brought in, and pays the
+/// referee their one-off bonus once they have actually traded.
+///
+/// Keyed on the swap's signature, so the reconciler walking the same
+/// transaction a second time cannot pay for it twice. Called after the swap has
+/// been written, and never fatal: a swap is recorded whether or not anyone
+/// earns from it.
+async function accrueInvite(env, row) {
+  if (!row || !row.wallet || !row.usd || !row.fee_bps) return;
+
+  const link = await env.DB.prepare(
+    'SELECT referrer, bonus_paid FROM invites WHERE wallet = ?'
+  ).bind(row.wallet).first();
+  if (!link || link.referrer === row.wallet) return;
+
+  // What this site actually collected on the swap, which is what is being
+  // shared. Not the volume, and not what the referee saved.
+  const feeUsd = row.usd * row.fee_bps / 10000;
+  const pct = await inviteSharePct(env, link.referrer);
+  const usd = Math.round(feeUsd * pct / 100 * 1000000) / 1000000;
+
+  const dayStart = Date.now() - (Date.now() % 86400000);
+  const today = await env.DB.prepare(
+    'SELECT COALESCE(SUM(points), 0) AS n FROM invite_earnings WHERE referrer = ? AND ts >= ?'
+  ).bind(link.referrer, dayStart).first();
+  const room = Math.max(0, INVITE_POINTS_DAILY_CAP - ((today && today.n) || 0));
+  const points = Math.min(room, Math.round(row.usd * SWAP_POINTS_PER_USD * INVITE_POINTS_PCT / 100));
+
+  const wrote = await env.DB.prepare(
+    'INSERT INTO invite_earnings (signature, referrer, referee, usd, points, share_pct, fee_usd, ts) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
+  ).bind(row.signature, link.referrer, row.wallet, usd, points,
+    pct, Math.round(feeUsd * 1000000) / 1000000, Date.now()).run();
+  // Already paid for. Nothing below this line may run twice.
+  if (wrote.meta.changes !== 1) return;
+
+  // addPoints only adds to a row that exists: without this a wallet with no
+  // player row would have the award written to its event log and nothing added
+  // to its balance. Both of these have signed in to get here, but this function
+  // is reached from a public route and should not depend on that.
+  if (points > 0) {
+    await ensurePlayer(env, link.referrer);
+    await addPoints(env, link.referrer, 'invite', points);
+  }
+
+  // The referee's side, once they have traded rather than merely arrived.
+  if (!link.bonus_paid && row.usd >= INVITE_REFEREE_MIN_USD) {
+    const marked = await env.DB.prepare(
+      'UPDATE invites SET bonus_paid = 1 WHERE wallet = ? AND bonus_paid = 0'
+    ).bind(row.wallet).run();
+    if (marked.meta.changes === 1) {
+      await ensurePlayer(env, row.wallet);
+      await addPoints(env, row.wallet, 'invite', INVITE_REFEREE_POINTS);
+    }
+  }
+}
+
 async function perkTier(env, wallet) {
   if (!wallet) return null;
   if (await isRangerHolder(env, wallet)) return 'ranger';
@@ -3081,6 +3240,42 @@ export default {
         const h = await healthCheck(env);
         h.build = BUILD;
         return json(request, env, h, h.ok ? 200 : 503);
+      }
+
+      // What is owed, so a payout run is one page rather than a query. Paying
+      // happens in a wallet; this only records that it happened.
+      if (path === '/api/admin/invite/claims' && request.method === 'GET') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const rows = await env.DB.prepare(
+          "SELECT * FROM invite_claims WHERE status = 'queued' ORDER BY requested_at"
+        ).all();
+        const owed = (rows.results || []).reduce(function (n, r) { return n + r.usd; }, 0);
+        return json(request, env, {
+          claims: rows.results || [],
+          owedUsd: Math.round(owed * 100) / 100,
+          payIn: 'USDC'
+        });
+      }
+
+      if (path === '/api/admin/invite/paid' && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        const body = await request.json().catch(function () { return {}; });
+        const id = Number(body.id);
+        const signature = String(body.signature || '').trim();
+        if (!id || !signature) return json(request, env, { error: 'id and signature are both needed' }, 400);
+        // Only a queued claim can be settled, so marking the same one twice
+        // cannot rewrite the signature of a payment already made.
+        const r = await env.DB.prepare(
+          "UPDATE invite_claims SET status = 'paid', paid_at = ?, signature = ? WHERE id = ? AND status = 'queued'"
+        ).bind(Date.now(), signature, id).run();
+        if (r.meta.changes !== 1) return json(request, env, { error: 'no queued claim with that id' }, 404);
+        return json(request, env, { ok: true });
       }
 
       if (path === '/api/admin/banner' && request.method === 'GET') {
@@ -4509,6 +4704,106 @@ export default {
           dailyCap: SWAP_POINTS_DAILY_CAP,
           player: await playerState(env, wallet)
         });
+      }
+
+      // ── invites ──
+      // Everything a wallet needs to share a link and see what it has earned.
+      if (path === '/api/invite' && request.method === 'GET') {
+        const code = await inviteCodeFor(env, wallet);
+        const balance = await inviteBalance(env, wallet);
+        const invited = await env.DB.prepare(
+          'SELECT COUNT(*) AS n, COALESCE(SUM(bonus_paid), 0) AS traded FROM invites WHERE referrer = ?'
+        ).bind(wallet).first();
+        const mine = await env.DB.prepare(
+          'SELECT code, bound_at FROM invites WHERE wallet = ?'
+        ).bind(wallet).first();
+        const queued = await env.DB.prepare(
+          "SELECT id, usd, requested_at FROM invite_claims WHERE wallet = ? AND status = 'queued' ORDER BY id"
+        ).bind(wallet).all();
+
+        return json(request, env, {
+          code: code,
+          // The rate is read now, not stored: it is whatever the wallet is when
+          // the swap happens.
+          sharePct: await inviteSharePct(env, wallet),
+          rangerPct: INVITE_RANGER_PCT,
+          basePct: INVITE_BASE_PCT,
+          pointsPct: INVITE_POINTS_PCT,
+          refereePoints: INVITE_REFEREE_POINTS,
+          refereeMinUsd: INVITE_REFEREE_MIN_USD,
+          claimMinUsd: INVITE_CLAIM_MIN_USD,
+          invited: (invited && invited.n) || 0,
+          // How many of them actually traded. The difference between this and
+          // the count above is the honest measure of whether it is working.
+          traded: (invited && invited.traded) || 0,
+          earnedUsd: balance.earnedUsd,
+          availableUsd: balance.available,
+          claimedUsd: balance.claimedUsd,
+          pointsEarned: balance.points,
+          paidSwaps: balance.swaps,
+          claimable: balance.available >= INVITE_CLAIM_MIN_USD,
+          queuedClaims: (queued.results || []),
+          invitedBy: mine ? mine.code : null
+        });
+      }
+
+      // Ties this wallet to whoever owns the code. First touch wins and it is
+      // never reassigned, so the checks below are the only chance to get it
+      // right.
+      if (path === '/api/invite/bind' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const code = String(body.code || '').trim().toUpperCase();
+        if (!code) return json(request, env, { error: 'which code?' }, 400);
+
+        const owner = await env.DB.prepare('SELECT wallet FROM invite_codes WHERE code = ?').bind(code).first();
+        if (!owner) return json(request, env, { error: 'no such code' }, 404);
+        if (owner.wallet === wallet) return json(request, env, { error: 'that is your own code' }, 400);
+
+        const already = await env.DB.prepare('SELECT code FROM invites WHERE wallet = ?').bind(wallet).first();
+        if (already) {
+          return json(request, env, {
+            error: already.code === code ? 'you already used that code' : 'this wallet already used a code'
+          }, 409);
+        }
+
+        // A wallet that has already traded here was never referred: without
+        // this, the first move is to DM existing users and get paid on volume
+        // that was always coming.
+        const traded = await env.DB.prepare('SELECT signature FROM swaps WHERE wallet = ? LIMIT 1').bind(wallet).first();
+        if (traded) {
+          return json(request, env, { error: 'this wallet has already swapped here, so a code cannot be added now' }, 409);
+        }
+
+        const wrote = await env.DB.prepare(
+          'INSERT INTO invites (wallet, referrer, code, bound_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING'
+        ).bind(wallet, owner.wallet, code, Date.now()).run();
+        if (wrote.meta.changes !== 1) return json(request, env, { error: 'this wallet already used a code' }, 409);
+
+        return json(request, env, {
+          ok: true, code: code,
+          // Said here so the page never has to promise points for arriving.
+          note: 'Swap $' + INVITE_REFEREE_MIN_USD + ' or more and you earn ' + INVITE_REFEREE_POINTS + ' Fox Points.'
+        });
+      }
+
+      // Asks to be paid. Queues what is owed — nothing here signs or sends
+      // anything; the USDC goes out by hand.
+      if (path === '/api/invite/claim' && request.method === 'POST') {
+        const balance = await inviteBalance(env, wallet);
+        if (balance.available < INVITE_CLAIM_MIN_USD) {
+          return json(request, env, {
+            error: 'there is $' + balance.available.toFixed(2) + ' to claim, and the minimum is $' + INVITE_CLAIM_MIN_USD
+          }, 400);
+        }
+        // Claims the amount that was read a line ago. Anything earned between
+        // then and now stays on the balance for the next claim rather than
+        // being swept into this one.
+        await env.DB.prepare(
+          "INSERT INTO invite_claims (wallet, usd, status, requested_at) VALUES (?, ?, 'queued', ?)"
+        ).bind(wallet, balance.available, Date.now()).run();
+        await alert(env, '💸 Invite payout requested — ' + wallet + ' · $' + balance.available.toFixed(2) +
+          '\nPay in USDC, then mark it paid with /api/admin/invite/paid');
+        return json(request, env, { ok: true, claimed: balance.available, balance: await inviteBalance(env, wallet) });
       }
 
       if (path === '/api/me' && request.method === 'GET') {
