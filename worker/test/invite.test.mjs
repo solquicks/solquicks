@@ -318,6 +318,31 @@ section('claiming');
   eq('anything earned afterwards is a fresh balance', (await invite(env, aliceT)).availableUsd, 1.5);
 }
 
+section('two claims at once cannot be paid twice');
+{
+  // Reading the balance and writing the claim are two round trips. Two tabs,
+  // or a double tap, would otherwise both pass the check and queue the same
+  // money twice — and it is paid out by hand from a list, so nobody would
+  // notice until it had been sent.
+  const env = freshEnv();
+  const alice = wallet(80), bob = wallet(81);
+  const aliceT = signIn(env, alice, { holder: true });
+  await bind(env, signIn(env, bob), (await invite(env, aliceT)).code);
+  for (let i = 0; i < 20; i++) await swap(env, bob, { usd: 1500 });
+
+  const earned = (await invite(env, aliceT)).earnedUsd;
+  const both = await Promise.all([
+    call(env, 'POST', '/api/invite/claim', { token: aliceT }),
+    call(env, 'POST', '/api/invite/claim', { token: aliceT })
+  ]);
+  const won = both.filter((r) => r.status === 200);
+  eq('only one of the two is accepted', won.length, 1);
+
+  const owed = env._db.prepare("SELECT COALESCE(SUM(usd), 0) AS n FROM invite_claims WHERE wallet = ?").get(alice).n;
+  eq('so what is owed never exceeds what was earned', owed, earned);
+  eq('and the balance is empty, not negative', (await invite(env, aliceT)).availableUsd, 0);
+}
+
 section('paying out, by hand');
 {
   const env = freshEnv({ ADMIN_TOKEN: 'sekrit' });

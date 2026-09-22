@@ -4798,9 +4798,22 @@ export default {
         // Claims the amount that was read a line ago. Anything earned between
         // then and now stays on the balance for the next claim rather than
         // being swept into this one.
-        await env.DB.prepare(
-          "INSERT INTO invite_claims (wallet, usd, status, requested_at) VALUES (?, ?, 'queued', ?)"
-        ).bind(wallet, balance.available, Date.now()).run();
+        //
+        // The read above and this write are two round trips, and two claims
+        // fired at once would both pass the check and both be queued — owing
+        // twice what was earned. So the balance is re-checked inside the
+        // insert, which the database runs as one statement, and only one of
+        // them can land. Same guard the booking holds use.
+        const wrote = await env.DB.prepare(
+          "INSERT INTO invite_claims (wallet, usd, status, requested_at) " +
+          "SELECT ?, ?, 'queued', ? WHERE (" +
+          "  (SELECT COALESCE(SUM(usd), 0) FROM invite_earnings WHERE referrer = ?)" +
+          "  - (SELECT COALESCE(SUM(usd), 0) FROM invite_claims WHERE wallet = ? AND status IN ('queued', 'paid'))" +
+          ") >= ?"
+        ).bind(wallet, balance.available, Date.now(), wallet, wallet, balance.available).run();
+        if (wrote.meta.changes !== 1) {
+          return json(request, env, { error: 'that balance has already been claimed' }, 409);
+        }
         await alert(env, '💸 Invite payout requested — ' + wallet + ' · $' + balance.available.toFixed(2) +
           '\nPay in USDC, then mark it paid with /api/admin/invite/paid');
         return json(request, env, { ok: true, claimed: balance.available, balance: await inviteBalance(env, wallet) });
