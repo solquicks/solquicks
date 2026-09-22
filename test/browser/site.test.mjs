@@ -235,7 +235,7 @@ function workerAnswer(p, url) {
     { mint: BONK, symbol: 'BONK', swaps: 9 },
     { mint: WIF, symbol: 'WIF', swaps: 2 }
   ] };
-  if (p === '/api/collectible') return { open: true, minted: 37, priceSol: 0.1, points: 250, swapFeeBps: 15, discountPct: 7, holder: false };
+  if (p === '/api/collectible') return { open: true, minted: 37, cap: 100000, priceSol: 0.1, points: 250, swapFeeBps: 15, discountPct: 7, holder: false };
   if (p === '/api/collectible/claim') return { points: 250, player: { points: 250 } };
   if (p === '/api/collection/sales') return { sales: [
     { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
@@ -477,9 +477,66 @@ try {
       collectibleLoaded = false;
       return loadCollectible();
     });
-    await page.waitForFunction(() => document.getElementById('collectible-minted').textContent === '37 minted', null, { timeout: 10000 });
+    await page.waitForFunction(() => /of/.test(document.getElementById('collectible-minted').textContent), null, { timeout: 10000 });
     eq('opening the mint shows the card', await page.evaluate(() => document.getElementById('collectible-card').hidden), false);
-    eq('the count comes from the worker', (await page.textContent('#collectible-minted')).trim(), '37 minted');
+
+    // What is on the card is progress through the whole run, not what this
+    // wallet has: the interesting number is how much is left for everyone.
+    eq('the card counts the whole run, not this wallet',
+      (await page.textContent('#collectible-minted')).trim(), '37 of 100,000');
+    // The count is already beside the price, so the bar says how far along the
+    // run is — and 0.037% is never rounded up to a percent it has not reached.
+    eq('and the bar says how far along the run is without flattering it',
+      (await page.textContent('#collectible-progress')).trim(), 'under 0.1%');
+    eq('a run that is genuinely underway says so in percent',
+      await page.evaluate(() => {
+        paintMintProgress(12500, 100000);
+        const t = document.getElementById('collectible-progress').textContent;
+        paintMintProgress(37, 100000);
+        return t;
+      }), '13%');
+
+    // 37 of 100,000 is 0.037%, which draws as nothing. The stripe has to be
+    // visible without the percentage being rounded up to meet it.
+    const bar = await page.evaluate(() => {
+      const f = document.getElementById('collectible-fill');
+      return { css: f.style.width, drawn: f.getBoundingClientRect().width, started: f.classList.contains('started') };
+    });
+    eq('the fill is set to the true fraction', bar.css, (37 / 100000) * 100 + '%');
+    ok('which is drawn wide enough to see', bar.drawn >= 5 && bar.drawn <= 12, String(bar.drawn));
+    ok('and marked as started', bar.started);
+
+    // An empty run must not show the same stripe, or the bar would claim a
+    // sale before there was one.
+    const none = await page.evaluate(() => {
+      paintMintProgress(0, 100000);
+      const f = document.getElementById('collectible-fill');
+      const r = { drawn: f.getBoundingClientRect().width, started: f.classList.contains('started'),
+                  text: document.getElementById('collectible-minted').textContent };
+      paintMintProgress(37, 100000);
+      return r;
+    });
+    // Sub-pixel rather than exactly zero: the bar rounds its own width. What
+    // matters is that there is nothing to see.
+    ok('nothing minted draws nothing', none.drawn < 1, String(none.drawn));
+    ok('and is not marked as started', !none.started);
+    eq('and the bar says none yet rather than 0%',
+      await page.evaluate(() => {
+        paintMintProgress(0, 100000);
+        const t = document.getElementById('collectible-progress').textContent;
+        paintMintProgress(37, 100000);
+        return t;
+      }), 'none yet');
+    eq('and says so plainly', none.text, '0 of 100,000');
+
+    // Sold out cannot overflow the bar.
+    const full = await page.evaluate(() => {
+      paintMintProgress(100000, 100000);
+      const w = document.getElementById('collectible-fill').style.width;
+      paintMintProgress(37, 100000);
+      return w;
+    });
+    eq('a finished run fills the bar exactly once', full, '100%');
     eq('and the button opens up', await page.evaluate(() => document.getElementById('collectible-mint').disabled), false);
     ok('the page says it can never be moved',
       /cannot be sold, sent or burned/.test(await page.textContent('.mint-warning')));

@@ -1423,6 +1423,10 @@ const HOLDER_SWAP_FEE_BPS = 10;
 const COLLECTIBLE_SWAP_FEE_BPS = 15;
 const COLLECTIBLE_PRICE_SOL = 0.1;
 const COLLECTIBLE_POINTS = 250;
+// What the candy machine was created to hold, and the real ceiling — the chain
+// stops selling at this number whatever the page says. Kept in step with
+// collectible/config.json by collection.test.mjs, which reads both.
+const COLLECTIBLE_CAP = 100000;
 
 function swapFeeBpsFor(tier) {
   // `true` is the old Ranger-or-not flag, still passed by older callers.
@@ -2091,12 +2095,15 @@ const BOOKING_TYPES = [
     // duplicating a calendar this site would have to keep in step. The link
     // comes from config, so changing the event never needs a deploy.
     id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
-    blurb: 'An hour, one to one, on whatever you are building — the token, the launch, the community, or what to do next.',
+    blurb: 'An hour, one to one, on whatever you are building — growth, revenue, and what to do next.',
     includes: [
-      'A full hour on a call, just your project',
-      'An honest read on where you are',
-      'What I would do next, in order',
-      'Follow-up notes afterwards'
+      'Consulting and advisory for your project',
+      'An idea session focused on growth and revenue',
+      'Go-to-market strategy',
+      'Marketing advisory',
+      'Community building strategy',
+      'Solana networking',
+      'Events planning'
     ]
   },
   {
@@ -3232,7 +3239,7 @@ export default {
       if (path === '/api/collectible' && request.method === 'GET') {
         const who = url.searchParams.get('wallet');
         if (!env.COLLECTIBLE_COLLECTION) {
-          return json(request, env, { open: false, minted: 0, holder: false });
+          return json(request, env, { open: false, minted: 0, cap: COLLECTIBLE_CAP, holder: false });
         }
         const minted = await cachedCount(env, 'collectible:minted', 300000, function () {
           return collectiblesMinted(env);
@@ -3240,6 +3247,7 @@ export default {
         return json(request, env, {
           open: true,
           minted: minted,
+          cap: COLLECTIBLE_CAP,
           priceSol: COLLECTIBLE_PRICE_SOL,
           points: COLLECTIBLE_POINTS,
           swapFeeBps: COLLECTIBLE_SWAP_FEE_BPS,

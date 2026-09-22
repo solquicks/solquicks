@@ -2,6 +2,7 @@
 // which token, which Jupiter address is used, wallet holdings across both token
 // programs, and swap history read off the chain. Harness in harness.mjs.
 
+import { readFile } from 'node:fs/promises';
 import { _internals } from '../src/index.js';
 import { chain, freshEnv as blankEnv, call, wallet, signIn, ok, eq, section, finish, runScheduled, setClock, START, TREASURY, pay } from './harness.mjs';
 
@@ -711,6 +712,18 @@ section('the soulbound collectible');
 
   eq('the card knows how many exist', (await state()).minted, 1);
   eq('and what it costs', (await state()).priceSol, 0.1);
+
+  // The page draws a progress bar from these two numbers, so the ceiling has to
+  // be the real one. The candy machine was created from collectible/config.json
+  // and stops selling at its itemsAvailable whatever the worker claims — read
+  // it from that file rather than repeating the number here.
+  const mintConfig = JSON.parse(
+    await readFile(new URL('../../collectible/config.json', import.meta.url), 'utf8'));
+  eq('and the ceiling is the one the candy machine was built with',
+    (await state()).cap, mintConfig.itemsAvailable);
+  eq('a mint that is not configured still knows the ceiling',
+    (await call(freshEnv({ COLLECTIBLE_COLLECTION: '' }), 'GET', '/api/collectible')).body.cap,
+    mintConfig.itemsAvailable);
   eq('a holder is recognised', (await state(owner)).holder, true);
   eq('someone without one is not', (await state(nobody)).holder, false);
 

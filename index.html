@@ -243,6 +243,13 @@
 
     /* On a phone the bar holds five controls. The trigger's page name is the
        one thing already shown by the panel below it, so it goes first. */
+    /* The full name needs room the bar does not have once the wallet chip and
+       the menu trigger are in it. Below this it goes back to "Book", which is
+       what the panel it opens is headed with anyway. */
+    @media (max-width: 720px) {
+      .nav-long { display: none; }
+    }
+
     @media (max-width: 560px) {
       .nav-current { display: none; }
       .nav-trigger { padding: 7px 10px; }
@@ -529,7 +536,12 @@
       width: 7%;
       height: 100%;
       background: repeating-linear-gradient(-45deg, var(--orange) 0 8px, var(--orange-deep) 8px 16px);
+      transition: width 0.6s ease;
     }
+    /* Out of 100,000 the first few thousand are a fraction of a percent, which
+       draws as nothing at all and reads as broken. This is the smallest stripe
+       that still reads as "started". The count beside it stays exact. */
+    .bonding-fill.started { min-width: 6px; }
 
     .buy-btn {
       display: block;
@@ -2125,7 +2137,7 @@
       <div class="nav-quick" id="nav-quick">
         <button class="nav-quick-btn" data-tab="swap" onclick="switchTab('swap',this)">Swap</button>
         <button class="nav-quick-btn" data-tab="store" onclick="switchTab('store',this)">Store</button>
-        <button class="nav-quick-btn" data-tab="book" onclick="switchTab('book',this)">Book</button>
+        <button class="nav-quick-btn" data-tab="book" onclick="switchTab('book',this)">Book<span class="nav-long"> the Fox</span></button>
       </div>
       <button class="wallet-chip" id="wallet-chip" onclick="walletChipClick()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
@@ -2384,6 +2396,10 @@
           <div class="product-meta">
             <div class="product-price">0.1 SOL</div>
             <div class="product-stock" id="collectible-minted">—</div>
+          </div>
+          <div class="bonding-bar-wrap">
+            <div class="bonding-label"><span>Minted</span><span id="collectible-progress">—</span></div>
+            <div class="bonding-bar"><div class="bonding-fill" id="collectible-fill" style="width:0"></div></div>
           </div>
           <ul class="mint-perks">
             <li><strong>25% off swap fees</strong></li>
@@ -7673,14 +7689,39 @@
         const res = await fetch(url);
         const d = await res.json();
         collectibleLoaded = true;
-        document.getElementById('collectible-minted').textContent =
-          (d.minted || 0) + ' minted';
+        paintMintProgress(d.minted || 0, d.cap || 0);
         if (d.holder) {
           button.disabled = true;
           button.textContent = 'You have one ✓';
           note('collectible-note', 'One per wallet, and yours is already in there.', 'ok');
         }
       } catch (e) { /* the card still says what it costs */ }
+    }
+
+    /// How far through the 100,000 the mint is. Both numbers come from the
+    /// worker — the ceiling is the one the candy machine was built with, so
+    /// this cannot promise a supply the chain will not honour.
+    function paintMintProgress(minted, cap) {
+      const count = document.getElementById('collectible-minted');
+      const label = document.getElementById('collectible-progress');
+      const fill = document.getElementById('collectible-fill');
+
+      count.textContent = cap
+        ? minted.toLocaleString() + ' of ' + cap.toLocaleString()
+        : minted.toLocaleString() + ' minted';
+      if (!cap) { label.textContent = ''; fill.style.width = '0'; return; }
+
+      const pct = Math.min(100, (minted / cap) * 100);
+      // The exact count is already beside the price. This says how far along
+      // the run is without ever rounding a fraction of a percent up to one.
+      label.textContent = minted === 0 ? 'none yet'
+        : pct >= 1 ? Math.round(pct) + '%'
+        : pct >= 0.1 ? pct.toFixed(1) + '%'
+        : 'under 0.1%';
+      fill.style.width = pct + '%';
+      // A real fraction of a percent draws as nothing, so anything above zero
+      // keeps a visible stripe. The numbers beside it are never rounded up.
+      fill.classList.toggle('started', minted > 0);
     }
 
     /// Mints one collectible. The asset keypair is generated here and signs
