@@ -392,9 +392,15 @@ try {
   ok('and are not also buried in the menu',
     (await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab)))
       .every((t) => !quick.includes(t)));
-  const menuTabs = await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab));
+  // Only the ones actually offered: a tab whose data file is empty is hidden,
+  // and clicking it below would hang on something no visitor can reach.
+  const menuTabs = await page.$$eval('.nav-item[data-tab]',
+    (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','), 'links,cleanup,leaderboard,moon');
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
+  eq('and Referrals waits until it has something to show',
+    await page.$$eval('.nav-item[data-tab]', (els) => els.filter((e) => e.hidden).map((e) => e.dataset.tab)).then((t) => t.join(',')),
+    'referrals');
 
   for (const tab of quick) {
     await page.click('.nav-quick-btn[data-tab="' + tab + '"]');
@@ -1234,6 +1240,91 @@ try {
     eq('the other button offers the whole set',
       (await fees.inputValue('#extra')).split('\n').filter(Boolean).length, xs.tokens.length);
     await fees.close();
+  }
+
+  section('referrals: a page that only exists when it has something in it');
+  {
+    // The real file ships empty, so this is the state a visitor sees today.
+    eq('with nothing in the file the tab is not in the menu',
+      await page.evaluate(() => document.getElementById('nav-referrals').hidden), true);
+
+    // Now stand in a populated file, including one entry that should never
+    // become a link.
+    await page.route('**/referrals.json', (route) => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [
+        { name: 'Example Exchange', tag: 'Trading', logo: 'img/referrals/nothing-here.png',
+          url: 'https://example.com/join?ref=fox',
+          what: 'Spot and perps, on and off Solana.',
+          youGet: '10% off fees for 30 days', cta: 'Join with my link' },
+        { name: 'No Link Here', url: 'javascript:alert(1)', what: 'Should never be clickable.' },
+        { name: 'Missing Everything' }   // no url — dropped entirely
+      ] })
+    }));
+    await page.evaluate(() => loadReferrals());
+    await page.waitForFunction(() => document.getElementById('nav-referrals').hidden === false, null, { timeout: 10000 });
+
+    eq('a populated file puts the tab in the menu',
+      await page.evaluate(() => document.getElementById('nav-referrals').hidden), false);
+    eq('an entry with no link is left out entirely',
+      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card').length), 2);
+
+    await page.click('#nav-trigger').catch(() => {});
+    await page.evaluate(() => switchTab('referrals'));
+    await page.waitForSelector('#panel-referrals.active', { timeout: 10000 });
+
+    const card = await page.evaluate(() => {
+      const c = document.querySelector('#ref-list .ref-card');
+      const a = c.querySelector('.ref-go');
+      return {
+        name: c.querySelector('.ref-name').textContent,
+        tag: c.querySelector('.ref-tag').textContent,
+        what: c.querySelector('.ref-what').textContent,
+        get: c.querySelector('.ref-get').textContent,
+        href: a.getAttribute('href'),
+        rel: a.getAttribute('rel'),
+        cta: a.textContent.trim()
+      };
+    });
+    eq('the platform is named', card.name, 'Example Exchange');
+    eq('and labelled', card.tag, 'Trading');
+    eq('what it does is shown', card.what, 'Spot and perps, on and off Solana.');
+    eq('and what the visitor gets', card.get, 'You get: 10% off fees for 30 days');
+    eq('the link is the referral link', card.href, 'https://example.com/join?ref=fox');
+    eq('its own wording is used for the button', card.cta, 'Join with my link →');
+
+    // These links are paid placement. Saying so to the browser costs nothing
+    // and is the same thing the page says to the reader.
+    ok('declared to the browser as sponsored', /sponsored/.test(card.rel), card.rel);
+    ok('and opened without handing over the referrer', /noopener/.test(card.rel), card.rel);
+
+    // A data file is still data. A javascript: URL in it would run as this
+    // page the moment somebody clicked the button.
+    eq('a javascript: URL in the data file never becomes a link',
+      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card')[1].querySelector('.ref-go').getAttribute('href')), '#');
+
+    // A logo that 404s, and one that was never given, both land on a letter
+    // tile rather than a blank square that looks like a broken image.
+    await page.waitForFunction(
+      () => document.querySelectorAll('#ref-list .ref-initial').length === 2, null, { timeout: 10000 });
+    eq('a broken logo falls back to the platform initial',
+      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card')[0].querySelector('.ref-initial').textContent), 'E');
+    eq('and so does one that was never given',
+      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card')[1].querySelector('.ref-initial').textContent), 'N');
+
+    ok('and the page says plainly that these pay me',
+      /referral credit/.test(await page.textContent('#panel-referrals .bk-sub')));
+
+    // Emptying it again must not strand someone standing on the page.
+    await page.route('**/referrals.json', (route) =>
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
+    await page.evaluate(() => loadReferrals());
+    await page.waitForFunction(() => document.getElementById('nav-referrals').hidden === true, null, { timeout: 10000 });
+    eq('emptying the file takes the tab away again',
+      await page.evaluate(() => document.getElementById('nav-referrals').hidden), true);
+    ok('and moves anyone standing on it somewhere real',
+      await page.evaluate(() => !document.getElementById('panel-referrals').classList.contains('active')));
+    await page.unroute('**/referrals.json');
   }
 
   section('settings survive a reload');

@@ -543,6 +543,44 @@
        that still reads as "started". The count beside it stays exact. */
     .bonding-fill.started { min-width: 6px; }
 
+    .ref-list { display: grid; gap: 12px; }
+    .ref-card {
+      display: grid; grid-template-columns: 56px 1fr; gap: 14px; align-items: start;
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      padding: 14px;
+    }
+    .ref-logo {
+      width: 56px; height: 56px; border-radius: 14px; border: var(--line);
+      object-fit: cover; background: var(--cream); display: block;
+    }
+    .ref-initial {
+      display: grid; place-items: center;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1.4rem;
+      color: var(--ink);
+    }
+    .ref-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ref-name { font-weight: 800; font-size: 1.05rem; }
+    .ref-tag {
+      font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 999px; background: var(--orange-soft); color: var(--ink);
+    }
+    .ref-what { color: var(--muted); font-size: 0.92rem; margin: 6px 0 0; }
+    .ref-get {
+      margin: 8px 0 0; font-size: 0.92rem; font-weight: 700;
+      padding: 8px 10px; border-radius: 12px; background: var(--cream); border: var(--line);
+    }
+    .ref-go {
+      display: inline-block; margin-top: 10px; text-decoration: none;
+      font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.92rem;
+      padding: 8px 16px; border: var(--line); border-radius: 999px;
+      background: var(--orange); color: #fff;
+    }
+    .ref-go:hover { background: var(--orange-deep); }
+    @media (max-width: 480px) {
+      .ref-card { grid-template-columns: 44px 1fr; gap: 10px; }
+      .ref-logo { width: 44px; height: 44px; border-radius: 11px; }
+    }
+
     .buy-btn {
       display: block;
       margin-top: 18px;
@@ -2168,6 +2206,14 @@
           <span><span class="nav-item-name">Moon Rangers</span>
           <span class="nav-item-note">Stake, missions, and collection stats</span></span>
         </button>
+        <!-- Hidden until referrals.json has something in it: an empty page in
+             the menu is a promise the site cannot keep. -->
+        <button class="nav-item" role="menuitem" data-tab="referrals" id="nav-referrals"
+                onclick="switchTab('referrals',this)" hidden>
+          <span class="nav-item-icon" aria-hidden="true">◈</span>
+          <span><span class="nav-item-name">Referrals</span>
+          <span class="nav-item-note">Platforms I use, and what you get for joining</span></span>
+        </button>
       </div>
     </nav>
 
@@ -2426,6 +2472,15 @@
       <div class="bk-cart" id="bk-cart" hidden></div>
       <div class="bk-list" id="bk-list"></div>
       <div id="bk-flow" hidden></div>
+    </div>
+
+    <!-- REFERRALS PANEL -->
+    <div id="panel-referrals" class="panel">
+      <div class="bk-intro">
+        <div class="bk-lead">Referrals</div>
+        <p class="bk-sub">Platforms I actually use. Joining through these links gets you something, and pays me a referral credit — that is the whole arrangement, said plainly.</p>
+      </div>
+      <div class="ref-list" id="ref-list"></div>
     </div>
 
     <!-- CLEANUP PANEL -->
@@ -2935,6 +2990,7 @@
       }
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
       if (tab === 'store' && typeof loadStore === 'function') { loadStore(); loadCollectible(); }
+      if (tab === 'referrals' && typeof loadReferrals === 'function') loadReferrals();
       if (tab === 'moon') {
         if (typeof loadCollection === 'function') loadCollection();
         if (typeof loadAnalytics === 'function') {
@@ -7698,6 +7754,65 @@
       } catch (e) { /* the card still says what it costs */ }
     }
 
+    /// The platforms worth passing on. Content lives in referrals.json so a new
+    /// one is a data change, not a deploy of the page — and the tab stays out
+    /// of the menu entirely while there is nothing behind it.
+    async function loadReferrals() {
+      const list = document.getElementById('ref-list');
+      const tab = document.getElementById('nav-referrals');
+      let items = [];
+      try {
+        const res = await fetch('referrals.json', { cache: 'no-store' });
+        const d = await res.json();
+        items = Array.isArray(d.items) ? d.items.filter(function (r) { return r && r.name && r.url; }) : [];
+      } catch (e) { /* no file, no tab */ }
+
+      if (!items.length) {
+        tab.hidden = true;
+        // If someone is standing on the tab when the last one goes, put them
+        // somewhere real rather than on an empty page.
+        if (document.getElementById('panel-referrals').classList.contains('active')) switchTab('links');
+        return;
+      }
+
+      tab.hidden = false;
+      list.innerHTML = items.map(function (r) {
+        // rel="sponsored" is what these links are: paid placement, declared to
+        // the browser as well as to the reader.
+        return '<div class="ref-card">' +
+          // A missing or broken logo falls back to the first letter rather than
+          // a blank bordered square, which reads as a broken image.
+          (r.logo
+            ? '<img class="ref-logo" src="' + escapeHtml(r.logo) + '" alt="" loading="lazy" ' +
+              'onerror="refLogoMissing(this)"/>'
+            : '<div class="ref-logo ref-initial">' + escapeHtml(r.name.trim()[0].toUpperCase()) + '</div>') +
+          '<div>' +
+            '<div class="ref-head"><span class="ref-name">' + escapeHtml(r.name) + '</span>' +
+            (r.tag ? '<span class="ref-tag">' + escapeHtml(r.tag) + '</span>' : '') + '</div>' +
+            (r.what ? '<p class="ref-what">' + escapeHtml(r.what) + '</p>' : '') +
+            (r.youGet ? '<p class="ref-get">You get: ' + escapeHtml(r.youGet) + '</p>' : '') +
+            '<a class="ref-go" href="' + escapeHtml(safeHttps(r.url)) + '" target="_blank" ' +
+            'rel="noopener noreferrer sponsored">' + escapeHtml(r.cta || 'Use my link') + ' →</a>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function refLogoMissing(img) {
+      const tile = document.createElement('div');
+      tile.className = 'ref-logo ref-initial';
+      const name = img.closest('.ref-card').querySelector('.ref-name');
+      tile.textContent = (name.textContent.trim()[0] || '?').toUpperCase();
+      img.replaceWith(tile);
+    }
+
+    /// Only ever http(s). A javascript: or data: URL in a data file would run
+    /// as this page the moment somebody clicked it.
+    function safeHttps(url) {
+      const u = String(url || '').trim();
+      return /^https?:\/\//i.test(u) ? u : '#';
+    }
+
     /// How far through the 100,000 the mint is. Both numbers come from the
     /// worker — the ceiling is the one the candy machine was built with, so
     /// this cannot promise a supply the chain will not honour.
@@ -8270,6 +8385,9 @@
     if (document.getElementById('panel-book').classList.contains('active')) loadBooking();
     if (document.getElementById('panel-swap').classList.contains('active')) loadSwap();
     if (document.getElementById('panel-store').classList.contains('active')) { loadStore(); loadCollectible(); }
+    // Runs whatever tab is open: it is what decides whether Referrals is in
+    // the menu at all.
+    loadReferrals();
 </script>
 
   <button class="back-to-top" id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
