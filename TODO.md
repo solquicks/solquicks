@@ -488,7 +488,26 @@ Every token ever swapped on this site now collects its fee in-token, plus the
 
 ---
 
+## Next, once the above is unblocked
+
+**Ranger referral rewards.** Designed and decided, not built — see
+`docs/ranger-referrals-design.md`. Rangers earn 50% of the fee on wallets they
+bring in, everyone else 20%; balances are claimed and paid by hand; the referee
+earns 250 points after their first $50 swap. The one rule it rests on is that
+nothing is ever paid for a signup, only for fees generated, which is what makes
+it unfarmable without any identity checks. Call it "Invite" on the Fox Points
+tab — the Referrals tab is the outbound one and sharing the word will confuse
+both.
+
+---
+
 ## Blocked
+
+**13. Referrals page has no referrals in it.**
+Built 2026-09-22, ships hidden. `referrals.json` is an empty list and the tab
+stays out of the menu until it is not. Each entry needs `name`, `url`, a logo
+in `img/referrals/`, `what` the platform does and `youGet`. Waiting on the ten
+links, logos and blurbs.
 
 **12. The consulting hour is built but not on sale.**
 Committed 2026-09-20, not deployed. Two things are needed, both yours:
