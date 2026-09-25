@@ -1142,7 +1142,7 @@ async function findPaymentByReference(env, reference) {
 /// on 2026-09-15, when a key pasted into the secret was refused with 401 and
 /// every quote failed until it was removed. So a 401 or 403 is logged and the
 /// call is retried on lite-api.
-async function jupFetch(env, path, init) {
+async function jupOnce(env, path, init) {
   const key = env && env.JUPITER_API_KEY;
   if (key) {
     const opts = Object.assign({}, init || {});
@@ -1152,6 +1152,39 @@ async function jupFetch(env, path, init) {
     await logError(env, 'jupiter.key', res.status + ' from api.jup.ag — JUPITER_API_KEY rejected, fell back to lite-api');
   }
   return fetch('https://lite-api.jup.ag' + path, init);
+}
+
+// Answers that mean "not now" rather than "no". A 429 is by far the most
+// common failure here, and it was being shown to people as "no route for that
+// pair right now" — which reads as "this swap is impossible" for something
+// that works on the next attempt. Hence the retry, and hence the error the
+// quote route now returns for it.
+const JUP_RETRY_STATUS = [429, 500, 502, 503, 504];
+const JUP_ATTEMPTS = 3;
+// Kept small on purpose: this is inside a request somebody is waiting on, and
+// a quote that takes two seconds to arrive is its own kind of broken.
+const JUP_BACKOFF_MS = [250, 600];
+
+function waitMs(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
+
+/// Jupiter, retried when the answer is temporary. Bodies here are always
+/// strings, so re-sending one is safe; nothing Jupiter is asked for in this
+/// worker changes state, so a repeated call cannot double anything.
+async function jupFetch(env, path, init) {
+  let res = null;
+  for (let attempt = 0; attempt < JUP_ATTEMPTS; attempt++) {
+    res = await jupOnce(env, path, init);
+    if (res.ok || JUP_RETRY_STATUS.indexOf(res.status) < 0) return res;
+    if (attempt === JUP_ATTEMPTS - 1) break;
+    // Jupiter says how long to wait when it knows. Anything longer than the
+    // backoff is not worth holding a request open for.
+    const after = Number(res.headers.get('Retry-After'));
+    const wait = after > 0 && after <= 1 ? after * 1000 : JUP_BACKOFF_MS[attempt];
+    await waitMs(wait);
+  }
+  return res;
 }
 
 const SWAP_FEE_BPS = 20;
@@ -3849,7 +3882,16 @@ export default {
           // about which quote Jupiter refused
           await logError(env, 'swap.quote', res.status + ' ' + body.slice(0, 120) +
             ' [' + inputMint.slice(0, 6) + '→' + outputMint.slice(0, 6) + ' ' + amount + ' slip ' + slippageBps + ']');
-          return json(request, env, { error: 'no route for that pair right now' }, 502);
+          // Still rate limited after the retries. That is not the same thing as
+          // there being no way to make this swap, and saying so sends people
+          // off to find another site for a trade that would work in a second.
+          const busy = res.status === 429;
+          return json(request, env, {
+            error: busy
+              ? 'too many quotes at once — trying again in a moment'
+              : 'no route for that pair right now',
+            retry: busy
+          }, busy ? 429 : 502);
         }
         const quote = await res.json();
         if (quote.error) return json(request, env, { error: quote.error }, 400);
@@ -3911,7 +3953,15 @@ export default {
         const out = await res.json().catch(function () { return null; });
         if (!res.ok || !out || !out.swapTransaction) {
           await logError(env, 'swap.build', res.status + ' ' + JSON.stringify(out).slice(0, 200));
-          return json(request, env, { error: (out && out.error) || 'could not build that swap' }, 502);
+          // Same distinction as the quote: being throttled is worth trying
+          // again, and this one happens with a quote already on screen and
+          // somebody's finger on the button.
+          const busy = res.status === 429;
+          return json(request, env, {
+            error: busy ? 'too many requests at once — try that again in a moment'
+                        : (out && out.error) || 'could not build that swap',
+            retry: busy
+          }, busy ? 429 : 502);
         }
         return json(request, env, {
           swapTransaction: out.swapTransaction,

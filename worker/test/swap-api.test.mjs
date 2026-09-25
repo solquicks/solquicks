@@ -302,6 +302,55 @@ function swapTx(sig, who, { solSpent = 0, spend = null, get, fee = null, solFee 
   return sig;
 }
 
+section('being rate limited is not the same as having no route');
+{
+  // This is the failure people actually hit, from the production log:
+  //   429 {"code":429,"message":"[API Gateway] Too many requests"} [So1111→2b1kV6 ...]
+  // and it was shown to them as "no route for that pair right now" — which
+  // reads as "this swap is impossible" for a trade that works a second later.
+  const env = freshEnv();
+  const quoteUrl = `/api/swap/quote?in=${SOL}&out=${USDC}&amount=1000000&slippage=50`;
+  const tooMany = () => new Response('{"code":429,"message":"[API Gateway] Too many requests"}',
+    { status: 429, headers: { 'Content-Type': 'application/json' } });
+  const realJup = chain.jup;
+  const jupCallsFor = async (fn) => {
+    const before = chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).length;
+    const r = await fn();
+    return { r, calls: chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).length - before };
+  };
+
+  // One refusal, then it works. Nobody should ever see this.
+  let refusals = 1;
+  chain.jup = (u, init) => (u.pathname === '/swap/v1/quote' && refusals-- > 0) ? tooMany() : realJup(u, init);
+  const once = await jupCallsFor(() => call(env, 'GET', quoteUrl));
+  eq('a single refusal is retried rather than shown to anyone', once.r.status, 200);
+  eq('which took a second call to Jupiter', once.calls, 2);
+  ok('and the quote came back whole', !!once.r.body.quote, JSON.stringify(once.r.body).slice(0, 80));
+
+  // Refused every time. It still must not claim the pair is unroutable.
+  chain.jup = (u, init) => u.pathname === '/swap/v1/quote' ? tooMany() : realJup(u, init);
+  const hard = await jupCallsFor(() => call(env, 'GET', quoteUrl));
+  eq('a pair that is only busy is not reported as a server error', hard.r.status, 429);
+  ok('it does not say there is no route', !/no route/i.test(hard.r.body.error), hard.r.body.error);
+  ok('it says what is actually happening', /too many/i.test(hard.r.body.error), hard.r.body.error);
+  eq('and tells the page it is worth another go', hard.r.body.retry, true);
+  eq('after a bounded number of attempts, not for ever', hard.calls, 3);
+
+  // A refusal that means "no", not "not now", must not be retried at all —
+  // three attempts at an impossible swap is three times the wait for the
+  // same answer.
+  chain.jup = (u, init) => u.pathname === '/swap/v1/quote'
+    ? new Response('{"error":"Invalid input"}', { status: 400 }) : realJup(u, init);
+  const bad = await jupCallsFor(() => call(env, 'GET', quoteUrl));
+  eq('a real refusal is asked once', bad.calls, 1);
+  ok('and is still reported as no route', /no route/i.test(bad.r.body.error), bad.r.body.error);
+  ok('with no suggestion of trying again', !bad.r.body.retry, String(bad.r.body.retry));
+
+  chain.jup = realJup;
+  const fine = await call(env, 'GET', quoteUrl);
+  eq('and a working quote is unaffected by any of it', fine.status, 200);
+}
+
 section('swap history');
 {
   const env = freshEnv();

@@ -5991,6 +5991,25 @@
       if (left === 0 && watched && !pickerSide && !swapQuoting) quoteSwap({ auto: true });
     }
 
+    // Two goes, spaced out, then it stops and leaves the button to the person.
+    // Retrying for ever against something that is rate limiting us is how a
+    // page makes its own problem worse.
+    const QUOTE_RETRY_MS = [1200, 3000];
+    var swapRetries = 0;
+    var swapRetryTimer = null;
+
+    function scheduleQuoteRetry(key) {
+      clearTimeout(swapRetryTimer);
+      if (swapRetries >= QUOTE_RETRY_MS.length) { swapRetries = 0; return; }
+      const wait = QUOTE_RETRY_MS[swapRetries++];
+      swapRetryTimer = setTimeout(function () {
+        // Only if nothing has changed in the meantime: a new pair or amount
+        // has its own quote on the way already.
+        const now = swapPair.in.mint + '>' + swapPair.out.mint + ':' + swapInputTokens() + ':' + swapSlippage;
+        if (now === key && !swapQuoting && !swapBusy) quoteSwap({ auto: true });
+      }, wait);
+    }
+
     async function quoteSwap(opts) {
       const auto = !!(opts && opts.auto);
       const tIn = swapPair.in;
@@ -6037,7 +6056,14 @@
         const d = await res.json();
         if (seq !== swapSeq) return;   // a newer keystroke already won
         document.getElementById('sw-quoting').textContent = '';
-        if (d.error) throw new Error(d.error);
+        if (d.error) {
+          const err = new Error(d.error);
+          // The worker says which failures are worth another go. Being
+          // throttled is; there being no route is not.
+          err.retryable = !!d.retry || res.status === 429;
+          throw err;
+        }
+        swapRetries = 0;
 
         const previous = swapQuoteKey === key ? swapShownOut : 0;
         swapQuote = d.quote;
@@ -6119,13 +6145,43 @@
         if (e && (e.name === 'AbortError' || /abort/i.test(e.message || ''))) return;
         if (seq !== swapSeq) return;
         document.getElementById('sw-quoting').textContent = '';
+
+        // A dropped connection is as temporary as being throttled, and the
+        // page cannot tell them apart from here.
+        const temporary = !!(e && e.retryable) || (e instanceof TypeError);
+
+        // A refresh that failed for a temporary reason leaves the quote that
+        // is already on screen alone. It was good a second ago, and blanking a
+        // working swap into "No route" turns a hiccup into a dead end — which
+        // is exactly what people were hitting, and refreshing to get past.
+        if (temporary && swapQuote && swapQuoteKey === key) {
+          msg.className = 'sw-msg';
+          // Marked, so the quote that succeeds after this one clears it. An
+          // empty kind means "nothing to clear", and the notice would have
+          // stayed on screen over a price that had already recovered.
+          msg.dataset.kind = 'busy';
+          msg.textContent = 'Busy for a moment — the price above is from ' +
+            Math.max(1, Math.round((Date.now() - swapQuoteAt) / 1000)) + 's ago.';
+          scheduleQuoteRetry(key);
+          paintAfterSwap();
+          return;
+        }
+
         swapQuote = null;
         detail.hidden = true;
         go.disabled = true;
-        go.textContent = 'No route';
+        // Never leave the old figure sitting under an error: it is the number
+        // somebody would act on, and it is no longer being offered.
+        const outEl = document.getElementById('sw-out-amount');
+        outEl.value = '';
+        outEl.classList.remove('est');
+        document.getElementById('sw-out-usd').textContent = '';
+
+        go.textContent = temporary ? 'Try again' : 'No route';
         msg.className = 'sw-msg bad';
         msg.dataset.kind = 'error';
         msg.textContent = e.message || 'Could not price that swap.';
+        if (temporary) scheduleQuoteRetry(key);
         paintAfterSwap();
       } finally {
         if (seq === swapSeq) swapQuoting = false;

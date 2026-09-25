@@ -56,6 +56,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
+  quoteFail: 0,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
@@ -328,6 +329,18 @@ async function standIns(context) {
       if (req.method() === 'POST') {
         try { net.lastBody = JSON.parse(req.postData() || '{}'); } catch (e) { net.lastBody = {}; }
       }
+      // Lets a test make the quote route fail the way production does, with a
+      // status the page is supposed to treat differently from a real refusal.
+      if (u.pathname === '/api/swap/quote' && net.quoteFail) {
+        const busy = net.quoteFail === 429;
+        return route.fulfill({
+          status: net.quoteFail, contentType: 'application/json',
+          headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' },
+          body: JSON.stringify(busy
+            ? { error: 'too many quotes at once — trying again in a moment', retry: true }
+            : { error: 'no route for that pair right now' })
+        });
+      }
       if (u.pathname === '/api/swap/quote') {
         net.lastQuote = u.searchParams.get('in');
         net.lastQuoteAmount = u.searchParams.get('amount');
@@ -410,6 +423,7 @@ const page = await context.newPage();
 // The invite stub's state lives in Node. These let a test drive it from inside
 // the page, which is where loadInvite runs.
 await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
+await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
 await page.exposeFunction('net_invite', () => net.invite);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -888,6 +902,66 @@ try {
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
   ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+
+  section('swap: being busy does not become "No route"');
+  {
+    // The failure people were hitting: Jupiter throttles us, the worker said
+    // "no route for that pair right now", and a working swap turned into a
+    // dead button with a stale figure still sitting above it.
+    const before = await page.inputValue('#sw-out-amount');
+    eq('there is a good quote to start from', before, '99.8');
+
+    await page.evaluate(() => net_quoteFail(429));
+    await page.evaluate(() => quoteSwap({ auto: true }));
+    await page.waitForFunction(() => /Busy for a moment/.test(document.getElementById('sw-msg').textContent),
+      null, { timeout: 10000 });
+
+    const during = await page.evaluate(() => ({
+      out: document.getElementById('sw-out-amount').value,
+      go: document.getElementById('sw-go').textContent.trim(),
+      disabled: document.getElementById('sw-go').disabled,
+      msg: document.getElementById('sw-msg').textContent
+    }));
+    eq('a failed refresh keeps the price that was already good', during.out, before);
+    ok('the swap can still be taken', !during.disabled && /Swap SOL for USDC/.test(during.go), JSON.stringify(during));
+    ok('and it says the figure is from a moment ago rather than crying no route',
+      /from \d+s ago/.test(during.msg) && !/no route/i.test(during.msg), during.msg);
+
+    // It retries on its own — which is the refresh people were doing by hand.
+    await page.evaluate(() => net_quoteFail(0));
+    await page.waitForFunction(() => !/Busy for a moment/.test(document.getElementById('sw-msg').textContent),
+      null, { timeout: 15000 });
+    eq('and recovers without anyone touching it', await page.inputValue('#sw-out-amount'), '99.8');
+
+    // A brand new amount that cannot be priced is different: there is no good
+    // figure to keep, so none must be left lying around.
+    await page.evaluate(() => net_quoteFail(429));
+    await page.fill('#sw-in-amount', '1.5');
+    await page.waitForFunction(() => /Try again/.test(document.getElementById('sw-go').textContent),
+      null, { timeout: 10000 });
+    const fresh = await page.evaluate(() => ({
+      out: document.getElementById('sw-out-amount').value,
+      usd: document.getElementById('sw-out-usd').textContent,
+      go: document.getElementById('sw-go').textContent.trim()
+    }));
+    eq('no stale number is left under the error', fresh.out, '');
+    eq('nor a stale dollar value', fresh.usd, '');
+    eq('and the button says what to do, not that the pair is dead', fresh.go, 'Try again');
+
+    // A genuine refusal still says so plainly.
+    await page.evaluate(() => net_quoteFail(502));
+    await page.fill('#sw-in-amount', '1.75');
+    await page.waitForFunction(() => /No route/.test(document.getElementById('sw-go').textContent),
+      null, { timeout: 10000 });
+    ok('a pair that really has no route is still called that',
+      /no route/i.test(await page.textContent('#sw-msg')), await page.textContent('#sw-msg'));
+    eq('with nothing stale above it', await page.inputValue('#sw-out-amount'), '');
+
+    await page.evaluate(() => net_quoteFail(0));
+    await page.fill('#sw-in-amount', '1');
+    await page.waitForFunction(() => document.getElementById('sw-out-amount').value === '99.8', null, { timeout: 10000 });
+    ok('and everything works again afterwards', true);
+  }
 
   section('it can be installed on a phone');
   {
