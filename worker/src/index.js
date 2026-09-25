@@ -3639,14 +3639,36 @@ export default {
         });
       }
 
+      // Only ever the rough "≈ $503" under the amount box — the quote is the
+      // number anyone acts on. The page asks on load, on every token picked
+      // and on every flip, and each of those was its own call to Jupiter,
+      // which is most of what was using up the rate limit that then took the
+      // quotes down with it. Fifteen seconds is invisible on an estimate.
       if (path === '/api/swap/prices' && request.method === 'GET') {
         const ids = String(url.searchParams.get('ids') || '').split(',')
           .filter(isWallet).slice(0, 10);
         if (!ids.length) return json(request, env, { prices: {} });
+
+        const cache = caches.default;
+        // sorted, so SOL,USDC and USDC,SOL are the same question
+        const key = new Request('https://swap-prices.cache/' + ids.slice().sort().join(','));
+        const hit = await cache.match(key);
+        if (hit) {
+          const body = await hit.json();
+          return json(request, env, body);
+        }
+
         const out = await jupPrices(env, ids);
         const prices = {};
         for (const [mint, v] of Object.entries(out || {})) {
           if (v && v.usdPrice) prices[mint] = Number(v.usdPrice);
+        }
+        // A blank answer means Jupiter refused, and caching that would keep
+        // the dollar values empty for everyone for the next fifteen seconds.
+        if (Object.keys(prices).length) {
+          ctx.waitUntil(cache.put(key, new Response(JSON.stringify({ prices: prices }), {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=15' }
+          })));
         }
         return json(request, env, { prices: prices });
       }

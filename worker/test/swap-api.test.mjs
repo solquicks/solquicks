@@ -351,6 +351,46 @@ section('being rate limited is not the same as having no route');
   eq('and a working quote is unaffected by any of it', fine.status, 200);
 }
 
+section('the dollar estimate does not cost a Jupiter call every time');
+{
+  // Six places in the page ask for these — on load, on every token picked, on
+  // every flip — and each was its own request. That volume is most of what
+  // spent the rate limit that then took the quotes down with it.
+  const env = freshEnv();
+  const pricesFor = (ids) => call(env, 'GET', '/api/swap/prices?ids=' + ids);
+  const priceCalls = () => chain.jupCalls.filter((c) => c.url.includes('/price/v3')).length;
+
+  const before = priceCalls();
+  const first = await pricesFor(SOL + ',' + USDC);
+  eq('the first ask is answered', first.body.prices[SOL], 150);
+  eq('and costs one call', priceCalls() - before, 1);
+
+  const again = await pricesFor(SOL + ',' + USDC);
+  eq('asking again gives the same answer', again.body.prices[SOL], 150);
+  eq('for free', priceCalls() - before, 1);
+
+  // Flipping the pair is the same question asked backwards.
+  const flipped = await pricesFor(USDC + ',' + SOL);
+  eq('and flipping the pair is not a new question', priceCalls() - before, 1);
+  eq('answered just the same', flipped.body.prices[SOL], 150);
+
+  // A different pair genuinely is one.
+  await pricesFor(SOL + ',' + BONK);
+  eq('a pair nobody has asked about does cost a call', priceCalls() - before, 2);
+
+  // An empty answer must never be cached: Jupiter refusing once would
+  // otherwise blank every dollar value on the page for the next fifteen
+  // seconds, for everyone.
+  const realJup = chain.jup;
+  chain.jup = (u, init) => u.pathname === '/price/v3' ? new Response('', { status: 429 }) : realJup(u, init);
+  const failed = await pricesFor(WIF + ',' + USDC);
+  eq('a refused lookup answers with nothing rather than an error', failed.status, 200);
+  eq('and nothing is what it says', Object.keys(failed.body.prices).length, 0);
+  chain.jup = realJup;
+  const recovered = await pricesFor(WIF + ',' + USDC);
+  eq('so the next ask goes back to Jupiter rather than serving the blank', recovered.body.prices[WIF], 2);
+}
+
 section('swap history');
 {
   const env = freshEnv();
