@@ -2180,19 +2180,30 @@
       position: fixed;
       bottom: 20px; right: 20px;
       z-index: 51;
-      display: flex; align-items: center; gap: 9px;
-      padding: 7px 14px 7px 8px;
+      display: flex; flex-direction: column; align-items: stretch;
+      padding: 0;
       border-radius: 14px;
       background: var(--ink);
       border: 2px solid var(--ink);
       box-shadow: var(--pop);
       cursor: pointer;
+      overflow: hidden;
       font-family: 'Baloo 2', sans-serif;
       color: #fff;
       /* Dark against a light page: it should read as a maker's mark on the
          work rather than as part of the site's own furniture. */
     }
+    .powered-top { display: flex; align-items: center; gap: 9px; padding: 7px 14px 7px 8px; }
+    /* The invitation, under the credit. "Powered by" says who made this; this
+       says what you can do about it, which is the entire job of the badge. */
+    .powered-cta {
+      display: block; padding: 5px 10px;
+      background: var(--orange);
+      font-size: 0.66rem; font-weight: 800; letter-spacing: 0.04em;
+      text-align: center; white-space: nowrap;
+    }
     .powered:hover { background: #3d3154; border-color: #3d3154; }
+    .powered:hover .powered-cta { background: var(--orange-deep); }
     .powered-mark { border-radius: 8px; display: block; flex-shrink: 0; }
     .powered-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
     .powered-by {
@@ -2205,8 +2216,10 @@
 
     .back-to-top {
       position: fixed;
-      /* Above the badge, which owns the corner now. */
-      bottom: 76px; right: 20px;
+      /* Above the badge, which owns the corner now — and which grew a second
+         line when it started inviting people rather than just signing the
+         work. A browser test asserts the two never touch. */
+      bottom: 104px; right: 20px;
       width: 44px; height: 44px;
       border-radius: 50%;
       background: var(--orange);
@@ -2222,11 +2235,13 @@
     .back-to-top.visible { display: flex; }
 
     @media (max-width: 480px) {
-      .powered { bottom: 14px; right: 14px; padding: 6px 11px 6px 6px; gap: 7px; border-radius: 12px; }
+      .powered { bottom: 14px; right: 14px; border-radius: 12px; }
+      .powered-top { padding: 6px 11px 6px 6px; gap: 7px; }
+      .powered-cta { font-size: 0.6rem; padding: 4px 8px; }
       .powered-mark { width: 22px; height: 22px; border-radius: 6px; }
       .powered-by { font-size: 0.5rem; }
       .powered-name { font-size: 0.72rem; }
-      .back-to-top { bottom: 64px; right: 14px; }
+      .back-to-top { bottom: 88px; right: 14px; }
       .container { padding: 14px 12px 50px; }
       .handle { font-size: 1.35rem; }
       .avatar { width: 140px; height: 140px; }
@@ -2942,11 +2957,14 @@
        creator finds it. It is the whole distribution plan, so it sits on every
        page rather than behind a menu. -->
   <button class="powered" id="powered" onclick="switchTab('launchpad')">
-    <img class="powered-mark" src="avatar.png" alt="" width="28" height="28"/>
-    <span class="powered-text">
-      <span class="powered-by">Powered by</span>
-      <span class="powered-name" id="powered-name"></span>
+    <span class="powered-top">
+      <img class="powered-mark" src="avatar.png" alt="" width="28" height="28"/>
+      <span class="powered-text">
+        <span class="powered-by">Powered by</span>
+        <span class="powered-name" id="powered-name"></span>
+      </span>
     </span>
+    <span class="powered-cta" id="powered-cta" hidden></span>
   </button>
 
 
@@ -3151,18 +3169,23 @@
     // Defined here rather than written into the markup four times: adding the
     // fifth is one line, and the tab, the menu entry and the page cannot drift
     // apart from each other.
-    // What the badge in the corner says, and where it points. On a creator's
-    // own site this is the only line that changes: the badge still names the
-    // thing that built it, which is how the creator after them finds it.
-    const LAUNCHPAD = { name: 'solquicks' };
+    // What the badge in the corner says. On a creator's own site the name is
+    // the only line that changes: the badge still names the thing that built
+    // it, which is how the creator after them finds it.
+    //
+    // The call to action is the half that does the work. "Powered by" alone is
+    // a credit — it tells you who made this and nothing about what to do next.
+    // Set cta to null on any site that should carry the credit without the
+    // invitation.
+    const LAUNCHPAD = { name: 'solquicks', cta: 'Launch your own website' };
 
     const SOON_TABS = [
       {
-        // Not in the menu: this one is reached from the badge in the corner,
-        // which is on every page of every site built from this template. That
-        // badge is the whole distribution plan, so burying a second entrance
-        // in a dropdown would only split the traffic to it.
-        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆', inMenu: false,
+        // In the menu and on the badge both. They catch different people: the
+        // badge is seen by a creator's own audience, who have no reason to
+        // open somebody else's menu, and the menu entry is for anyone already
+        // working their way through this site.
+        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆',
         note: 'Run a site like this one under your own name',
         lead: 'Your own site, on this one',
         what: 'Everything here — the swap and its fees, the store, bookings, the ' +
@@ -3235,6 +3258,9 @@
       }
       sortNavMenu();
       document.getElementById('powered-name').textContent = LAUNCHPAD.name;
+      const cta = document.getElementById('powered-cta');
+      cta.textContent = LAUNCHPAD.cta || '';
+      cta.hidden = !LAUNCHPAD.cta;
     })();
 
     function buildMenuItem(menu, page) {

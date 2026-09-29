@@ -459,9 +459,7 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,defi,gacha,leaderboard,moon,referrals,wishlist');
-  ok('and the Launchpad is not among them — it has the badge instead',
-    !menuTabs.includes('launchpad'), menuTabs.join(','));
+    'links,cleanup,launchpad,defi,gacha,leaderboard,moon,referrals,wishlist');
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
 
   // The order is a rule, not a list somebody retypes. Sorted by what is on
@@ -1581,6 +1579,29 @@ try {
     ok('and visible without opening anything', await badge.isVisible());
     eq('it names what built the site', (await page.textContent('#powered-name')).trim(), 'solquicks');
     ok('under a "powered by" line', /powered by/i.test(await page.textContent('.powered-by')));
+
+    // "Powered by" is a credit: it says who made this and nothing about what
+    // to do next. The invitation is the half that does the work.
+    ok('and it invites you to make one too', await page.locator('#powered-cta').isVisible());
+    eq('saying so plainly', (await page.textContent('#powered-cta')).trim(), 'Launch your own website');
+    eq('with the credit still above it', await page.evaluate(() => {
+      const a = document.querySelector('.powered-top').getBoundingClientRect();
+      const b = document.getElementById('powered-cta').getBoundingClientRect();
+      return a.bottom <= b.top + 1;
+    }), true);
+
+    // A site that should carry the credit without the invitation.
+    eq('a site can wear the credit without the invitation', await page.evaluate(() => {
+      const was = LAUNCHPAD.cta;
+      LAUNCHPAD.cta = null;
+      const cta = document.getElementById('powered-cta');
+      cta.textContent = LAUNCHPAD.cta || '';
+      cta.hidden = !LAUNCHPAD.cta;
+      const gone = cta.hidden;
+      LAUNCHPAD.cta = was;
+      cta.textContent = was; cta.hidden = false;
+      return gone;
+    }), true);
 
     // It sits in the same corner as the back-to-top button, which was there
     // first. One must not be sitting on top of the other.
