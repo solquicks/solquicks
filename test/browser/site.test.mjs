@@ -459,7 +459,19 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,launchpad,defi,gacha,leaderboard,moon,referrals,wishlist');
+    'links,cleanup,defi,gacha,leaderboard,moon,referrals,wishlist');
+
+  // The Launchpad is a page of its own rather than a tab, so it is a link in
+  // the same menu and has no panel behind it.
+  const lp = page.locator('#nav-launchpad');
+  eq('the Launchpad sits in the menu as a link out', await lp.getAttribute('href'), 'launch.html');
+  eq('named like everything else', (await lp.locator('.nav-item-name').textContent()).trim(), 'Creator Launchpad');
+  eq('and still in alphabetical order', await page.$$eval('.nav-item',
+    (els) => els.filter((e) => !e.hidden).map((e) => (e.querySelector('.nav-item-name') || e).textContent.trim()))
+    .then((n) => n.slice(1).join(',')),
+    await page.$$eval('.nav-item',
+      (els) => els.filter((e) => !e.hidden).map((e) => (e.querySelector('.nav-item-name') || e).textContent.trim()))
+      .then((n) => n.slice(1).slice().sort((a, b) => a.localeCompare(b)).join(',')));
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
 
   // The order is a rule, not a list somebody retypes. Sorted by what is on
@@ -1550,7 +1562,6 @@ try {
     // considered, not like one that failed to load — and it has to say what it
     // will be, or the tab is just a dead end with a nice border.
     for (const [tab, lead, mustSay] of [
-      ['launchpad', 'Your own site, on this one', /under your brand/],   // reached by the badge, not the menu
       ['defi', 'DeFi', /same wallet you swap with/],
       ['wishlist', 'Wishlist', /sp3nd/],
       // Money and chance in the same sentence: whatever the machine ends up
@@ -1641,12 +1652,8 @@ try {
     await page.waitForTimeout(300);
     eq('and on a desktop too', (await clears()).join(','), '');
 
-    // Following it has to land somewhere, from whatever page you were on.
-    await page.evaluate(() => switchTab('swap'));
-    await page.click('#powered');
-    await page.waitForSelector('#panel-launchpad.active', { timeout: 10000 });
-    ok('clicking it opens the Launchpad from any page',
-      await page.locator('#panel-launchpad .soon').count() === 1);
+    // It has to go to the Launchpad from whatever page you were on.
+    eq('it points at the Launchpad', await page.locator('#powered').getAttribute('href'), 'launch.html');
 
     // A link straight to one of them has to work: these get shared before the
     // page behind them exists, which is rather the point of having them.

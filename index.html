@@ -2178,6 +2178,7 @@
 
     .powered {
       position: fixed;
+      text-decoration: none;
       bottom: 20px; right: 20px;
       z-index: 51;
       display: flex; flex-direction: column; align-items: stretch;
@@ -2314,6 +2315,11 @@
           <span><span class="nav-item-name">Moon Rangers</span>
           <span class="nav-item-note">Stake, missions, and collection stats</span></span>
         </button>
+        <a class="nav-item" role="menuitem" href="launch.html" id="nav-launchpad" data-leaves="1">
+          <span class="nav-item-icon" aria-hidden="true">◆</span>
+          <span><span class="nav-item-name">Creator Launchpad</span>
+          <span class="nav-item-note">Run a site like this one under your own name</span></span>
+        </a>
         <button class="nav-item" role="menuitem" data-tab="referrals" id="nav-referrals"
                 onclick="switchTab('referrals',this)">
           <span class="nav-item-icon" aria-hidden="true">◈</span>
@@ -2956,7 +2962,7 @@
   <!-- Every site built on this template carries this, which is how the next
        creator finds it. It is the whole distribution plan, so it sits on every
        page rather than behind a menu. -->
-  <button class="powered" id="powered" onclick="switchTab('launchpad')">
+  <a class="powered" id="powered" href="launch.html">
     <span class="powered-top">
       <img class="powered-mark" src="avatar.png" alt="" width="28" height="28"/>
       <span class="powered-text">
@@ -2965,7 +2971,7 @@
       </span>
     </span>
     <span class="powered-cta" id="powered-cta" hidden></span>
-  </button>
+  </a>
 
 
   </div>
@@ -3181,18 +3187,6 @@
 
     const SOON_TABS = [
       {
-        // In the menu and on the badge both. They catch different people: the
-        // badge is seen by a creator's own audience, who have no reason to
-        // open somebody else's menu, and the menu entry is for anyone already
-        // working their way through this site.
-        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆',
-        note: 'Run a site like this one under your own name',
-        lead: 'Your own site, on this one',
-        what: 'Everything here — the swap and its fees, the store, bookings, the ' +
-          'advertising slot — under your brand rather than mine. The revenue side ' +
-          'already built, and yours to run.'
-      },
-      {
         tab: 'defi', name: 'DeFi', icon: '◉',
         note: 'Put what you already hold to work',
         lead: 'DeFi',
@@ -3242,6 +3236,8 @@
         if (b.dataset.tab === 'links') return 1;
         return name(a).localeCompare(name(b));
       });
+      // The Launchpad entry is a link to another page rather than a tab, so it
+      // has no data-tab — it still sorts by its name like the rest.
       for (const el of items) menu.appendChild(el);
     }
 

@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Creator Launchpad | solquicks</title>
+  <meta name="description" content="Launch your own revenue-generating website. Swap fees, a store, bookings and ads — under your brand, on Solana."/>
+  <meta property="og:title" content="Creator Launchpad"/>
+  <meta property="og:description" content="Launch your own revenue-generating website — under your brand, on Solana."/>
+  <meta property="og:image" content="https://solquicks.com/avatar.png"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="referrer" content="strict-origin-when-cross-origin"/>
+  <!-- No CDN script on this page: nothing here needs web3.js, and a wallet is
+       read through the Wallet Standard the browser already exposes. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.workers.dev;"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #D9E4EB; --card: #FFFFFF; --cream: #FBF7EF;
+      --ink: #2E2440; --ink-soft: #55486B; --muted: #8B819D;
+      --orange: #F0821E; --orange-deep: #D96B0A; --orange-soft: #FFE3C4;
+      --green: #2FA463; --crimson: #D64570;
+      --radius: 18px;
+      --line: 2px solid var(--ink);
+      --pop: 4px 4px 0 var(--ink);
+    }
+    * { box-sizing: border-box; }
+    /* The browser's own [hidden] rule is display:none, which any later
+       display: block quietly beats — and one of those is on the preview
+       avatar, so an avatar URL that should never load was being shown
+       anyway. Hidden has to mean hidden. */
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: 'Nunito', sans-serif; font-weight: 600;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, .head { font-family: 'Baloo 2', sans-serif; font-weight: 800; }
+
+    .top {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 14px 20px; max-width: 1180px; margin: 0 auto;
+    }
+    .top a { color: var(--ink-soft); text-decoration: none; font-weight: 800; font-size: 0.9rem; }
+    .top a:hover { color: var(--ink); }
+    .top-brand { display: flex; align-items: center; gap: 9px; font-family: 'Baloo 2', sans-serif; font-weight: 800; }
+    .top-brand img { width: 28px; height: 28px; border-radius: 8px; border: var(--line); display: block; }
+
+    /* Two columns on a desktop: what you are filling in, and what it is
+       becoming. The preview is the point of the page, so it is never more
+       than a glance away. */
+    .lp {
+      display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 28px;
+      max-width: 1180px; margin: 0 auto; padding: 8px 20px 80px; align-items: start;
+    }
+    @media (max-width: 960px) {
+      .lp { grid-template-columns: 1fr; }
+      .lp-preview { position: static !important; order: -1; }
+    }
+
+    .card {
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      box-shadow: var(--pop); padding: 22px;
+    }
+    .card + .card { margin-top: 18px; }
+    .card.done { box-shadow: none; opacity: 0.72; }
+    .card[hidden] { display: none; }
+
+    .step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .step-no {
+      width: 26px; height: 26px; border-radius: 50%; border: var(--line);
+      display: grid; place-items: center; font-family: 'Baloo 2', sans-serif;
+      font-weight: 800; font-size: 0.85rem; flex-shrink: 0; background: var(--cream);
+    }
+    .card.done .step-no { background: var(--green); color: #fff; border-color: var(--green); }
+    .step-title { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1.15rem; }
+    .step-sub { color: var(--muted); font-size: 0.88rem; margin: 2px 0 16px 36px; line-height: 1.5; }
+
+    label.fld { display: block; margin-bottom: 12px; }
+    label.fld span { display: block; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+    input[type=text] {
+      width: 100%; font: inherit; font-weight: 700; padding: 10px 13px;
+      border: var(--line); border-radius: 12px; background: var(--cream); color: var(--ink);
+    }
+    input[type=text]:focus { outline: none; border-color: var(--orange); }
+    .row { display: flex; gap: 10px; align-items: flex-start; }
+    .row > * { flex: 1; min-width: 0; }
+
+    .go {
+      appearance: none; cursor: pointer; font-family: 'Baloo 2', sans-serif;
+      font-weight: 800; font-size: 0.98rem; padding: 11px 22px;
+      border: var(--line); border-radius: 999px; background: var(--orange); color: #fff;
+    }
+    .go:hover { background: var(--orange-deep); }
+    .go:disabled { background: var(--cream); color: var(--muted); cursor: default; }
+    .go.ghost { background: transparent; color: var(--ink); }
+    .go.ghost:hover { background: var(--orange-soft); }
+    .actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+
+    .msg { font-size: 0.86rem; font-weight: 700; margin-top: 10px; min-height: 1.2em; }
+    .msg.bad { color: var(--crimson); }
+    .msg.ok { color: var(--green); }
+
+    /* ── features ── */
+    .feats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .feat {
+      text-align: left; cursor: pointer; font: inherit; color: inherit;
+      background: var(--cream); border: var(--line); border-radius: 14px; padding: 11px 12px;
+      position: relative;
+    }
+    .feat:hover { background: var(--orange-soft); }
+    .feat.on { background: var(--orange-soft); }
+    .feat-name { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.96rem; }
+    .feat-blurb { font-size: 0.76rem; color: var(--muted); line-height: 1.4; margin-top: 3px; }
+    .feat-where {
+      position: absolute; top: -8px; right: 8px; font-size: 0.6rem; font-weight: 800;
+      letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px;
+      border-radius: 999px; border: var(--line); background: var(--card);
+    }
+    .feat.top .feat-where { background: var(--orange); color: #fff; border-color: var(--orange); }
+    .feat-soon {
+      display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--muted); margin-top: 5px;
+    }
+    .feat-up {
+      position: absolute; bottom: 6px; right: 6px; width: 22px; height: 22px;
+      border-radius: 50%; border: var(--line); background: var(--card); cursor: pointer;
+      font-size: 0.7rem; line-height: 1; display: none; padding: 0;
+    }
+    .feat.on:not(.top) .feat-up { display: block; }
+    .picked { font-size: 0.84rem; color: var(--muted); margin-top: 12px; line-height: 1.6; }
+
+    /* ── wallet ── */
+    .wallets { display: grid; gap: 8px; }
+    .wallet-pick {
+      display: flex; align-items: center; gap: 10px; cursor: pointer; font: inherit;
+      text-align: left; background: var(--cream); border: var(--line);
+      border-radius: 12px; padding: 10px 12px; color: inherit;
+    }
+    .wallet-pick:hover { background: var(--orange-soft); }
+    .wallet-pick img { width: 24px; height: 24px; border-radius: 6px; }
+    .addr { font-family: ui-monospace, monospace; font-size: 0.82rem; word-break: break-all; }
+
+    .split { display: grid; gap: 8px; margin-top: 14px; }
+    .split-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.9rem; }
+    .split-row b { font-variant-numeric: tabular-nums; }
+    .split-bar { display: flex; height: 12px; border: var(--line); border-radius: 999px; overflow: hidden; }
+    .split-bar i { display: block; height: 100%; }
+
+    /* ── the preview ── */
+    .lp-preview { position: sticky; top: 16px; }
+    .pv-label {
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 8px; text-align: center;
+    }
+    .pv-frame {
+      border: var(--line); border-radius: 20px; background: var(--bg);
+      box-shadow: var(--pop); overflow: hidden;
+    }
+    .pv-bar {
+      display: flex; align-items: center; gap: 4px; padding: 7px 8px;
+      background: var(--card); border-bottom: var(--line);
+    }
+    .pv-menu {
+      display: flex; align-items: center; gap: 4px; font-size: 0.62rem; font-weight: 800;
+      padding: 4px 7px; border-radius: 999px; border: 2px solid transparent; white-space: nowrap;
+    }
+    .pv-tabs { display: flex; gap: 3px; flex: 1; justify-content: center; min-width: 0; }
+    .pv-tab {
+      font-size: 0.6rem; font-weight: 800; padding: 4px 7px; border-radius: 999px;
+      white-space: nowrap; color: var(--ink-soft);
+    }
+    .pv-tab.first { background: var(--orange); color: #fff; }
+    .pv-chip {
+      font-size: 0.58rem; font-weight: 800; padding: 4px 8px; border-radius: 999px;
+      background: var(--ink); color: #fff; white-space: nowrap;
+    }
+    .pv-ad {
+      margin: 8px; padding: 14px 10px; text-align: center;
+      border: 2px dashed var(--ink); border-radius: 12px; background: var(--cream);
+      font-size: 0.66rem; font-weight: 800; color: var(--muted);
+    }
+    .pv-body { padding: 4px 12px 14px; text-align: center; }
+    .pv-avatar {
+      width: 58px; height: 58px; border-radius: 50%; border: var(--line);
+      margin: 6px auto 8px; display: block; object-fit: cover; background: var(--cream);
+    }
+    .pv-avatar-fallback { display: grid; place-items: center; font-family: 'Baloo 2', sans-serif;
+      font-weight: 800; font-size: 1.5rem; color: var(--muted); }
+    .pv-name { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 1.05rem; line-height: 1.2; }
+    .pv-handle { color: var(--orange-deep); font-weight: 800; font-size: 0.78rem; margin-top: 1px; }
+    .pv-tagline { color: var(--muted); font-size: 0.72rem; margin-top: 5px; line-height: 1.4; }
+    .pv-links { display: grid; gap: 5px; margin-top: 11px; }
+    .pv-link {
+      display: flex; align-items: center; gap: 7px; padding: 7px 9px;
+      background: var(--card); border: var(--line); border-radius: 10px;
+      font-size: 0.68rem; font-weight: 800; text-align: left;
+    }
+    .pv-link i { width: 16px; height: 16px; border-radius: 4px; background: var(--cream); border: 1px solid var(--ink); flex-shrink: 0; }
+    .pv-foot {
+      display: flex; justify-content: flex-end; padding: 8px 10px 10px;
+    }
+    .pv-badge {
+      display: flex; flex-direction: column; border-radius: 9px; overflow: hidden;
+      border: 2px solid var(--ink); background: var(--ink); color: #fff;
+    }
+    .pv-badge-top { display: flex; align-items: center; gap: 5px; padding: 4px 8px 4px 4px; }
+    .pv-badge-top img { width: 16px; height: 16px; border-radius: 4px; display: block; }
+    .pv-badge-by { font-size: 0.42rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.7; }
+    .pv-badge-name { font-size: 0.56rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
+    .pv-badge-cta {
+      background: var(--orange); font-size: 0.48rem; font-weight: 800;
+      padding: 3px 6px; text-align: center;
+    }
+    .pv-url {
+      text-align: center; font-family: ui-monospace, monospace; font-size: 0.72rem;
+      color: var(--muted); margin-top: 9px; word-break: break-all;
+    }
+
+    /* ── the landing pitch ── */
+    .pitch { text-align: center; max-width: 620px; margin: 0 auto 26px; }
+    .pitch h1 { font-size: 2.1rem; line-height: 1.15; margin: 10px 0 12px; }
+    .pitch p { color: var(--ink-soft); font-size: 1.02rem; line-height: 1.6; margin: 0 auto 18px; }
+    .earns { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0; text-align: left; }
+    .earn { background: var(--card); border: var(--line); border-radius: 14px; padding: 12px; }
+    .earn b { display: block; font-family: 'Baloo 2', sans-serif; font-size: 0.95rem; }
+    .earn span { font-size: 0.76rem; color: var(--muted); line-height: 1.4; display: block; margin-top: 2px; }
+    @media (max-width: 560px) { .pitch h1 { font-size: 1.6rem; } }
+
+    .done-big { text-align: center; }
+    .done-big .tick { font-size: 2.6rem; }
+    .done-big .live {
+      display: inline-block; font-family: ui-monospace, monospace; font-weight: 700;
+      background: var(--cream); border: var(--line); border-radius: 12px;
+      padding: 10px 16px; margin: 12px 0; word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <a class="top-brand" href="/"><img src="avatar.png" alt=""/> solquicks</a>
+    <a href="/">← Back to the site</a>
+  </div>
+
+  <div class="lp">
+    <div>
+      <!-- ── the pitch, and the invite ── -->
+      <div class="card" id="s-start">
+        <div class="pitch">
+          <h1>Launch your own website</h1>
+          <p>Everything on solquicks.com — the swap and its fees, a store, bookings, the advertising
+             slot — under your brand instead of mine. You keep the money it makes.</p>
+          <div class="earns" id="earns"></div>
+        </div>
+        <label class="fld">
+          <span>Invite code</span>
+          <div class="row">
+            <input type="text" id="code" placeholder="FOX-XXXXX" spellcheck="false" autocomplete="off"/>
+            <button class="go" id="code-go" style="flex:0 0 auto" onclick="checkCode()">Start</button>
+          </div>
+        </label>
+        <div class="msg" id="code-msg"></div>
+      </div>
+
+      <!-- ── 1. brand ── -->
+      <div class="card" id="s-brand" hidden>
+        <div class="step-head"><span class="step-no">1</span><span class="step-title">Your brand</span></div>
+        <p class="step-sub">This is the top of your site. Watch it appear on the right as you type.</p>
+        <label class="fld"><span>Name</span><input type="text" id="f-name" maxlength="60" placeholder="Your name or project"/></label>
+        <label class="fld"><span>Handle</span><input type="text" id="f-handle" maxlength="40" placeholder="@you"/></label>
+        <label class="fld"><span>Tagline</span><input type="text" id="f-tagline" maxlength="140" placeholder="What you do, in a line"/></label>
+        <label class="fld"><span>Avatar URL</span><input type="text" id="f-avatar" maxlength="400" placeholder="https://…" spellcheck="false"/></label>
+        <div class="actions"><button class="go" id="brand-go" onclick="toStep('feats')">Next</button></div>
+        <div class="msg" id="brand-msg"></div>
+      </div>
+
+      <!-- ── 2. pages ── -->
+      <div class="card" id="s-feats" hidden>
+        <div class="step-head"><span class="step-no">2</span><span class="step-title">Your pages</span></div>
+        <p class="step-sub">Pick what your site does. The first three go in your top bar, where nobody
+           can miss them; anything else after that goes in the menu.</p>
+        <div class="feats" id="feats"></div>
+        <div class="picked" id="picked"></div>
+        <div class="actions">
+          <button class="go ghost" onclick="toStep('brand')">Back</button>
+          <button class="go" id="feats-go" onclick="toStep('wallet')">Next</button>
+        </div>
+        <div class="msg" id="feats-msg"></div>
+      </div>
+
+      <!-- ── 3. wallet ── -->
+      <div class="card" id="s-wallet" hidden>
+        <div class="step-head"><span class="step-no">3</span><span class="step-title">Where your money goes</span></div>
+        <p class="step-sub">Bookings and your advertising slot pay into this wallet directly. Nothing
+           passes through us on the way.</p>
+        <div class="wallets" id="wallets"></div>
+        <div id="wallet-have" hidden>
+          <div class="addr" id="wallet-addr"></div>
+          <div class="actions">
+            <button class="go ghost" onclick="pickAnotherWallet()">Use another wallet</button>
+          </div>
+        </div>
+        <div class="split" id="split"></div>
+        <div class="actions">
+          <button class="go ghost" onclick="toStep('feats')">Back</button>
+          <button class="go" id="wallet-go" onclick="toStep('domain')" disabled>Next</button>
+        </div>
+        <div class="msg" id="wallet-msg"></div>
+      </div>
+
+      <!-- ── 4. domain ── -->
+      <div class="card" id="s-domain" hidden>
+        <div class="step-head"><span class="step-no">4</span><span class="step-title">Your address</span></div>
+        <p class="step-sub">Your site goes live straight away on a solquicks.com address. The domain
+           below is yours to tokenize on Solana with D3 — we check it against the registry now so you
+           know it is really free.</p>
+        <label class="fld">
+          <span>Site address</span>
+          <div class="row">
+            <input type="text" id="f-slug" placeholder="yourname" spellcheck="false" autocomplete="off"/>
+          </div>
+        </label>
+        <div class="msg" id="slug-msg"></div>
+        <label class="fld" style="margin-top:14px">
+          <span>Domain to tokenize</span>
+          <div class="row">
+            <input type="text" id="f-domain" placeholder="yourname.io" spellcheck="false" autocomplete="off"/>
+          </div>
+        </label>
+        <div class="msg" id="domain-msg"></div>
+        <div class="actions">
+          <button class="go ghost" onclick="toStep('wallet')">Back</button>
+          <button class="go" id="domain-go" onclick="toStep('launch')" disabled>Next</button>
+        </div>
+      </div>
+
+      <!-- ── 5. launch ── -->
+      <div class="card" id="s-launch" hidden>
+        <div class="step-head"><span class="step-no">5</span><span class="step-title">Launch</span></div>
+        <p class="step-sub">This makes your site. It is live the moment you press it.</p>
+        <div id="review"></div>
+        <div class="actions">
+          <button class="go ghost" onclick="toStep('domain')">Back</button>
+          <button class="go" id="launch-go" onclick="launchSite()">Launch on Solana</button>
+        </div>
+        <div class="msg" id="launch-msg"></div>
+      </div>
+
+      <!-- ── done ── -->
+      <div class="card done-big" id="s-done" hidden>
+        <div class="tick">🚀</div>
+        <h2 style="margin:6px 0">Your site is live</h2>
+        <a class="live" id="done-url" href="#" target="_blank" rel="noopener"></a>
+        <p style="color:var(--muted);font-size:0.9rem;line-height:1.6" id="done-note"></p>
+      </div>
+    </div>
+
+    <!-- ── the preview ── -->
+    <aside class="lp-preview">
+      <div class="pv-label">Your site</div>
+      <div class="pv-frame">
+        <div class="pv-bar">
+          <span class="pv-menu">☰ Contact ▾</span>
+          <span class="pv-tabs" id="pv-tabs"></span>
+          <span class="pv-chip">Connect</span>
+        </div>
+        <div class="pv-ad">Your advertising space here</div>
+        <div class="pv-body">
+          <img class="pv-avatar" id="pv-avatar" alt="" hidden/>
+          <div class="pv-avatar pv-avatar-fallback" id="pv-avatar-fb">?</div>
+          <div class="pv-name" id="pv-name">Your name</div>
+          <div class="pv-handle" id="pv-handle">@you</div>
+          <div class="pv-tagline" id="pv-tagline">What you do, in a line</div>
+          <div class="pv-links">
+            <span class="pv-link"><i></i> X (Twitter)</span>
+            <span class="pv-link"><i></i> YouTube</span>
+            <span class="pv-link"><i></i> Discord</span>
+          </div>
+        </div>
+        <div class="pv-foot">
+          <span class="pv-badge">
+            <span class="pv-badge-top">
+              <img src="avatar.png" alt=""/>
+              <span>
+                <span class="pv-badge-by" style="display:block">Powered by</span>
+                <span class="pv-badge-name">solquicks</span>
+              </span>
+            </span>
+            <span class="pv-badge-cta">Launch your own website</span>
+          </span>
+        </div>
+      </div>
+      <div class="pv-url" id="pv-url">yourname.solquicks.com</div>
+    </aside>
+  </div>
+
+<script>
+  const API = 'https://solquicks-points.solquicks-45c.workers.dev';
+
+  // Everything the creator has chosen so far. One object so the preview and
+  // the launch call can never disagree about what is being built.
+  const draft = {
+    code: null, name: '', handle: '', tagline: '', avatar: '',
+    picked: [], wallet: null, slug: '', domain: '', slugOk: false, domainOk: false
+  };
+  let FEATURES = [];
+  let ROOT = 'solquicks.com';
+  let USDC_MAX = 50, PLATFORM = 1;
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const note = (id, text, kind) => { const el = $(id); el.textContent = text; el.className = 'msg' + (kind ? ' ' + kind : ''); };
+
+  async function api(path, opts) {
+    const res = await fetch(API + path, Object.assign({
+      headers: { 'Content-Type': 'application/json' }
+    }, opts || {}));
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, body: body };
+  }
+
+  // ── steps ──────────────────────────────────────────────────────────────
+  const STEPS = ['start', 'brand', 'feats', 'wallet', 'domain', 'launch', 'done'];
+  let at = 'start';
+
+  function toStep(name) {
+    if (name === 'feats' && !draft.name.trim()) {
+      note('brand-msg', 'Your site needs a name.', 'bad');
+      return;
+    }
+    if (name === 'wallet' && draft.picked.length < 3) {
+      note('feats-msg', 'Pick at least three — the first three go in your top bar.', 'bad');
+      return;
+    }
+    at = name;
+    for (const s of STEPS) {
+      const card = $('s-' + s);
+      if (!card) continue;
+      const shown = s === name;
+      card.hidden = !shown;
+      // Earlier steps are done; the start card stays out of the way once the
+      // code is accepted.
+      card.classList.toggle('done', false);
+    }
+    if (name === 'launch') paintReview();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ── the pitch ──────────────────────────────────────────────────────────
+  function paintEarns() {
+    $('earns').innerHTML = FEATURES.filter((f) => f.earns).slice(0, 6).map((f) =>
+      '<div class="earn"><b>' + esc(f.name) + '</b><span>' + esc(f.blurb) + '</span></div>').join('');
+  }
+
+  async function checkCode() {
+    const code = ($('code').value || '').trim();
+    if (!code) { note('code-msg', 'Put your invite code in.', 'bad'); return; }
+    $('code-go').disabled = true;
+    note('code-msg', 'Checking…', '');
+    const r = await api('/api/launch/invite', { method: 'POST', body: JSON.stringify({ code: code }) });
+    $('code-go').disabled = false;
+    if (r.status !== 200) { note('code-msg', (r.body && r.body.error) || 'That did not work.', 'bad'); return; }
+    draft.code = r.body.code;
+    note('code-msg', '', '');
+    toStep('brand');
+  }
+
+  // ── brand ──────────────────────────────────────────────────────────────
+  function bindBrand() {
+    const map = { 'f-name': 'name', 'f-handle': 'handle', 'f-tagline': 'tagline', 'f-avatar': 'avatar' };
+    for (const [id, key] of Object.entries(map)) {
+      $(id).addEventListener('input', function () {
+        draft[key] = this.value;
+        // A name typed here is the obvious first guess at an address, right up
+        // until the creator has said otherwise.
+        if (key === 'name' && !draft.slug) $('f-slug').placeholder = slugify(this.value) || 'yourname';
+        paintPreview();
+      });
+    }
+  }
+
+  const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+
+  // ── features ───────────────────────────────────────────────────────────
+  function paintFeats() {
+    $('feats').innerHTML = FEATURES.map(function (f) {
+      const i = draft.picked.indexOf(f.id);
+      const on = i >= 0, top = on && i < 3;
+      return '<button type="button" class="feat' + (on ? ' on' : '') + (top ? ' top' : '') +
+        '" data-id="' + esc(f.id) + '">' +
+        (on ? '<span class="feat-where">' + (top ? 'Top bar' : 'Menu') + '</span>' : '') +
+        '<span class="feat-name">' + esc(f.name) + '</span>' +
+        '<span class="feat-blurb">' + esc(f.blurb) + '</span>' +
+        (f.live ? '' : '<span class="feat-soon">Coming soon page</span>') +
+        (on ? '<button type="button" class="feat-up" data-up="' + esc(f.id) + '" title="Move up">▲</button>' : '') +
+        '</button>';
+    }).join('');
+
+    const n = draft.picked.length;
+    $('picked').textContent = n === 0
+      ? 'Nothing picked yet. The first three you pick go in your top bar.'
+      : n < 3
+        ? n + ' picked — pick ' + (3 - n) + ' more to fill your top bar.'
+        : 'Top bar: ' + draft.picked.slice(0, 3).map(nameOf).join(', ') +
+          (n > 3 ? ' · In the menu: ' + draft.picked.slice(3).map(nameOf).join(', ') : '');
+    paintPreview();
+  }
+
+  const nameOf = (id) => (FEATURES.find((f) => f.id === id) || { name: id }).name;
+
+  function featClick(ev) {
+    const up = ev.target.closest('[data-up]');
+    if (up) {
+      ev.stopPropagation();
+      const i = draft.picked.indexOf(up.dataset.up);
+      if (i > 0) {
+        draft.picked.splice(i - 1, 0, draft.picked.splice(i, 1)[0]);
+        paintFeats();
+      }
+      return;
+    }
+    const card = ev.target.closest('[data-id]');
+    if (!card) return;
+    const id = card.dataset.id;
+    const i = draft.picked.indexOf(id);
+    if (i >= 0) draft.picked.splice(i, 1); else draft.picked.push(id);
+    note('feats-msg', '', '');
+    paintFeats();
+  }
+
+  // ── wallet ─────────────────────────────────────────────────────────────
+  // Several wallets register themselves and the first one to do so is not
+  // necessarily the one somebody meant to use. So they are all offered, the
+  // choice is remembered, and there is always a way back to it.
+  const WALLET_KEY = 'launch_wallet_name';
+  let wallets = [];
+
+  function findWallets() {
+    const found = [];
+    try {
+      window.addEventListener('wallet-standard:register-wallet', function (ev) {
+        ev.detail(function (w) { if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); });
+      });
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
+        detail: { register: function (...ws) { for (const w of ws) if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); return () => {}; } }
+      }));
+    } catch (e) { /* no wallets is a state, not an error */ }
+    wallets = found;
+    paintWallets(found);
+  }
+
+  function paintWallets(found) {
+    wallets = found;
+    const box = $('wallets');
+    if (draft.wallet) { box.innerHTML = ''; return; }
+    if (!found.length) {
+      box.innerHTML = '<div class="feat-blurb">No Solana wallet found in this browser. ' +
+        'Install one and reload, and this step will find it.</div>';
+      return;
+    }
+    box.innerHTML = '';
+    for (const w of found) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'wallet-pick';
+      const icon = document.createElement('img');
+      if (w.icon) icon.src = w.icon;
+      icon.alt = '';
+      const label = document.createElement('span');
+      // Names come from the extensions themselves, so they are set as text and
+      // never built into markup.
+      label.textContent = w.name;
+      b.append(icon, label);
+      b.onclick = () => connect(w);
+      box.appendChild(b);
+    }
+    // Whatever was used last time goes first, so the habit is one click.
+    let remembered = null;
+    try { remembered = localStorage.getItem(WALLET_KEY); } catch (e) { /* fine */ }
+    if (remembered) {
+      const first = [...box.children].find((el) => el.textContent.trim() === remembered);
+      if (first) box.prepend(first);
+    }
+  }
+
+  async function connect(w) {
+    note('wallet-msg', 'Approve it in your wallet…', '');
+    try {
+      const feature = w.features && w.features['standard:connect'];
+      if (!feature) throw new Error('that wallet cannot connect here');
+      const out = await feature.connect();
+      const account = (out && out.accounts && out.accounts[0]) || (w.accounts && w.accounts[0]);
+      if (!account) throw new Error('no account came back');
+      draft.wallet = account.address;
+      try { localStorage.setItem(WALLET_KEY, w.name); } catch (e) { /* fine */ }
+      $('wallets').innerHTML = '';
+      $('wallet-have').hidden = false;
+      $('wallet-addr').textContent = account.address;
+      $('wallet-go').disabled = false;
+      note('wallet-msg', '', '');
+      paintSplit();
+    } catch (e) {
+      note('wallet-msg', (e && e.message) || 'That did not connect.', 'bad');
+    }
+  }
+
+  function pickAnotherWallet() {
+    draft.wallet = null;
+    $('wallet-have').hidden = true;
+    $('wallet-go').disabled = true;
+    paintWallets(wallets);
+  }
+
+  function paintSplit() {
+    const usdc = USDC_MAX, token = 100 - PLATFORM - usdc;
+    $('split').innerHTML =
+      '<div class="split-bar">' +
+        '<i style="width:' + usdc + '%;background:var(--green)"></i>' +
+        '<i style="width:' + token + '%;background:var(--orange)"></i>' +
+        '<i style="width:' + PLATFORM + '%;background:var(--ink)"></i>' +
+      '</div>' +
+      '<div class="split-row"><span>Straight to you, in USDC</span><b>' + usdc + '%</b></div>' +
+      '<div class="split-row"><span>Into your domain token</span><b>' + token + '%</b></div>' +
+      '<div class="split-row"><span>Platform fee</span><b>' + PLATFORM + '%</b></div>' +
+      '<div class="feat-blurb" style="margin-top:6px">You can move more of your share into your ' +
+      'domain token later. ' + usdc + '% in cash is the most you can take.</div>';
+  }
+
+  // ── address ────────────────────────────────────────────────────────────
+  let slugTimer = null, domainTimer = null;
+
+  function bindAddress() {
+    $('f-slug').addEventListener('input', function () {
+      draft.slug = this.value.trim().toLowerCase();
+      draft.slugOk = false;
+      $('domain-go').disabled = true;
+      paintPreview();
+      clearTimeout(slugTimer);
+      if (!draft.slug) { note('slug-msg', '', ''); return; }
+      note('slug-msg', 'Checking…', '');
+      slugTimer = setTimeout(checkSlug, 350);
+    });
+    $('f-domain').addEventListener('input', function () {
+      draft.domain = this.value.trim().toLowerCase();
+      draft.domainOk = false;
+      paintPreview();
+      clearTimeout(domainTimer);
+      if (!draft.domain) { note('domain-msg', 'Optional — you can add one later.', ''); readyToLaunch(); return; }
+      note('domain-msg', 'Asking the registry…', '');
+      domainTimer = setTimeout(checkDomain, 500);
+    });
+  }
+
+  async function checkSlug() {
+    const asked = draft.slug;
+    const r = await api('/api/launch/slug?s=' + encodeURIComponent(asked));
+    if (asked !== draft.slug) return;      // they kept typing
+    draft.slugOk = !!r.body.free;
+    note('slug-msg', r.body.free ? r.body.host + ' is yours' : (r.body.reason || 'not available'),
+      r.body.free ? 'ok' : 'bad');
+    readyToLaunch();
+  }
+
+  async function checkDomain() {
+    const asked = draft.domain;
+    const r = await api('/api/launch/domain?name=' + encodeURIComponent(asked));
+    if (asked !== draft.domain) return;
+    const s = r.body.status;
+    draft.domainOk = s === 'free';
+    note('domain-msg',
+      s === 'free' ? asked + ' is free — yours to tokenize with D3'
+        : s === 'taken' ? 'somebody already owns that one'
+        : s === 'invalid' ? 'that is not a domain name'
+        : (r.body.reason || 'could not check that just now'),
+      s === 'free' ? 'ok' : 'bad');
+    readyToLaunch();
+  }
+
+  // A domain is optional; an address is not.
+  function readyToLaunch() {
+    $('domain-go').disabled = !(draft.slugOk && (!draft.domain || draft.domainOk));
+  }
+
+  // ── review and launch ──────────────────────────────────────────────────
+  function paintReview() {
+    const usdc = USDC_MAX, token = 100 - PLATFORM - usdc;
+    $('review').innerHTML =
+      '<div class="split-row"><span>Site</span><b>' + esc(draft.name) + '</b></div>' +
+      '<div class="split-row"><span>Address</span><b>' + esc(draft.slug) + '.' + esc(ROOT) + '</b></div>' +
+      (draft.domain ? '<div class="split-row"><span>Domain to tokenize</span><b>' + esc(draft.domain) + '</b></div>' : '') +
+      '<div class="split-row"><span>Top bar</span><b>' + esc(draft.picked.slice(0, 3).map(nameOf).join(', ')) + '</b></div>' +
+      (draft.picked.length > 3 ? '<div class="split-row"><span>In the menu</span><b>' +
+        esc(draft.picked.slice(3).map(nameOf).join(', ')) + '</b></div>' : '') +
+      '<div class="split-row"><span>Paid to</span><b class="addr">' + esc((draft.wallet || '').slice(0, 8)) + '…</b></div>' +
+      '<div class="split-row"><span>Your split</span><b>' + usdc + '% cash · ' + token + '% token · ' + PLATFORM + '% fee</b></div>';
+  }
+
+  async function launchSite() {
+    const btn = $('launch-go');
+    btn.disabled = true;
+    note('launch-msg', 'Building your site…', '');
+    const r = await api('/api/launch/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: draft.code, slug: draft.slug, wallet: draft.wallet, name: draft.name,
+        handle: draft.handle, tagline: draft.tagline, avatar: draft.avatar,
+        topTabs: draft.picked.slice(0, 3), moreTabs: draft.picked.slice(3),
+        domain: draft.domain || null
+      })
+    });
+    if (r.status !== 200) {
+      btn.disabled = false;
+      note('launch-msg', (r.body && r.body.error) || 'That did not work.', 'bad');
+      return;
+    }
+    const url = 'https://' + r.body.host;
+    $('done-url').textContent = r.body.host;
+    $('done-url').href = url;
+    $('done-note').textContent = draft.domain
+      ? 'Bookings and your advertising slot are live now and pay straight to your wallet. ' +
+        draft.domain + ' is reserved to you — tokenizing it on Solana goes live with D3.'
+      : 'Bookings and your advertising slot are live now and pay straight to your wallet.';
+    toStep('done');
+  }
+
+  // ── the preview ────────────────────────────────────────────────────────
+  function paintPreview() {
+    $('pv-name').textContent = draft.name.trim() || 'Your name';
+    const handle = draft.handle.trim();
+    $('pv-handle').textContent = handle ? (handle[0] === '@' ? handle : '@' + handle) : '@you';
+    $('pv-tagline').textContent = draft.tagline.trim() || 'What you do, in a line';
+
+    const img = $('pv-avatar'), fb = $('pv-avatar-fb');
+    const src = draft.avatar.trim();
+    // Only ever an image over http(s): a data: or javascript: URL typed in here
+    // has no business being loaded by this page.
+    if (/^https?:\/\//i.test(src)) {
+      img.src = src; img.hidden = false; fb.hidden = true;
+      img.onerror = function () { img.hidden = true; fb.hidden = false; };
+    } else {
+      img.hidden = true; fb.hidden = false;
+      fb.textContent = (draft.name.trim()[0] || '?').toUpperCase();
+    }
+
+    $('pv-tabs').innerHTML = draft.picked.slice(0, 3)
+      .map((id, i) => '<span class="pv-tab' + (i === 1 ? ' first' : '') + '">' + esc(nameOf(id)) + '</span>')
+      .join('') || '<span class="pv-tab" style="opacity:.45">your pages</span>';
+
+    const slug = draft.slug || slugify(draft.name) || 'yourname';
+    $('pv-url').textContent = slug + '.' + ROOT;
+  }
+
+  // ── start ──────────────────────────────────────────────────────────────
+  (async function start() {
+    const r = await api('/api/launch/features');
+    FEATURES = (r.body && r.body.features) || [];
+    ROOT = (r.body && r.body.root) || ROOT;
+    USDC_MAX = (r.body && r.body.usdcMaxPct) || USDC_MAX;
+    PLATFORM = (r.body && r.body.platformPct) || PLATFORM;
+    paintEarns();
+    paintFeats();
+    paintSplit();
+    paintPreview();
+  })();
+
+  bindBrand();
+  bindAddress();
+  $('feats').addEventListener('click', featClick);
+  $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkCode(); });
+  findWallets();
+</script>
+</body>
+</html>

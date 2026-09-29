@@ -190,6 +190,18 @@ jobs:
         working-directory: worker
         run: node test/fee-derive.test.mjs
 
+      # Who brought whom, what that earns, and the rule the whole thing rests
+      # on: nothing is ever paid for a signup.
+      - name: Invites
+        working-directory: worker
+        run: node test/invite.test.mjs
+
+      # An invite, a name, a set of pages and a site at the end of it. Includes
+      # the origin check every creator subdomain depends on.
+      - name: Creator launchpad
+        working-directory: worker
+        run: node test/launch.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest

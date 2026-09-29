@@ -2,6 +2,6 @@
   "name": "solquicks-site-browser-test",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node site.test.mjs" },
+  "scripts": { "test": "node site.test.mjs && node launch.test.mjs" },
   "devDependencies": { "playwright": "1.63.0" }
 }
