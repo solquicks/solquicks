@@ -1737,12 +1737,19 @@ try {
 
     // A logo that 404s, and one that was never given, both land on a letter
     // tile rather than a blank square that looks like a broken image.
-    await page.waitForFunction(
-      () => document.querySelectorAll('#ref-list .ref-initial').length === 2, null, { timeout: 10000 });
-    eq('a broken logo falls back to the platform initial',
-      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card')[0].querySelector('.ref-initial').textContent), 'E');
-    eq('and so does one that was never given',
-      await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card')[1].querySelector('.ref-initial').textContent), 'N');
+    //
+    // Read in one go rather than a count and then two lookups: switching to
+    // this tab re-runs loadReferrals, which rebuilds the list, and a slower
+    // machine lands between the count and the reads. That is what it did in
+    // CI while passing here.
+    const initials = await page.waitForFunction(() => {
+      const cards = [...document.querySelectorAll('#ref-list .ref-card')];
+      if (cards.length !== 2) return false;
+      const marks = cards.map((c) => c.querySelector('.ref-initial'));
+      return marks.every(Boolean) ? marks.map((m) => m.textContent) : false;
+    }, null, { timeout: 10000 }).then((h) => h.jsonValue());
+    eq('a broken logo falls back to the platform initial', initials[0], 'E');
+    eq('and so does one that was never given', initials[1], 'N');
 
     ok('and the page says plainly that these pay me',
       /referral credit/.test(await page.textContent('#panel-referrals .bk-sub')));
