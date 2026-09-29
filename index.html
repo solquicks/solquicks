@@ -2163,9 +2163,11 @@
       font-weight: 800;
       letter-spacing: 0.1em;
       margin-top: 46px;
-      /* the floating back-to-top button sits over the bottom-right corner;
-         this lets the footer and anything above it scroll clear of it */
-      padding-bottom: 72px;
+      /* Two things float over the bottom-right corner now — the powered-by
+         badge and the back-to-top button above it. This is what lets the
+         footer, which is centred and nearly full width on a phone, scroll
+         clear of both rather than running underneath them. */
+      padding-bottom: 124px;
     }
     .footer a {
       color: var(--orange-deep);
@@ -2174,9 +2176,37 @@
       padding: 8px 6px;
     }
 
-    .back-to-top {
+    .powered {
       position: fixed;
       bottom: 20px; right: 20px;
+      z-index: 51;
+      display: flex; align-items: center; gap: 9px;
+      padding: 7px 14px 7px 8px;
+      border-radius: 14px;
+      background: var(--ink);
+      border: 2px solid var(--ink);
+      box-shadow: var(--pop);
+      cursor: pointer;
+      font-family: 'Baloo 2', sans-serif;
+      color: #fff;
+      /* Dark against a light page: it should read as a maker's mark on the
+         work rather than as part of the site's own furniture. */
+    }
+    .powered:hover { background: #3d3154; border-color: #3d3154; }
+    .powered-mark { border-radius: 8px; display: block; flex-shrink: 0; }
+    .powered-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+    .powered-by {
+      font-size: 0.55rem; font-weight: 700; letter-spacing: 0.14em;
+      text-transform: uppercase; opacity: 0.65;
+    }
+    .powered-name {
+      font-size: 0.82rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+    }
+
+    .back-to-top {
+      position: fixed;
+      /* Above the badge, which owns the corner now. */
+      bottom: 76px; right: 20px;
       width: 44px; height: 44px;
       border-radius: 50%;
       background: var(--orange);
@@ -2192,6 +2222,11 @@
     .back-to-top.visible { display: flex; }
 
     @media (max-width: 480px) {
+      .powered { bottom: 14px; right: 14px; padding: 6px 11px 6px 6px; gap: 7px; border-radius: 12px; }
+      .powered-mark { width: 22px; height: 22px; border-radius: 6px; }
+      .powered-by { font-size: 0.5rem; }
+      .powered-name { font-size: 0.72rem; }
+      .back-to-top { bottom: 64px; right: 14px; }
       .container { padding: 14px 12px 50px; }
       .handle { font-size: 1.35rem; }
       .avatar { width: 140px; height: 140px; }
@@ -2901,7 +2936,19 @@
       </div>
     </div>
 
-    <div class="footer">SOLQUICKS LLC &nbsp;·&nbsp; <a href="https://x.com/solquicks" target="_blank" rel="noopener noreferrer">@solquicks</a></div>
+    <div class="footer"><span class="footer-line">SOLQUICKS LLC &nbsp;·&nbsp; <a href="https://x.com/solquicks" target="_blank" rel="noopener noreferrer">@solquicks</a></span></div>
+
+  <!-- Every site built on this template carries this, which is how the next
+       creator finds it. It is the whole distribution plan, so it sits on every
+       page rather than behind a menu. -->
+  <button class="powered" id="powered" onclick="switchTab('launchpad')">
+    <img class="powered-mark" src="avatar.png" alt="" width="28" height="28"/>
+    <span class="powered-text">
+      <span class="powered-by">Powered by</span>
+      <span class="powered-name" id="powered-name"></span>
+    </span>
+  </button>
+
 
   </div>
 
@@ -3104,9 +3151,18 @@
     // Defined here rather than written into the markup four times: adding the
     // fifth is one line, and the tab, the menu entry and the page cannot drift
     // apart from each other.
+    // What the badge in the corner says, and where it points. On a creator's
+    // own site this is the only line that changes: the badge still names the
+    // thing that built it, which is how the creator after them finds it.
+    const LAUNCHPAD = { name: 'solquicks' };
+
     const SOON_TABS = [
       {
-        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆',
+        // Not in the menu: this one is reached from the badge in the corner,
+        // which is on every page of every site built from this template. That
+        // badge is the whole distribution plan, so burying a second entrance
+        // in a dropdown would only split the traffic to it.
+        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆', inMenu: false,
         note: 'Run a site like this one under your own name',
         lead: 'Your own site, on this one',
         what: 'Everything here — the swap and its fees, the store, bookings, the ' +
@@ -3170,6 +3226,19 @@
       const menu = document.getElementById('nav-menu');
       const after = document.getElementById('panel-referrals');
       for (const page of SOON_TABS) {
+        if (page.inMenu !== false) buildMenuItem(menu, page);
+        const panel = document.createElement('div');
+        panel.id = 'panel-' + page.tab;
+        panel.className = 'panel';
+        panel.innerHTML = soonHtml(page.lead, page.what);
+        after.parentNode.insertBefore(panel, after.nextSibling);
+      }
+      sortNavMenu();
+      document.getElementById('powered-name').textContent = LAUNCHPAD.name;
+    })();
+
+    function buildMenuItem(menu, page) {
+      {
         const btn = document.createElement('button');
         btn.className = 'nav-item';
         btn.setAttribute('role', 'menuitem');
@@ -3183,15 +3252,8 @@
         btn.querySelector('.nav-item-name').textContent = page.name;
         btn.querySelector('.nav-item-note').textContent = page.note;
         menu.appendChild(btn);
-
-        const panel = document.createElement('div');
-        panel.id = 'panel-' + page.tab;
-        panel.className = 'panel';
-        panel.innerHTML = soonHtml(page.lead, page.what);
-        after.parentNode.insertBefore(panel, after.nextSibling);
       }
-      sortNavMenu();
-    })();
+    }
 
     // Restore the tab from the URL on load.
     (function restoreTab() {

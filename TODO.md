@@ -511,8 +511,15 @@ it has been sent.
 Each is a revenue line with a tab, a place in the menu and a page that says
 what it will be:
 
-- **Creator Launchpad** — this site under someone else's brand. The business
-  model is still to be gone through.
+- **Creator Launchpad** — this site under someone else's brand. Reached from
+  the "Powered by" badge in the bottom-right corner of every page, not from
+  the menu: that badge rides on every site built from the template, which is
+  the whole plan for how the next creator finds it. `LAUNCHPAD.name` in
+  `index.html` is the one line a creator's copy changes. Business model still
+  to be gone through — swap fees are the one stream that can be split on chain
+  (Jupiter's referral program: create a project, set default_share_bps), and
+  the 49%-into-the-domain-token mechanic is the part that decides both creator
+  take-up and legal exposure.
 - **DeFi** — lending and earning in the same wallet as the swap. Which
   protocols is undecided.
 - **Gacha** — a pull for something out of the collection. Machine contents,

@@ -459,7 +459,9 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,launchpad,defi,gacha,leaderboard,moon,referrals,wishlist');
+    'links,cleanup,defi,gacha,leaderboard,moon,referrals,wishlist');
+  ok('and the Launchpad is not among them — it has the badge instead',
+    !menuTabs.includes('launchpad'), menuTabs.join(','));
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
 
   // The order is a rule, not a list somebody retypes. Sorted by what is on
@@ -1550,7 +1552,7 @@ try {
     // considered, not like one that failed to load — and it has to say what it
     // will be, or the tab is just a dead end with a nice border.
     for (const [tab, lead, mustSay] of [
-      ['launchpad', 'Your own site, on this one', /under your brand/],
+      ['launchpad', 'Your own site, on this one', /under your brand/],   // reached by the badge, not the menu
       ['defi', 'DeFi', /same wallet you swap with/],
       ['wishlist', 'Wishlist', /sp3nd/],
       // Money and chance in the same sentence: whatever the machine ends up
@@ -1569,6 +1571,61 @@ try {
       ok(tab + ': and explains it rather than leaving a blank page', mustSay.test(what), what);
       ok(tab + ': with nothing pretending to work', await panel.locator('button, input, a').count() === 0);
     }
+
+    // The badge is how anyone reaches the Launchpad, and it is on every page
+    // of every site built from this template — which is the whole plan for
+    // how the next creator finds it.
+    await page.evaluate(() => switchTab('links'));
+    const badge = page.locator('#powered');
+    ok('the badge is on the page', await badge.count() === 1);
+    ok('and visible without opening anything', await badge.isVisible());
+    eq('it names what built the site', (await page.textContent('#powered-name')).trim(), 'solquicks');
+    ok('under a "powered by" line', /powered by/i.test(await page.textContent('.powered-by')));
+
+    // It sits in the same corner as the back-to-top button, which was there
+    // first. One must not be sitting on top of the other.
+    const corner = await page.evaluate(() => {
+      const t = document.getElementById('back-to-top');
+      t.classList.add('visible');
+      const a = document.getElementById('powered').getBoundingClientRect();
+      const b = t.getBoundingClientRect();
+      t.classList.remove('visible');
+      return { overlap: !(a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top),
+               inView: a.right <= window.innerWidth + 1 && a.bottom <= window.innerHeight + 1 };
+    });
+    ok('it does not sit on top of the back-to-top button', !corner.overlap);
+    ok('and stays on the screen', corner.inView);
+
+    // Fixed to the corner, so at the bottom of a page it lands on whatever is
+    // there. The footer is centred and nearly full width on a phone, which is
+    // exactly the width that runs underneath it.
+    const clears = async () => page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+      const t = document.getElementById('back-to-top');
+      t.classList.add('visible');
+      // The line itself, not the footer box — that box includes the padding
+      // put there precisely so the text clears the corner.
+      const f = document.querySelector('.footer-line').getBoundingClientRect();
+      const hits = ['#powered', '#back-to-top'].filter((sel) => {
+        const r = document.querySelector(sel).getBoundingClientRect();
+        return !(f.right < r.left || r.right < f.left || f.bottom < r.top || r.bottom < f.top);
+      });
+      t.classList.remove('visible');
+      return hits;
+    });
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.waitForTimeout(300);
+    eq('on a phone the footer scrolls clear of the corner', (await clears()).join(','), '');
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.waitForTimeout(300);
+    eq('and on a desktop too', (await clears()).join(','), '');
+
+    // Following it has to land somewhere, from whatever page you were on.
+    await page.evaluate(() => switchTab('swap'));
+    await page.click('#powered');
+    await page.waitForSelector('#panel-launchpad.active', { timeout: 10000 });
+    ok('clicking it opens the Launchpad from any page',
+      await page.locator('#panel-launchpad .soon').count() === 1);
 
     // A link straight to one of them has to work: these get shared before the
     // page behind them exists, which is rather the point of having them.
