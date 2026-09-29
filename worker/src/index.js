@@ -1659,6 +1659,24 @@ const RDAP_HOSTS = { io: 'https://rdap.identitydigital.services/rdap/domain/' };
 //
 // Moon Rangers and Fox Points are deliberately absent: both need a collection
 // and a points backend the creator does not have.
+// The links a creator can put on their contact page. Each is a platform plus
+// whatever they type — a handle, a URL, an invite. What is typed is turned
+// into a link by the template, so nobody has to paste a full URL for the
+// obvious ones.
+const LAUNCH_SOCIALS = [
+  { id: 'x',        name: 'X (Twitter)', hint: 'yourhandle',        url: 'https://x.com/' },
+  { id: 'youtube',  name: 'YouTube',     hint: '@yourchannel',      url: 'https://youtube.com/' },
+  { id: 'tiktok',   name: 'TikTok',      hint: '@yourhandle',       url: 'https://tiktok.com/' },
+  { id: 'twitch',   name: 'Twitch',      hint: 'yourchannel',       url: 'https://twitch.tv/' },
+  { id: 'kick',     name: 'Kick',        hint: 'yourchannel',       url: 'https://kick.com/' },
+  { id: 'instagram',name: 'Instagram',   hint: 'yourhandle',        url: 'https://instagram.com/' },
+  { id: 'discord',  name: 'Discord',     hint: 'invite code',       url: 'https://discord.gg/' },
+  { id: 'telegram', name: 'Telegram',    hint: 'yourhandle',        url: 'https://t.me/' },
+  { id: 'github',   name: 'GitHub',      hint: 'yourhandle',        url: 'https://github.com/' },
+  { id: 'website',  name: 'Website',     hint: 'https://…',         url: '' },
+  { id: 'email',    name: 'Email',       hint: 'you@example.com',   url: 'mailto:' }
+];
+
 const LAUNCH_FEATURES = [
   { id: 'swap',      name: 'Swap',      earns: true,  live: false, blurb: 'Every Solana token, routed by Jupiter. You take a fee on every swap.' },
   { id: 'store',     name: 'Store',     earns: true,  live: true,  blurb: 'Sell merch or anything physical, paid in crypto.' },
@@ -1670,6 +1688,53 @@ const LAUNCH_FEATURES = [
   { id: 'referrals', name: 'Referrals', earns: true,  live: false, blurb: 'Platforms you use, and what your audience gets for joining.' }
 ];
 const RDAP_DEFAULT = 'https://rdap.org/domain/';
+
+// An avatar is either a link to a picture or a picture itself. The picture is
+// resized in the browser before it is sent, so this cap is generous for a
+// 256px square and far too small for anything anyone would upload untouched.
+const AVATAR_MAX_BYTES = 400000;
+
+/// What may be used as a picture. A link has to be https; a picture sent
+/// directly has to be a raster image the browser produced — never SVG, which
+/// is a document that can carry script, and never anything else dressed as one.
+function avatarProblem(avatar) {
+  if (!avatar) return null;
+  if (avatar.length > AVATAR_MAX_BYTES) return 'that picture is too big';
+  if (/^https:\/\//i.test(avatar)) return null;
+  if (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar)) return null;
+  return 'that is not a picture';
+}
+
+/// The links a creator typed, turned into what the page will show. Anything
+/// not on the list is dropped rather than trusted.
+function cleanSocials(raw) {
+  const out = [];
+  if (!Array.isArray(raw)) return out;
+  for (const item of raw.slice(0, LAUNCH_SOCIALS.length)) {
+    const def = LAUNCH_SOCIALS.find(function (x) { return x.id === (item && item.id); });
+    if (!def) continue;
+    const value = String((item && item.value) || '').trim().slice(0, 200);
+    if (!value) continue;
+    if (out.some(function (o) { return o.id === def.id; })) continue;   // one each
+    let href;
+    if (def.id === 'website') {
+      // Typed by hand, so it is the one that has to be checked hardest.
+      if (!/^https:\/\/[^\s]+$/i.test(value)) continue;
+      href = value;
+    } else if (def.id === 'email') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) continue;
+      href = 'mailto:' + value;
+    } else {
+      // A handle, however they typed it. Anything that is not one is dropped
+      // rather than pasted into a URL.
+      const handle = value.replace(/^@/, '');
+      if (!/^[A-Za-z0-9._-]{1,100}$/.test(handle)) continue;
+      href = def.url + handle;
+    }
+    out.push({ id: def.id, name: def.name, label: value, href: href });
+  }
+  return out;
+}
 
 /// A subdomain that can be typed, said aloud and put in a URL bar without
 /// surprises: lower case, no leading or trailing dash, nothing reserved.
