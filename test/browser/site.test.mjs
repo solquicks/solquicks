@@ -459,7 +459,7 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,launchpad,defi,leaderboard,moon,referrals,wishlist');
+    'links,cleanup,launchpad,defi,gacha,leaderboard,moon,referrals,wishlist');
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
 
   // The order is a rule, not a list somebody retypes. Sorted by what is on
@@ -1552,7 +1552,10 @@ try {
     for (const [tab, lead, mustSay] of [
       ['launchpad', 'Your own site, on this one', /under your brand/],
       ['defi', 'DeFi', /same wallet you swap with/],
-      ['wishlist', 'Wishlist', /sp3nd/]
+      ['wishlist', 'Wishlist', /sp3nd/],
+      // Money and chance in the same sentence: whatever the machine ends up
+      // being, the page must not imply the odds are a surprise.
+      ['gacha', 'Gacha', /odds will be written down before anyone spends/]
     ]) {
       await page.evaluate((t) => switchTab(t), tab);
       await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });

@@ -507,7 +507,7 @@ it has been sent.
 
 ## Blocked
 
-**14. Four pages are announced but not open.** Added 2026-09-29, live.
+**14. Five pages are announced but not open.** Added 2026-09-29, live.
 Each is a revenue line with a tab, a place in the menu and a page that says
 what it will be:
 
@@ -515,6 +515,11 @@ what it will be:
   model is still to be gone through.
 - **DeFi** — lending and earning in the same wallet as the swap. Which
   protocols is undecided.
+- **Gacha** — a pull for something out of the collection. Machine contents,
+  price and odds all undecided. Worth knowing before it is built: paid
+  chance-based pulls are regulated as gambling in a number of places, and
+  published odds are the usual minimum. The placeholder copy already commits
+  to publishing them.
 - **Wishlist** — the Amazon wishlist, paid from a wallet through sp3nd.
 - **Referrals** — built and working, just empty; see below.
 
