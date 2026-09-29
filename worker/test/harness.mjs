@@ -68,6 +68,7 @@ function d1(db) {
 export const TREASURY = 'uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc';
 export const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const chain = {
+  rdap: null, rdapCalls: [],
   txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, lookupsFor: {}, alerts: [], inScheduled: false,
   rpc: {},        // extra RPC methods a test answers: { method: (params) => result }
   jup: null,      // a test's Jupiter stand-in: (url, init) => body object, or a Response
@@ -137,6 +138,14 @@ globalThis.fetch = async (url, init) => {
     if (out === null || out === undefined) return new Response('', { status: 503 });
     return new Response(JSON.stringify(out), { status: 200 });
   }
+  // The domain registries, asked over RDAP. 200 means somebody owns it, 404
+  // means nobody does — so which one a test returns is the whole answer.
+  if (/rdap/.test(u)) {
+    chain.rdapCalls.push(u);
+    const out = chain.rdap ? chain.rdap(u) : null;
+    if (out instanceof Response) return out;
+    return new Response('', { status: 404 });
+  }
   if (u.startsWith('https://api.telegram.org/')) {
     chain.alerts.push(JSON.parse(init.body).text);
     return new Response('{"ok":true}', { status: 200 });
@@ -181,10 +190,13 @@ const newIp = () => '10.0.' + Math.floor(++ipSeq / 250) + '.' + (ipSeq % 250);
 
 // Runs one request through the real handler. waitUntil work is collected and
 // finished after the response, which is what the Workers runtime does.
-export async function call(env, method, path, { body, ip, token } = {}) {
+export async function call(env, method, path, { body, ip, token, origin } = {}) {
   globalThis.caches = { default: env._cache };
   const pending = [];
-  const headers = { 'Content-Type': 'application/json', Origin: 'https://solquicks.com', 'CF-Connecting-IP': ip || newIp() };
+  // Every creator's site is a subdomain calling this worker, so which origin
+  // asked is now part of the answer and tests have to be able to set it.
+  const headers = { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip || newIp() };
+  if (origin !== null) headers.Origin = origin || 'https://solquicks.com';
   if (token) headers.Authorization = 'Bearer ' + token;
   const res = await worker.fetch(
     new Request('https://api.test' + path, { method, headers, body: body ? JSON.stringify(body) : undefined }),
@@ -194,7 +206,12 @@ export async function call(env, method, path, { body, ip, token } = {}) {
   await Promise.allSettled(pending);
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch (e) { json = { _raw: text }; }
-  return { status: res.status, body: json };
+  return {
+    status: res.status, body: json, headers: res.headers,
+    // What the worker was willing to tell this origin. undefined means it
+    // refused, which is the interesting case.
+    cors: res.headers.get('Access-Control-Allow-Origin') || undefined
+  };
 }
 
 // The cron entry point, exactly as Cloudflare invokes it.

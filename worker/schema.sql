@@ -177,3 +177,37 @@ CREATE INDEX IF NOT EXISTS idx_invite_earnings_referrer ON invite_earnings(refer
 -- and it is settled by hand in USDC. Nothing here signs anything.
 CREATE TABLE IF NOT EXISTS invite_claims (id INTEGER PRIMARY KEY AUTOINCREMENT, wallet TEXT NOT NULL, usd REAL NOT NULL, status TEXT NOT NULL, requested_at INTEGER NOT NULL, paid_at INTEGER, signature TEXT);
 CREATE INDEX IF NOT EXISTS idx_invite_claims_wallet ON invite_claims(wallet, requested_at);
+
+-- ── creator launchpad ───────────────────────────────────────────────────────
+-- A creator fills in a short flow and comes out with a working site of their
+-- own at <slug>.solquicks.com. Invite only, so the code is checked before any
+-- of it starts.
+
+CREATE TABLE IF NOT EXISTS launch_invites (code TEXT PRIMARY KEY, note TEXT, created_at INTEGER NOT NULL, used_by TEXT, used_at INTEGER);
+
+-- One row is one creator's whole site. Everything the page needs to render as
+-- theirs rather than as this one, which is why the template can be a single
+-- file serving every creator.
+--
+-- The percentages are stored per site rather than assumed: a creator can move
+-- more of their revenue into their domain token later, and what they were on
+-- when they launched should not be rewritten by a later change of policy.
+CREATE TABLE IF NOT EXISTS sites (
+  slug TEXT PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  name TEXT NOT NULL,
+  handle TEXT,
+  tagline TEXT,
+  avatar TEXT,
+  top_tabs TEXT NOT NULL,
+  more_tabs TEXT NOT NULL,
+  domain TEXT,
+  invite_code TEXT NOT NULL,
+  usdc_pct INTEGER NOT NULL,
+  token_pct INTEGER NOT NULL,
+  platform_pct INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'live',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sites_wallet ON sites(wallet);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_domain ON sites(domain) WHERE domain IS NOT NULL;

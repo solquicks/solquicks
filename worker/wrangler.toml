@@ -38,6 +38,10 @@ crons = ["*/30 * * * *"]
 #
 # With one set, the page offers it instead of asking when they are free.
 
+# The domain creator sites are subdomains of. Also what the origin check uses
+# to decide which callers are one of ours, so it is not only cosmetic.
+LAUNCH_ROOT = "solquicks.com"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "solquicks-points"

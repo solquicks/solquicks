@@ -62,15 +62,42 @@ function isWallet(w) {
   try { return b58decode(w).length === 32; } catch (e) { return false; }
 }
 
+/// Every creator's site is a subdomain of the launch root and calls this
+/// worker, so the exact-match list is not enough on its own.
+///
+/// Matched against the parsed hostname rather than the origin string. A test
+/// like origin.endsWith('.solquicks.com') is the usual way to get this wrong —
+/// "https://solquicks.com.attacker.dev" does not end with it, but
+/// "https://evil-solquicks.com" passes a sloppier suffix check, and a match on
+/// the raw string would also wave through "http://" and odd ports.
+function originAllowed(origin, env) {
+  if (!origin) return false;
+  const exact = (env.ALLOWED_ORIGINS || '').split(',').map(function (s) { return s.trim(); });
+  if (exact.indexOf(origin) >= 0) return true;
+
+  const root = env.LAUNCH_ROOT || 'solquicks.com';
+  let u;
+  try { u = new URL(origin); } catch (e) { return false; }
+  if (u.protocol !== 'https:' || u.port) return false;
+  // Exactly one label in front of the root, and a label that could really be a
+  // subdomain we issued.
+  const suffix = '.' + root;
+  if (!u.hostname.endsWith(suffix)) return false;
+  const label = u.hostname.slice(0, -suffix.length);
+  return /^[a-z0-9-]{1,63}$/.test(label);
+}
+
 function corsHeaders(request, env) {
-  const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim());
   const origin = request.headers.get('Origin');
   const h = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    // The answer depends on who asked, so a cache must not hand one origin's
+    // answer to another.
+    'Vary': 'Origin'
   };
-  if (origin && allowed.includes(origin)) h['Access-Control-Allow-Origin'] = origin;
+  if (originAllowed(origin, env)) h['Access-Control-Allow-Origin'] = origin;
   return h;
 }
 
@@ -353,6 +380,14 @@ const RATE_RULES = [
   { match: ['/api/cleanup/award'], name: 'cleanaward', by: 'wallet', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/award'], name: 'swapaward', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/invite'], name: 'inviteread', by: 'wallet', limit: 60, windowMs: 60000 },
+  // Launchpad. The name and domain checks are typed into, so they run often;
+  // creating a site is once in a creator's life.
+  { match: ['/api/launch/slug', '/api/launch/domain'], name: 'launchcheck', by: 'ip', limit: 40, windowMs: 60000 },
+  // An invite code is short enough to be worth guessing at, so this is the
+  // thing standing between a stranger and somebody else's code.
+  { match: ['/api/launch/invite'], name: 'launchinvite', by: 'ip', limit: 8, windowMs: 60000 },
+  { match: ['/api/launch/create'], name: 'launchcreate', by: 'ip', limit: 5, windowMs: 3600000 },
+  { match: ['/api/launch/features', '/api/site'], name: 'launchread', by: 'ip', limit: 60, windowMs: 60000 },
   // A code is 31^4, and guessing one only ever gives a stranger a referee —
   // there is nothing on the other side of this worth brute-forcing. The limit
   // is here so nobody can hammer it anyway.
@@ -1592,6 +1627,78 @@ const INVITE_REFEREE_POINTS = 250;
 const INVITE_REFEREE_MIN_USD = 50;
 // Below this a payout costs more in attention than it is worth.
 const INVITE_CLAIM_MIN_USD = 10;
+
+// ── creator launchpad ────────────────────────────────────────────────────────
+// A creator comes out of the flow with a working site at <slug>.solquicks.com.
+// Bookings and the ad slot pay straight to their own wallet from the moment it
+// exists; the swap needs a Jupiter referral account of its own, which is a
+// separate job.
+//
+// What every site's revenue splits into. The creator's cash share is a
+// ceiling, not a setting: they can move more of it into their domain token
+// later, never less. Stored per site at launch so a later change of policy
+// cannot quietly rewrite what somebody signed up to.
+const LAUNCH_USDC_MAX_PCT = 50;
+const LAUNCH_PLATFORM_PCT = 1;
+// Names that must never become somebody's subdomain: they are either already
+// something here, or they are the kind of thing used to impersonate it.
+const LAUNCH_RESERVED = [
+  'www', 'api', 'app', 'admin', 'mail', 'ftp', 'cdn', 'assets', 'img', 'static',
+  'launch', 'launchpad', 'dashboard', 'account', 'login', 'signin', 'signup',
+  'support', 'help', 'docs', 'blog', 'status', 'test', 'dev', 'staging',
+  'solquicks', 'quicks', 'fox', 'moonrangers', 'rangers', 'wallet', 'pay',
+  'swap', 'store', 'book', 'shop', 'checkout', 'billing', 'invoice', 'security'
+];
+// 200 means the registry knows it, 404 means nobody has it. rdap.org bootstraps
+// most of them; .io needs its registry named directly.
+const RDAP_HOSTS = { io: 'https://rdap.identitydigital.services/rdap/domain/' };
+
+// What a creator can put on their site. Three go in the top bar and any others
+// they want fall into the dropdown; the contact page and the advertising slot
+// are fixed furniture on every site and are not in here.
+//
+// Moon Rangers and Fox Points are deliberately absent: both need a collection
+// and a points backend the creator does not have.
+const LAUNCH_FEATURES = [
+  { id: 'swap',      name: 'Swap',      earns: true,  live: false, blurb: 'Every Solana token, routed by Jupiter. You take a fee on every swap.' },
+  { id: 'store',     name: 'Store',     earns: true,  live: true,  blurb: 'Sell merch or anything physical, paid in crypto.' },
+  { id: 'book',      name: 'Bookings',  earns: true,  live: true,  blurb: 'Sell your time — spaces, streams, consulting. Paid in USDC.' },
+  { id: 'cleanup',   name: 'Cleanup',   earns: false, live: true,  blurb: 'Your audience reclaims rent from dead token accounts.' },
+  { id: 'gacha',     name: 'Gacha',     earns: true,  live: false, blurb: 'Pulls for something from your collection.' },
+  { id: 'wishlist',  name: 'Wishlist',  earns: true,  live: false, blurb: 'Your wishlist, paid straight from a wallet.' },
+  { id: 'defi',      name: 'DeFi',      earns: true,  live: false, blurb: 'Lending and earning in the same wallet.' },
+  { id: 'referrals', name: 'Referrals', earns: true,  live: false, blurb: 'Platforms you use, and what your audience gets for joining.' }
+];
+const RDAP_DEFAULT = 'https://rdap.org/domain/';
+
+/// A subdomain that can be typed, said aloud and put in a URL bar without
+/// surprises: lower case, no leading or trailing dash, nothing reserved.
+function slugProblem(slug) {
+  if (!slug) return 'pick a name';
+  if (slug.length < 3) return 'that is too short — three characters or more';
+  if (slug.length > 32) return 'that is too long — 32 characters or fewer';
+  if (!/^[a-z0-9-]+$/.test(slug)) return 'letters, numbers and dashes only';
+  if (/^-|-$/.test(slug)) return 'it cannot start or end with a dash';
+  if (/--/.test(slug)) return 'no double dashes';
+  if (LAUNCH_RESERVED.indexOf(slug) >= 0) return 'that one is spoken for';
+  return null;
+}
+
+/// Whether a real domain is already registered, asked of the registry itself.
+/// Returns null when the question could not be answered, which is different
+/// from "it is free" and must never be shown as though it were.
+async function domainTaken(name) {
+  const tld = String(name).split('.').pop().toLowerCase();
+  const url = (RDAP_HOSTS[tld] || RDAP_DEFAULT) + encodeURIComponent(name);
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/rdap+json' } });
+    if (res.status === 404) return false;
+    if (res.ok) return true;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
 const SWAP_POINTS_PER_USD = 1;
 const SWAP_POINTS_DAILY_CAP = 500;
@@ -3017,6 +3124,7 @@ export default {
           path === '/api/swap/holdings' || path === '/api/swap/record' ||
           path === '/api/swap/history' || path === '/api/swap/token' ||
           path === '/api/swap/leaderboard' ||
+          path.startsWith('/api/launch/') || path === '/api/site' ||
           path === '/api/collectible' || path === '/api/collectible/claim' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {
@@ -3860,6 +3968,152 @@ export default {
         cached.headers.set('Cache-Control', 'public, max-age=1800');
         ctx.waitUntil(cache.put(key, cached.clone()));
         return cached;
+      }
+
+      // ── creator launchpad ──
+      // Everything here is public: a creator has no account until they have a
+      // site, and the invite code is what stands in for one.
+
+      if (path === '/api/launch/invite' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const code = String(body.code || '').trim().toUpperCase();
+        if (!code) return json(request, env, { error: 'put your invite code in' }, 400);
+        const row = await env.DB.prepare('SELECT code, used_by FROM launch_invites WHERE code = ?').bind(code).first();
+        // Same answer for a code that never existed and one already spent, so
+        // this cannot be used to work out which codes are real.
+        if (!row || row.used_by) return json(request, env, { error: 'that code is not valid' }, 404);
+        return json(request, env, { ok: true, code: code });
+      }
+
+      // Is this name free, and is it a name at all. Both answers come back
+      // together so the page never says "taken" when it means "not allowed".
+      if (path === '/api/launch/slug' && request.method === 'GET') {
+        const slug = String(url.searchParams.get('s') || '').trim().toLowerCase();
+        const problem = slugProblem(slug);
+        if (problem) return json(request, env, { slug: slug, free: false, reason: problem });
+        const taken = await env.DB.prepare('SELECT slug FROM sites WHERE slug = ?').bind(slug).first();
+        return json(request, env, {
+          slug: slug,
+          free: !taken,
+          reason: taken ? 'somebody already has that one' : null,
+          host: slug + '.' + (env.LAUNCH_ROOT || 'solquicks.com')
+        });
+      }
+
+      // Asked of the domain's own registry rather than guessed at. A registry
+      // that will not answer is reported as unknown, never as available.
+      if (path === '/api/launch/domain' && request.method === 'GET') {
+        const name = String(url.searchParams.get('name') || '').trim().toLowerCase();
+        if (!/^[a-z0-9-]{2,63}\.[a-z]{2,24}$/.test(name)) {
+          return json(request, env, { name: name, status: 'invalid', reason: 'that is not a domain name' });
+        }
+        const mine = await env.DB.prepare('SELECT slug FROM sites WHERE domain = ?').bind(name).first();
+        if (mine) return json(request, env, { name: name, status: 'taken', reason: 'already claimed here' });
+        const taken = await domainTaken(name);
+        return json(request, env, {
+          name: name,
+          status: taken === null ? 'unknown' : taken ? 'taken' : 'free',
+          reason: taken === null ? 'the registry did not answer — try again in a moment' : null
+        });
+      }
+
+      if (path === '/api/launch/create' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const code = String(body.code || '').trim().toUpperCase();
+        const slug = String(body.slug || '').trim().toLowerCase();
+        const wallet = String(body.wallet || '').trim();
+        const name = String(body.name || '').trim().slice(0, 60);
+        // Not sliced to length before being checked: truncating four choices
+        // to three would silently drop one of them and launch a site the
+        // creator did not ask for.
+        const top = Array.isArray(body.topTabs) ? body.topTabs : [];
+        const more = Array.isArray(body.moreTabs) ? body.moreTabs : [];
+
+        if (!isWallet(wallet)) return json(request, env, { error: 'connect a wallet first' }, 400);
+        if (!name) return json(request, env, { error: 'your site needs a name' }, 400);
+        const problem = slugProblem(slug);
+        if (problem) return json(request, env, { error: problem }, 400);
+        if (top.length !== 3) return json(request, env, { error: 'pick exactly three for the top bar' }, 400);
+        if (more.length > 12) return json(request, env, { error: 'that is more pages than a site can hold' }, 400);
+
+        const offered = LAUNCH_FEATURES.map(function (f) { return f.id; });
+        const unknown = top.concat(more).filter(function (t) { return offered.indexOf(t) < 0; });
+        if (unknown.length) return json(request, env, { error: 'not something you can put on a site' }, 400);
+        if (more.some(function (t) { return top.indexOf(t) >= 0; })) {
+          return json(request, env, { error: 'the same page cannot be in both places' }, 400);
+        }
+
+        // The cash share is a ceiling. Anything above it would be a site
+        // launched on terms nobody agreed to.
+        const usdc = Math.max(0, Math.min(LAUNCH_USDC_MAX_PCT, Number(body.usdcPct) || LAUNCH_USDC_MAX_PCT));
+        const token = 100 - LAUNCH_PLATFORM_PCT - usdc;
+
+        const domain = body.domain ? String(body.domain).trim().toLowerCase() : null;
+
+        // The invite is spent in the same statement that checks it, so two
+        // people holding the same code cannot both get through.
+        const spent = await env.DB.prepare(
+          'UPDATE launch_invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL'
+        ).bind(wallet, Date.now(), code).run();
+        if (spent.meta.changes !== 1) return json(request, env, { error: 'that code is not valid' }, 403);
+
+        const made = await env.DB.prepare(
+          'INSERT INTO sites (slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, domain, ' +
+          'invite_code, usdc_pct, token_pct, platform_pct, created_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING'
+        ).bind(
+          slug, wallet, name,
+          String(body.handle || '').trim().slice(0, 40) || null,
+          String(body.tagline || '').trim().slice(0, 140) || null,
+          String(body.avatar || '').trim().slice(0, 400) || null,
+          JSON.stringify(top), JSON.stringify(more), domain, code,
+          usdc, token, LAUNCH_PLATFORM_PCT, Date.now()
+        ).run();
+        if (made.meta.changes !== 1) {
+          // Hand the code back: the name went in the moment between checking
+          // it and using it, and that is not the creator's fault.
+          await env.DB.prepare('UPDATE launch_invites SET used_by = NULL, used_at = NULL WHERE code = ?').bind(code).run();
+          return json(request, env, { error: 'somebody took that name a moment ago — pick another' }, 409);
+        }
+
+        await alert(env, '🚀 New site launched — ' + slug + ' by ' + name + '\n' + wallet);
+        return json(request, env, {
+          ok: true, slug: slug,
+          host: slug + '.' + (env.LAUNCH_ROOT || 'solquicks.com'),
+          path: '/c/' + slug,
+          split: { usdc: usdc, token: token, platform: LAUNCH_PLATFORM_PCT }
+        });
+      }
+
+      // What a creator's own site loads to render as theirs. Served to the
+      // site itself, so it carries nothing the public should not see.
+      if (path === '/api/site' && request.method === 'GET') {
+        const slug = String(url.searchParams.get('slug') || '').trim().toLowerCase();
+        if (!slug) return json(request, env, { site: null });
+        const row = await env.DB.prepare(
+          "SELECT slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, domain FROM sites " +
+          "WHERE slug = ? AND status = 'live'"
+        ).bind(slug).first();
+        if (!row) return json(request, env, { site: null });
+        return json(request, env, {
+          site: {
+            slug: row.slug, name: row.name, handle: row.handle, tagline: row.tagline,
+            avatar: row.avatar, domain: row.domain,
+            // Where this site's money goes. Public because it is the address
+            // customers are about to be asked to pay.
+            treasury: row.wallet,
+            topTabs: JSON.parse(row.top_tabs), moreTabs: JSON.parse(row.more_tabs)
+          }
+        });
+      }
+
+      if (path === '/api/launch/features' && request.method === 'GET') {
+        return json(request, env, {
+          features: LAUNCH_FEATURES,
+          usdcMaxPct: LAUNCH_USDC_MAX_PCT,
+          platformPct: LAUNCH_PLATFORM_PCT,
+          root: env.LAUNCH_ROOT || 'solquicks.com'
+        });
       }
 
       if (path === '/api/swap/tokens' && request.method === 'GET') {
