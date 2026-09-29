@@ -456,15 +456,31 @@ try {
   ok('and are not also buried in the menu',
     (await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab)))
       .every((t) => !quick.includes(t)));
-  // Only the ones actually offered: a tab whose data file is empty is hidden,
-  // and clicking it below would hang on something no visitor can reach.
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
-  eq('the menu holds what is left', menuTabs.join(','), 'links,cleanup,leaderboard,moon');
+  eq('the menu holds what is left', menuTabs.join(','),
+    'links,cleanup,launchpad,defi,leaderboard,moon,referrals,wishlist');
   ok('with Contact first, as the landing page', menuTabs[0] === 'links', menuTabs.join(','));
-  eq('and Referrals waits until it has something to show',
-    await page.$$eval('.nav-item[data-tab]', (els) => els.filter((e) => e.hidden).map((e) => e.dataset.tab)).then((t) => t.join(',')),
-    'referrals');
+
+  // The order is a rule, not a list somebody retypes. Sorted by what is on
+  // screen, so a page added later cannot land in the wrong place.
+  const names = await page.$$eval('.nav-item[data-tab] .nav-item-name',
+    (els) => els.map((e) => e.textContent.trim()));
+  eq('and the rest alphabetical, by the name people actually read',
+    names.slice(1).join(','), names.slice(1).slice().sort((a, b) => a.localeCompare(b)).join(','));
+
+  // Eight entries are taller than a phone. A menu that runs off the bottom
+  // hides whatever sorts last, which is where the newest pages land.
+  const menuFits = await page.evaluate(() => {
+    const m = document.getElementById('nav-menu');
+    const was = m.hidden;
+    m.hidden = false;
+    const r = { max: getComputedStyle(m).maxHeight, scrolls: getComputedStyle(m).overflowY };
+    m.hidden = was;
+    return r;
+  });
+  ok('the menu is capped rather than running off the screen', menuFits.max !== 'none', menuFits.max);
+  ok('and scrolls instead of hiding the last entries', /auto|scroll/.test(menuFits.scrolls), menuFits.scrolls);
 
   for (const tab of quick) {
     await page.click('.nav-quick-btn[data-tab="' + tab + '"]');
@@ -1528,11 +1544,51 @@ try {
       await page.evaluate(async () => (await net_invite()).invitedBy), 'FOX-GOOD');
   }
 
-  section('referrals: a page that only exists when it has something in it');
+  section('the pages that are not open yet');
   {
-    // The real file ships empty, so this is the state a visitor sees today.
-    eq('with nothing in the file the tab is not in the menu',
-      await page.evaluate(() => document.getElementById('nav-referrals').hidden), true);
+    // Four revenue lines with a tab each. A page that is coming should look
+    // considered, not like one that failed to load — and it has to say what it
+    // will be, or the tab is just a dead end with a nice border.
+    for (const [tab, lead, mustSay] of [
+      ['launchpad', 'Your own site, on this one', /under your brand/],
+      ['defi', 'DeFi', /same wallet you swap with/],
+      ['wishlist', 'Wishlist', /sp3nd/]
+    ]) {
+      await page.evaluate((t) => switchTab(t), tab);
+      await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
+      const panel = page.locator('#panel-' + tab);
+      eq(tab + ': the page opens', await panel.locator('.soon').count(), 1);
+      eq(tab + ': and is headed with what it will be',
+        (await panel.locator('.soon-lead').textContent()).trim(), lead);
+      ok(tab + ': says plainly that it is not open',
+        /coming soon/i.test(await panel.locator('.soon-tag').textContent()));
+      const what = await panel.locator('.soon-what').textContent();
+      ok(tab + ': and explains it rather than leaving a blank page', mustSay.test(what), what);
+      ok(tab + ': with nothing pretending to work', await panel.locator('button, input, a').count() === 0);
+    }
+
+    // A link straight to one of them has to work: these get shared before the
+    // page behind them exists, which is rather the point of having them.
+    await page.goto(SITE + '#wishlist', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+    ok('a direct link to one of them opens it',
+      await page.evaluate(() => document.getElementById('panel-wishlist').classList.contains('active')));
+  }
+
+  section('referrals: says it is coming until it has something to show');
+  {
+    // The real file ships empty, so this is the state a visitor sees today:
+    // the tab is there and says so, rather than disappearing.
+    eq('with nothing in the file the tab is still in the menu',
+      await page.evaluate(() => document.getElementById('nav-referrals').hidden), false);
+    await page.evaluate(() => switchTab('referrals'));
+    await page.waitForSelector('#panel-referrals.active', { timeout: 10000 });
+    ok('and the page says it is coming', await page.locator('#ref-list .soon').count() === 1);
+    ok('naming what it will be, not just that it is empty',
+      /referral credit/.test(await page.textContent('#ref-list .soon-what')),
+      await page.textContent('#ref-list .soon-what'));
+    eq('with the introduction held back until there is something to introduce',
+      await page.evaluate(() => document.getElementById('ref-intro').hidden), true);
 
     // Now stand in a populated file, including one entry that should never
     // become a link.
@@ -1548,10 +1604,12 @@ try {
       ] })
     }));
     await page.evaluate(() => loadReferrals());
-    await page.waitForFunction(() => document.getElementById('nav-referrals').hidden === false, null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll('#ref-list .ref-card').length > 0, null, { timeout: 10000 });
 
-    eq('a populated file puts the tab in the menu',
-      await page.evaluate(() => document.getElementById('nav-referrals').hidden), false);
+    eq('a populated file replaces the notice with the real thing',
+      await page.locator('#ref-list .soon').count(), 0);
+    eq('and brings the introduction back',
+      await page.evaluate(() => document.getElementById('ref-intro').hidden), false);
     eq('an entry with no link is left out entirely',
       await page.evaluate(() => document.querySelectorAll('#ref-list .ref-card').length), 2);
 
@@ -1601,15 +1659,15 @@ try {
     ok('and the page says plainly that these pay me',
       /referral credit/.test(await page.textContent('#panel-referrals .bk-sub')));
 
-    // Emptying it again must not strand someone standing on the page.
+    // Emptying it again puts the notice back rather than stranding anyone.
     await page.route('**/referrals.json', (route) =>
       route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
     await page.evaluate(() => loadReferrals());
-    await page.waitForFunction(() => document.getElementById('nav-referrals').hidden === true, null, { timeout: 10000 });
-    eq('emptying the file takes the tab away again',
-      await page.evaluate(() => document.getElementById('nav-referrals').hidden), true);
-    ok('and moves anyone standing on it somewhere real',
-      await page.evaluate(() => !document.getElementById('panel-referrals').classList.contains('active')));
+    await page.waitForFunction(() => document.querySelectorAll('#ref-list .soon').length === 1, null, { timeout: 10000 });
+    eq('emptying the file brings the notice back', await page.locator('#ref-list .soon').count(), 1);
+    eq('the tab stays where it was', await page.evaluate(() => document.getElementById('nav-referrals').hidden), false);
+    ok('and nobody standing on it is thrown off the page',
+      await page.evaluate(() => document.getElementById('panel-referrals').classList.contains('active')));
     await page.unroute('**/referrals.json');
   }
 

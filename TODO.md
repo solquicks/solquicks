@@ -507,11 +507,27 @@ it has been sent.
 
 ## Blocked
 
+**14. Four pages are announced but not open.** Added 2026-09-29, live.
+Each is a revenue line with a tab, a place in the menu and a page that says
+what it will be:
+
+- **Creator Launchpad** — this site under someone else's brand. The business
+  model is still to be gone through.
+- **DeFi** — lending and earning in the same wallet as the swap. Which
+  protocols is undecided.
+- **Wishlist** — the Amazon wishlist, paid from a wallet through sp3nd.
+- **Referrals** — built and working, just empty; see below.
+
+The three new ones are defined in one place, `SOON_TABS` in `index.html`, which
+builds the menu entry and the page together. Adding a fifth is one entry;
+opening one for real means replacing its panel's contents.
+
 **13. Referrals page has no referrals in it.**
-Built 2026-09-22, ships hidden. `referrals.json` is an empty list and the tab
-stays out of the menu until it is not. Each entry needs `name`, `url`, a logo
-in `img/referrals/`, `what` the platform does and `youGet`. Waiting on the ten
-links, logos and blurbs.
+Built 2026-09-22. `referrals.json` is an empty list, so the tab says "coming
+soon" rather than listing anything. Each entry needs `name`, `url`, a logo
+in `img/referrals/`, `what` the platform does and `youGet` — fill the file and
+the notice is replaced by the real cards on its own. Waiting on the ten links,
+logos and blurbs.
 
 **12. ~~The consulting hour~~** — live 2026-09-22. Scheduled by hand rather
 than through Calendly, whose free plan allows one event type and the 30-minute

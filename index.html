@@ -266,6 +266,12 @@
       left: 0;
       z-index: 60;
       width: min(340px, calc(100vw - 40px));
+      /* Eight entries are taller than a phone, and a menu that runs off the
+         bottom hides whatever sorts last — which is exactly where the newest
+         pages land. */
+      max-height: min(70vh, 560px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       background: var(--card);
       border: var(--line);
       border-radius: 20px;
@@ -571,6 +577,29 @@
     }
     .iv-claim button:disabled { background: var(--cream); color: var(--muted); cursor: default; }
     .iv-note { font-size: 0.8rem; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+
+    /* The four pages that are not open yet. Deliberately calm: a page that is
+       coming should look considered, not like something that failed to load. */
+    .soon {
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      padding: 34px 24px; text-align: center; max-width: 560px; margin: 0 auto;
+    }
+    .soon-tag {
+      display: inline-block; font-size: 0.68rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 5px 12px; border-radius: 999px;
+      background: var(--orange-soft); color: var(--orange-deep);
+      border: var(--line); margin-bottom: 16px;
+    }
+    .soon-lead {
+      font-family: 'Baloo 2', sans-serif; font-weight: 800;
+      font-size: 1.5rem; line-height: 1.2; margin-bottom: 10px;
+    }
+    .soon-what { color: var(--muted); font-size: 0.95rem; line-height: 1.6; margin: 0; }
+    @media (max-width: 480px) {
+      .soon { padding: 28px 18px; }
+      .soon-lead { font-size: 1.3rem; }
+    }
 
     .ref-list { display: grid; gap: 12px; }
     .ref-card {
@@ -2235,10 +2264,8 @@
           <span><span class="nav-item-name">Moon Rangers</span>
           <span class="nav-item-note">Stake, missions, and collection stats</span></span>
         </button>
-        <!-- Hidden until referrals.json has something in it: an empty page in
-             the menu is a promise the site cannot keep. -->
         <button class="nav-item" role="menuitem" data-tab="referrals" id="nav-referrals"
-                onclick="switchTab('referrals',this)" hidden>
+                onclick="switchTab('referrals',this)">
           <span class="nav-item-icon" aria-hidden="true">◈</span>
           <span><span class="nav-item-name">Referrals</span>
           <span class="nav-item-note">Platforms I use, and what you get for joining</span></span>
@@ -2531,7 +2558,7 @@
 
     <!-- REFERRALS PANEL -->
     <div id="panel-referrals" class="panel">
-      <div class="bk-intro">
+      <div class="bk-intro" id="ref-intro" hidden>
         <div class="bk-lead">Referrals</div>
         <p class="bk-sub">Platforms I actually use. Joining through these links gets you something, and pays me a referral credit — that is the whole arrangement, said plainly.</p>
       </div>
@@ -3067,6 +3094,96 @@
     function tabButton(name) {
       return document.querySelector('[data-tab="' + name + '"]');
     }
+
+    // ── pages that are not open yet ──────────────────────────────────────
+    // Each of these is a revenue line waiting on the thing behind it. They get
+    // a tab and a page now so the shape of the site is settled, and each says
+    // plainly that it is not open — an empty page with no explanation reads as
+    // broken, and a page that pretends to work is worse.
+    //
+    // Defined here rather than written into the markup four times: adding the
+    // fifth is one line, and the tab, the menu entry and the page cannot drift
+    // apart from each other.
+    const SOON_TABS = [
+      {
+        tab: 'launchpad', name: 'Creator Launchpad', icon: '◆',
+        note: 'Run a site like this one under your own name',
+        lead: 'Your own site, on this one',
+        what: 'Everything here — the swap and its fees, the store, bookings, the ' +
+          'advertising slot — under your brand rather than mine. The revenue side ' +
+          'already built, and yours to run.'
+      },
+      {
+        tab: 'defi', name: 'DeFi', icon: '◉',
+        note: 'Put what you already hold to work',
+        lead: 'DeFi',
+        what: 'Lending, earning and the rest, wired into the same wallet you swap ' +
+          'with, so what you are already holding is not just sitting there. Which ' +
+          'protocols go in is still being decided.'
+      },
+      {
+        tab: 'wishlist', name: 'Wishlist', icon: '✦',
+        note: 'My Amazon wishlist, paid in crypto',
+        lead: 'Wishlist',
+        what: 'My Amazon wishlist, powered by sp3nd — so anything on it can be sent ' +
+          'straight from a wallet, without a card or a checkout in between.'
+      }
+    ];
+
+    /// The one place a not-yet-open page is described, so all four look the
+    /// same and none of them looks like a page that failed to load.
+    function soonHtml(lead, what) {
+      return '<div class="soon">' +
+        '<div class="soon-tag">Coming soon</div>' +
+        '<div class="soon-lead">' + escapeHtml(lead) + '</div>' +
+        '<p class="soon-what">' + escapeHtml(what) + '</p>' +
+        '</div>';
+    }
+
+    /// Contact stays first as the landing page and the rest are alphabetical.
+    /// Sorted rather than written in order, because the order is a rule and a
+    /// rule that is retyped by hand is a rule that eventually is not followed.
+    function sortNavMenu() {
+      const menu = document.getElementById('nav-menu');
+      const items = [...menu.querySelectorAll('.nav-item')];
+      const name = function (el) {
+        const n = el.querySelector('.nav-item-name');
+        return (n ? n.textContent : el.textContent).trim().toLowerCase();
+      };
+      items.sort(function (a, b) {
+        if (a.dataset.tab === 'links') return -1;
+        if (b.dataset.tab === 'links') return 1;
+        return name(a).localeCompare(name(b));
+      });
+      for (const el of items) menu.appendChild(el);
+    }
+
+    (function buildSoonTabs() {
+      const menu = document.getElementById('nav-menu');
+      const after = document.getElementById('panel-referrals');
+      for (const page of SOON_TABS) {
+        const btn = document.createElement('button');
+        btn.className = 'nav-item';
+        btn.setAttribute('role', 'menuitem');
+        btn.dataset.tab = page.tab;
+        btn.onclick = function () { switchTab(page.tab, btn); };
+        btn.innerHTML = '<span class="nav-item-icon" aria-hidden="true">' + page.icon + '</span>' +
+          '<span><span class="nav-item-name"></span>' +
+          '<span class="nav-item-note"></span></span>';
+        // Set as text, not built into the markup, so a name with an ampersand
+        // in it can never become part of the page's structure.
+        btn.querySelector('.nav-item-name').textContent = page.name;
+        btn.querySelector('.nav-item-note').textContent = page.note;
+        menu.appendChild(btn);
+
+        const panel = document.createElement('div');
+        panel.id = 'panel-' + page.tab;
+        panel.className = 'panel';
+        panel.innerHTML = soonHtml(page.lead, page.what);
+        after.parentNode.insertBefore(panel, after.nextSibling);
+      }
+      sortNavMenu();
+    })();
 
     // Restore the tab from the URL on load.
     (function restoreTab() {
@@ -8022,15 +8139,20 @@
         items = Array.isArray(d.items) ? d.items.filter(function (r) { return r && r.name && r.url; }) : [];
       } catch (e) { /* no file, no tab */ }
 
+      // Nothing to list yet. The tab stays, saying so, rather than vanishing —
+      // it is a page that is coming, and the same notice as the other three
+      // that are not open yet.
       if (!items.length) {
-        tab.hidden = true;
-        // If someone is standing on the tab when the last one goes, put them
-        // somewhere real rather than on an empty page.
-        if (document.getElementById('panel-referrals').classList.contains('active')) switchTab('links');
+        tab.hidden = false;
+        document.getElementById('ref-intro').hidden = true;
+        list.innerHTML = soonHtml('Referrals',
+          'Platforms I actually use, and what you get for joining through them. ' +
+          'Each one pays me a referral credit — that is the whole arrangement, said plainly.');
         return;
       }
 
       tab.hidden = false;
+      document.getElementById('ref-intro').hidden = false;
       list.innerHTML = items.map(function (r) {
         // rel="sponsored" is what these links are: paid placement, declared to
         // the browser as well as to the reader.
