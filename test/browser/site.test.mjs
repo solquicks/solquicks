@@ -1386,10 +1386,17 @@ try {
     eq('the column is named after the ranking',
       (await fees.$$eval('#table-wrap thead th', (th) => th.map((e) => e.textContent.trim()))).pop(),
       'Busiest — 24h volume');
+    // The header and the rows are written separately, so waiting on the header
+    // and then reading the rows can catch the old order still in the table —
+    // which is what it did in CI while passing here. Wait for the rows to have
+    // actually changed, then look at them.
+    const rowsNow = () => fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    const before = (await rowsNow()).join(',');
     await fees.selectOption('#rank', 'mcap');
-    await fees.waitForFunction(() => /Biggest/.test(document.querySelector('#table-wrap thead').textContent),
-      null, { timeout: 30000 });
-    const byMcap = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    await fees.waitForFunction((was) => /Biggest/.test(document.querySelector('#table-wrap thead').textContent) &&
+      [...document.querySelectorAll('#table-wrap tbody tr')].map((tr) => tr.children[1].textContent.trim()).join(',') !== was,
+      before, { timeout: 30000 });
+    const byMcap = await rowsNow();
     // BONK and WIF are swapped here so they lead whatever the ranking. Of the
     // rest, USDC is the busiest by far and RAY barely trades, but RAY is
     // worth five thousand times more — so by market cap RAY must come first.
@@ -1399,9 +1406,10 @@ try {
       (await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[5].textContent.trim())))[byMcap.indexOf('USDC')],
       '$1,000');
     await fees.selectOption('#rank', 'volume');
-    await fees.waitForFunction(() => /Busiest/.test(document.querySelector('#table-wrap thead').textContent),
-      null, { timeout: 30000 });
-    const byVol = await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    await fees.waitForFunction((was) => /Busiest/.test(document.querySelector('#table-wrap thead').textContent) &&
+      [...document.querySelectorAll('#table-wrap tbody tr')].map((tr) => tr.children[1].textContent.trim()).join(',') !== was,
+      byMcap.join(','), { timeout: 30000 });
+    const byVol = await rowsNow();
     ok('and switching back puts the busiest in front again',
       byVol.includes('RAY') && byVol.indexOf('USDC') < byVol.indexOf('RAY'), byVol.join(','));
 
