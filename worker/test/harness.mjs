@@ -78,17 +78,20 @@ export const chain = {
 };
 
 // usdc and sol are in base units: micro-USDC and lamports
-export function pay({ from, usdc = 0, sol = 0, reference = null, failed = false }) {
+// `to` is who was actually paid, which is this site's treasury unless a test
+// says otherwise. A creator's site is settled against their wallet, so paying
+// the wrong one has to be expressible.
+export function pay({ from, usdc = 0, sol = 0, reference = null, failed = false, to = TREASURY }) {
   const sig = 'sig' + String(++chain.n).padStart(84, '0');
-  const keys = [from, TREASURY].concat(reference ? [reference] : []);
+  const keys = [from, to].concat(reference ? [reference] : []);
   chain.txs.set(sig, {
     transaction: { message: { accountKeys: keys.map((k) => ({ pubkey: k })) } },
     meta: {
       err: failed ? { InstructionError: [0, 'Custom'] } : null,
       preBalances: [5e9, 1e9],
       postBalances: [5e9 - sol, 1e9 + sol],
-      preTokenBalances: [{ accountIndex: 1, mint: USDC, owner: TREASURY, uiTokenAmount: { amount: '1000000000' } }],
-      postTokenBalances: [{ accountIndex: 1, mint: USDC, owner: TREASURY, uiTokenAmount: { amount: String(1e9 + usdc) } }]
+      preTokenBalances: [{ accountIndex: 1, mint: USDC, owner: to, uiTokenAmount: { amount: '1000000000' } }],
+      postTokenBalances: [{ accountIndex: 1, mint: USDC, owner: to, uiTokenAmount: { amount: String(1e9 + usdc) } }]
     }
   });
   if (reference) chain.byRef.set(reference, [{ signature: sig, err: failed ? {} : null }].concat(chain.byRef.get(reference) || []));

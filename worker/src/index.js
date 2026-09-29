@@ -2153,7 +2153,28 @@ function usdcUnits(usd) {
 
 /// Reads a transaction once and reports what actually reached the treasury,
 /// in both currencies. Callers decide which one they were expecting.
-async function inspectPayment(env, signature) {
+/// Whose wallet this booking's money goes to. A creator's site pays its own
+/// owner; everything else pays this site's treasury.
+///
+/// Used both to quote the address and to check the payment against it, so the
+/// two can never disagree — asking for money at one address and verifying it
+/// at another is the whole of how a payment gets lost.
+/// Which creator's site a request is for, from the query or the body. Null is
+/// this site's own, which is what every existing caller sends.
+function siteOf(url, body) {
+  const raw = (body && body.site) || url.searchParams.get('site') || '';
+  const slug = String(raw).trim().toLowerCase();
+  return /^[a-z0-9-]{3,32}$/.test(slug) ? slug : null;
+}
+
+async function treasuryFor(env, siteSlug) {
+  if (!siteSlug) return env.TREASURY_WALLET || null;
+  const row = await env.DB.prepare("SELECT wallet FROM sites WHERE slug = ? AND status = 'live'")
+    .bind(siteSlug).first();
+  return row ? row.wallet : null;
+}
+
+async function inspectPayment(env, signature, treasury) {
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2171,14 +2192,14 @@ async function inspectPayment(env, signature) {
   const payer = keys[0];
 
   let sol = 0;
-  const idx = keys.indexOf(env.TREASURY_WALLET);
+  const idx = keys.indexOf(treasury);
   if (idx >= 0) sol = (tx.meta.postBalances[idx] || 0) - (tx.meta.preBalances[idx] || 0);
 
   // token balances are keyed by account index, and the "before" row is absent
   // entirely when the account was created by this very transaction
   const amountOf = function (rows) {
     for (const r of rows || []) {
-      if (r.mint === USDC_MINT && r.owner === env.TREASURY_WALLET) {
+      if (r.mint === USDC_MINT && r.owner === treasury) {
         return Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
       }
     }
@@ -2191,14 +2212,17 @@ async function inspectPayment(env, signature) {
 
 /// One gate for both currencies. `wallet` null means the caller already proved
 /// which invoice this is with a Solana Pay reference.
-async function verifyInvoice(env, wallet, signature, minUsdc, purpose) {
-  if (!env.TREASURY_WALLET) return { ok: false, error: 'payments are not switched on yet' };
+async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury) {
+  // Defaulted rather than assumed: a caller that forgets to say whose booking
+  // this is gets this site's treasury, which is the old behaviour.
+  const payTo = treasury || env.TREASURY_WALLET;
+  if (!payTo) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
 
   const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
   if (seen) return { ok: false, error: 'this payment was already used' };
 
-  const p = await inspectPayment(env, signature);
+  const p = await inspectPayment(env, signature, payTo);
   if (!p.found || p.error) return { ok: false, error: p.error || 'payment not found yet' };
   if (wallet !== null && p.payer !== wallet) {
     return { ok: false, error: 'payment was not sent by your wallet' };
@@ -2832,7 +2856,11 @@ const CHECKOUTS = {
 /// and flagged, because the customer paid and did not get what they paid for.
 async function settlePayment(env, kind, b, signature, wallet) {
   const purpose = kind.purpose + b.ref;
-  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose);
+  // Taken from the booking itself, written when it was held. Reading it from
+  // the request instead would let somebody hold on one site and settle
+  // against another's treasury.
+  const treasury = await treasuryFor(env, b.site_slug);
+  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose, treasury);
   if (!v.ok) {
     // a concurrent request may have settled this exact payment a moment ago
     const cur = await env.DB.prepare('SELECT status, signature FROM ' + kind.table + ' WHERE ref = ?').bind(b.ref).first();
@@ -4304,7 +4332,7 @@ export default {
           rates: rates,
           nextFree: rates[0].startsAt,
           taken: !!live,
-          payTo: env.TREASURY_WALLET || null,
+          payTo: await treasuryFor(env, siteOf(url, null)),
           rules: 'Your creative is reviewed before it runs — no adult content, ' +
             'no unaudited token launches, nothing that impersonates anyone. If I ' +
             'turn it down you get a full refund, no argument.'
@@ -4334,17 +4362,23 @@ export default {
         // free date. The insert re-checks for an overlapping run inside one
         // statement, so only one lands on it; the other is moved to the next
         // free run rather than refused.
+        // Whose slot this is, fixed at hold time for the same reason a booking's
+        // is: it decides the wallet the money is checked against.
+        const adSite = siteOf(url, body);
+        const adPayTo = await treasuryFor(env, adSite);
+        if (adSite && !adPayTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
+
         let starts = 0, ends = 0, placed = false;
         for (let attempt = 0; attempt < 3 && !placed; attempt++) {
           starts = await bannerNextFree(env, rate.weeks);
           ends = starts + rate.weeks * WEEK_MS;
           const r = await env.DB.prepare(
             'INSERT INTO banner_bookings (ref, wallet, weeks, starts_at, ends_at, total_usd, sol_price, ' +
-            'lamports, status, hold_until, name, contact, created_at, reference) ' +
-            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ? WHERE NOT EXISTS (" + OVERLAPS_LIVE_BANNER + ')'
+            'lamports, status, hold_until, name, contact, created_at, reference, site_slug) ' +
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" + OVERLAPS_LIVE_BANNER + ')'
           ).bind(
             ref, wallet, rate.weeks, starts, ends, rate.price, null, null,
-            now + HOLD_MINUTES * 60000, name, contact, now, reference, ends, starts
+            now + HOLD_MINUTES * 60000, name, contact, now, reference, adSite, ends, starts
           ).run();
           placed = r.meta.changes === 1;
         }
@@ -4354,7 +4388,7 @@ export default {
           ref: ref, reference: reference, weeks: rate.weeks, startsAt: starts, endsAt: ends,
           totalUsd: rate.price,
           usdc: usdcUnits(rate.price), usdcMint: USDC_MINT,
-          payTo: env.TREASURY_WALLET || null,
+          payTo: adPayTo,
           holdUntil: now + HOLD_MINUTES * 60000,
           serverNow: now
         });
@@ -4453,7 +4487,8 @@ export default {
           // What comes off for this wallet in particular, so the page does not
           // have to know which perk beats which.
           discountPct: discountPctFor(holder),
-          payTo: env.TREASURY_WALLET || null
+          // A creator's own site quotes their wallet, not mine.
+          payTo: await treasuryFor(env, siteOf(url, null))
         });
       }
 
@@ -4502,17 +4537,30 @@ export default {
         // same hour arriving together would both pass the read. So the insert
         // re-checks inside a single statement, which the database runs
         // atomically, and only one of them can land.
+        // Written now and never changed: it decides the wallet this is settled
+        // against, and a booking whose treasury could move after the fact is a
+        // booking that could be paid to the wrong person.
+        const site = siteOf(url, body);
+        const payTo = await treasuryFor(env, site);
+        // A named site with no wallet is a site that cannot be paid, and
+        // holding a slot on it would waste somebody's time. This site with no
+        // treasury configured is a different thing: the hold still works and
+        // it is the confirm that refuses, which is how it behaved before any
+        // of this and what an enquiry — which needs no payment at all — relies
+        // on.
+        if (site && !payTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
+
         const guard = type.mode === 'slot' ? ' WHERE NOT EXISTS (' + OVERLAPS_LIVE_BOOKING + ')' : '';
         const inserted = await env.DB.prepare(
           'INSERT INTO bookings (ref, wallet, type_id, mode, starts_at, minutes, base_usd, rush_pct, ' +
-          'discount_pct, total_usd, sol_price, lamports, status, hold_until, name, contact, brief, created_at, reference) ' +
-          'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' + guard
+          'discount_pct, total_usd, sol_price, lamports, status, hold_until, name, contact, brief, created_at, reference, site_slug) ' +
+          'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' + guard
         ).bind(...[
           ref, wallet, type.id, type.mode, startsAt, type.minutes,
           q.base, q.rushPct, q.discountPct, q.total, null, null,
           type.mode === 'enquiry' ? 'enquiry' : 'held',
           type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
-          name, contact, brief, now, reference
+          name, contact, brief, now, reference, site
         ].concat(type.mode === 'slot' ? [startsAt + type.minutes * 60000, startsAt] : [])).run();
         if (inserted.meta.changes !== 1) {
           return json(request, env, { error: 'that slot just went — pick another' }, 409);
@@ -4529,7 +4577,9 @@ export default {
           quote: q,
           usdc: usdc,
           usdcMint: USDC_MINT,
-          payTo: env.TREASURY_WALLET || null,
+          // The same wallet the settle will check against, because both come
+          // from the row this booking was just written into.
+          payTo: payTo,
           holdUntil: type.mode === 'enquiry' ? null : now + HOLD_MINUTES * 60000,
           // lets the page count down the hold without trusting the visitor's clock
           serverNow: now,
@@ -4563,6 +4613,18 @@ export default {
           rows.push({ kind: kind, row: row });
         }
 
+        // One payment settles the whole basket, so every line in it has to be
+        // owed to the same wallet. A basket mixing two creators' sites is one
+        // payment owing two people, which cannot be settled correctly at any
+        // price — so it is refused rather than half-paid.
+        const sites = [...new Set(rows.map(function (r) { return r.row.site_slug || ''; }))];
+        if (sites.length > 1) {
+          return json(request, env, { error: 'those are from different sites — check out one at a time' }, 409);
+        }
+        const cartSite = sites[0] || null;
+        const cartPayTo = await treasuryFor(env, cartSite);
+        if (cartSite && !cartPayTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
+
         const total = Math.round(rows.reduce(function (sum, r) { return sum + Number(r.row.total_usd || 0); }, 0) * 100) / 100;
         const wallet = await getSession(request, env).catch(function () { return null; });
         const ref = bookingRef();
@@ -4570,9 +4632,9 @@ export default {
         const holdUntil = now + HOLD_MINUTES * 60000;
 
         await env.DB.prepare(
-          'INSERT INTO cart_groups (ref, wallet, total_usd, status, hold_until, name, contact, created_at, reference) ' +
-          "VALUES (?, ?, ?, 'held', ?, ?, ?, ?, ?)"
-        ).bind(ref, wallet, total, holdUntil, name, contact, now, reference).run();
+          'INSERT INTO cart_groups (ref, wallet, total_usd, status, hold_until, name, contact, created_at, reference, site_slug) ' +
+          "VALUES (?, ?, ?, 'held', ?, ?, ?, ?, ?, ?)"
+        ).bind(ref, wallet, total, holdUntil, name, contact, now, reference, cartSite).run();
 
         // Claim each line for this basket, and push its hold out to match, so
         // the first thing added does not expire while the last is chosen.
@@ -4596,7 +4658,7 @@ export default {
           total: total,
           usdc: usdcUnits(total),
           usdcMint: USDC_MINT,
-          payTo: env.TREASURY_WALLET || null,
+          payTo: cartPayTo,
           holdUntil: holdUntil,
           serverNow: now,
           items: rows.map(function (r) {

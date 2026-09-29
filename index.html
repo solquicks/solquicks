@@ -3379,6 +3379,23 @@
       sortNavMenu();
     }
 
+    /// Added to every call that quotes or takes money. On a creator's site it
+    /// is their slug, which is what routes the payment to their wallet; here it
+    /// is nothing at all. One helper so that no call can quietly forget it and
+    /// send somebody's customer to the wrong address.
+    function siteParam(prefix) {
+      return CREATOR ? prefix + 'site=' + encodeURIComponent(CREATOR.slug) : '';
+    }
+    function withSite(body) {
+      return CREATOR ? Object.assign({ site: CREATOR.slug }, body) : body;
+    }
+    /// Anything that quotes or takes money waits for this first. The page
+    /// starts up before it knows whose site it is, and a rate card fetched in
+    /// that gap quotes my wallet on somebody else's site.
+    function siteKnown() {
+      return typeof whoseSite === 'undefined' ? Promise.resolve() : whoseSite;
+    }
+
     const TAB_NAMES = {
       swap: 'Swap', store: 'Store', book: 'Book', cleanup: 'Cleanup',
       gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals'
@@ -7273,7 +7290,8 @@
       bkScrollTo('bk-flow');
 
       try {
-        const res = await fetch(POINTS_API + '/api/banner/rates');
+        await siteKnown();
+        const res = await fetch(POINTS_API + '/api/banner/rates' + siteParam('?'));
         adData = await res.json();
       } catch (e) {
         flow.innerHTML = '<div class="bk-flow">Could not load advertising rates just now.</div>';
@@ -7343,7 +7361,7 @@
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' },
             FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-          body: JSON.stringify({ weeks: adWeeks, name: name, contact: contact })
+          body: JSON.stringify(withSite({ weeks: adWeeks, name: name, contact: contact }))
         });
         const d = await res.json();
         if (d.error) throw new Error(d.error);
@@ -7435,8 +7453,9 @@
     async function loadBooking() {
       const list = document.getElementById('bk-list');
       if (!list) return;
+      await siteKnown();
       try {
-        const res = await fetch(POINTS_API + '/api/booking/types', authHeaders());
+        const res = await fetch(POINTS_API + '/api/booking/types' + siteParam('?'), authHeaders());
         if (!res.ok) return;
         bkData = await res.json();
         renderRateCard();
@@ -7684,7 +7703,7 @@
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' },
             FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-          body: JSON.stringify({ items: items, name: name, contact: contact })
+          body: JSON.stringify(withSite({ items: items, name: name, contact: contact }))
         });
         const d = await res.json();
         if (d.error) {
@@ -7877,7 +7896,7 @@
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' },
             FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {})
-        }, { body: JSON.stringify({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief }) }));
+        }, { body: JSON.stringify(withSite({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief })) }));
         const d = await res.json();
         if (d.error) throw new Error(d.error);
 

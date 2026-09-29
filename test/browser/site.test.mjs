@@ -59,7 +59,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
-  quoteFail: 0,
+  quoteFail: 0, siteDelay: 0,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
@@ -209,7 +209,10 @@ function workerAnswer(p, url) {
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
       rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
     rushHours: 48, rushPct: 50, holderDiscountPct: 30, collectibleDiscountPct: 5,
-    holder: false, tier: null, discountPct: 0, payTo: TREASURY
+    holder: false, tier: null, discountPct: 0,
+    // A creator's site is quoted their wallet, the same way the worker does it.
+    payTo: url.searchParams.get('site') === 'ripple'
+      ? '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey' : TREASURY
   };
   if (p === '/api/booking/slots') return { slots: [
     { starts: Date.now() + 5 * 86400000, rush: false },
@@ -335,7 +338,13 @@ async function standIns(context) {
     if (req.method() === 'OPTIONS') return json(route, {});
     if (url.startsWith(WORKER)) {
       const u = new URL(url);
-      net.worker.push(u.pathname);
+      net.worker.push(u.pathname + u.search);
+      // A real network does not answer in the order it was asked. Slowing this
+      // one down is what lets a test provoke the gap where the page does not
+      // yet know whose site it is.
+      if (u.pathname === '/api/site' && net.siteDelay) {
+        await new Promise((r) => setTimeout(r, net.siteDelay));
+      }
       // POSTed bodies, so a stub can answer differently depending on what was
       // actually sent rather than only on the path.
       if (req.method() === 'POST') {
@@ -1792,6 +1801,9 @@ try {
     // not as this one wearing their address. The path form is used here
     // because a test server has no wildcard subdomains; the hostname form runs
     // the same code with the same result.
+    // Only the calls this page makes, not the ones the main site made earlier
+    // in the run — those correctly carry no site at all.
+    const fromHere = net.worker.length;
     await page.goto(SITE + 'c/ripple', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.documentElement.dataset.creator === 'ripple', null, { timeout: 20000 });
 
@@ -1816,6 +1828,23 @@ try {
     eq('a page they did not pick does not exist here',
       await page.locator('#panel-gacha').count(), 0);
     eq('nor one that was never on offer to them', await page.locator('#panel-moon').count(), 0);
+
+    // Every call that quotes or takes money has to say whose site it is, or a
+    // customer is sent to pay the wrong wallet.
+    // Landing straight on the booking page is the case that races: the rate
+    // card is fetched at startup, while the page still does not know whose
+    // site it is, and a card fetched in that gap quotes my wallet on their
+    // site. Which is somebody's customer paying the wrong person.
+    const beforeBook = net.worker.length;
+    net.siteDelay = 600;
+    await page.goto(SITE + 'c/ripple#book', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelectorAll('#bk-list .bk-card').length > 0, null, { timeout: 20000 });
+    const asked = net.worker.slice(beforeBook).filter((u) => /booking\/types|banner\/rates/.test(u));
+    ok('a rate card fetched on landing is still asked for on their behalf',
+      asked.length > 0 && asked.every((u) => /site=ripple/.test(u)), asked.join(' | '));
+    eq('and it quotes their wallet, not mine',
+      await page.evaluate(() => bkData.payTo), '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey');
+    net.siteDelay = 0;
 
     // The badge is the whole distribution plan, so it has to be on their site.
     ok('the powered-by badge is on their site too', await page.locator('#powered').isVisible());

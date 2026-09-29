@@ -7,7 +7,7 @@
 // invite, because a code that can be spent twice is two creators fighting over
 // one site.
 
-import { chain, freshEnv as blankEnv, call, wallet, ok, eq, section, finish } from './harness.mjs';
+import { chain, freshEnv as blankEnv, call, wallet, ok, eq, section, finish, TREASURY, pay } from './harness.mjs';
 
 const ROOT = 'solquicks.com';
 const CREATOR = wallet(500);
@@ -199,6 +199,95 @@ section('the site a creator ends up with');
   ok('and the wallet is not hidden from the page that has to ask for it', !!s.treasury);
 
   eq('a site nobody has made is nothing', (await call(env, 'GET', '/api/site?slug=ghost')).body.site, null);
+}
+
+section('a creator site takes its own money');
+{
+  // The point of the whole thing: a booking made on somebody's site is asked
+  // for at their wallet and checked against their wallet. Getting this wrong
+  // sends a customer's money to me and leaves the creator unpaid.
+  const env = freshEnv();
+  await create(env, {});
+
+  const mine = await call(env, 'GET', '/api/booking/types');
+  const theirs = await call(env, 'GET', '/api/booking/types?site=ripple');
+  eq('my rate card quotes my wallet', mine.body.payTo, TREASURY);
+  eq('their rate card quotes theirs', theirs.body.payTo, CREATOR);
+  ok('which is not mine', theirs.body.payTo !== mine.body.payTo);
+
+  const guest = { name: 'A Customer', contact: '@customer' };
+  const held = await call(env, 'POST', '/api/booking/hold',
+    { body: Object.assign({ type: 'custom', site: 'ripple' }, guest) });
+  eq('a booking on their site is held', held.status, 200);
+  eq('and asks for the money at their wallet', held.body.payTo, CREATOR);
+  eq('the booking remembers whose site it is',
+    env._db.prepare('SELECT site_slug FROM bookings WHERE ref = ?').get(held.body.ref).site_slug, 'ripple');
+
+  const ad = await call(env, 'POST', '/api/banner/hold',
+    { body: Object.assign({ weeks: 1, site: 'ripple' }, guest) });
+  eq('so does an ad on their site', ad.body.payTo, CREATOR);
+
+  // A site nobody has launched cannot take money at all, rather than
+  // defaulting to mine.
+  const ghost = await call(env, 'POST', '/api/booking/hold',
+    { body: Object.assign({ type: 'custom', site: 'nobody' }, guest) });
+  eq('a site that does not exist cannot take payments', ghost.status, 503);
+  eq('and certainly does not send them to me', ghost.body.payTo, undefined);
+}
+
+section('money is checked against the wallet it was asked for');
+{
+  // The half that matters more: a payment to me must not settle a booking made
+  // on somebody else's site, and the other way round.
+  const env = freshEnv();
+  await create(env, {});
+  const guest = { name: 'A Customer', contact: '@customer' };
+
+  const theirs = await call(env, 'POST', '/api/booking/hold',
+    { body: Object.assign({ type: 'custom', site: 'ripple' }, guest) });
+
+  // Paid to me, for a booking on their site.
+  pay({ from: wallet(600), usdc: 250e6, reference: theirs.body.reference });
+  const wrong = await call(env, 'GET', '/api/booking/watch?ref=' + theirs.body.ref);
+  ok('a payment to my wallet does not settle their booking',
+    wrong.body.status !== 'paid', JSON.stringify(wrong.body));
+
+  // Paid to them, as it should have been.
+  pay({ from: wallet(600), usdc: 250e6, reference: theirs.body.reference, to: CREATOR });
+  const right = await call(env, 'GET', '/api/booking/watch?ref=' + theirs.body.ref);
+  eq('a payment to theirs does', right.body.status, 'paid');
+
+  // And the reverse: a booking on my site is not settled by paying them.
+  const mine = await call(env, 'POST', '/api/booking/hold',
+    { body: Object.assign({ type: 'custom' }, guest) });
+  pay({ from: wallet(601), usdc: 250e6, reference: mine.body.reference, to: CREATOR });
+  const back = await call(env, 'GET', '/api/booking/watch?ref=' + mine.body.ref);
+  ok('and paying a creator does not settle a booking on mine',
+    back.body.status !== 'paid', JSON.stringify(back.body));
+}
+
+section('a basket cannot mix two sites');
+{
+  // One payment settling lines owed to two different wallets cannot be right
+  // at any price, so it is refused rather than half-paid.
+  const env = freshEnv();
+  await create(env, {});
+  const guest = { name: 'A Customer', contact: '@customer' };
+
+  const a = await call(env, 'POST', '/api/booking/hold', { body: Object.assign({ type: 'custom', site: 'ripple' }, guest) });
+  const b = await call(env, 'POST', '/api/booking/hold', { body: Object.assign({ type: 'custom' }, guest) });
+  const mixed = await call(env, 'POST', '/api/cart/checkout', {
+    body: { items: [{ kind: 'booking', ref: a.body.ref }, { kind: 'booking', ref: b.body.ref }], ...guest }
+  });
+  eq('a basket from two sites is refused', mixed.status, 409);
+  ok('and says why', /different sites/.test(mixed.body.error), mixed.body.error);
+
+  const c = await call(env, 'POST', '/api/booking/hold', { body: Object.assign({ type: 'custom', site: 'ripple' }, guest) });
+  const same = await call(env, 'POST', '/api/cart/checkout', {
+    body: { items: [{ kind: 'booking', ref: a.body.ref }, { kind: 'booking', ref: c.body.ref }], ...guest }
+  });
+  eq('two from the same site is fine', same.status, 200);
+  eq('and the whole basket is owed to that site', same.body.payTo, CREATOR);
 }
 
 finish();
