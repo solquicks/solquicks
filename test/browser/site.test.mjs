@@ -46,7 +46,10 @@ const section = (s) => console.log('\n── ' + s + ' ──');
 const TYPES = { '.html': 'text/html', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);
+  // /c/<slug> is a creator's site, which is index.html deciding it is theirs.
+  // Vercel is configured to rewrite the same way.
+  const creator = /^\/c\/[a-z0-9-]{3,32}\/?$/.test(rel);
+  const file = path.join(ROOT, rel === '/' || creator ? 'index.html' : rel);
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
@@ -159,6 +162,15 @@ function workerAnswer(p, url) {
       { mint: 'm4', name: 'Ranger #4', image: 'https://gone.test/4', imageAlt: null, rank: 4, traits: { Background: 'Nebula', Fur: 'Green' } }
     ]
   };
+  if (p === '/api/site') {
+    const slug = url.searchParams.get('slug');
+    return slug === 'ripple' ? { site: {
+      slug: 'ripple', name: 'Ripple', handle: '@ripple', tagline: 'Making waves',
+      avatar: 'https://img.test/ripple.png', domain: 'ripple.io',
+      treasury: '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey',
+      topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup']
+    } } : { site: null };
+  }
   if (p === '/api/invite') return inviteState();
   if (p === '/api/invite/bind') {
     const code = (net.lastBody && net.lastBody.code) || '';
@@ -1764,6 +1776,54 @@ try {
     ok('and nobody standing on it is thrown off the page',
       await page.evaluate(() => document.getElementById('panel-referrals').classList.contains('active')));
     await page.unroute('**/referrals.json');
+  }
+
+  section('one file, somebody else\'s site');
+  {
+    // The same page, opened at /c/ripple, has to come up as Ripple's site and
+    // not as this one wearing their address. The path form is used here
+    // because a test server has no wildcard subdomains; the hostname form runs
+    // the same code with the same result.
+    await page.goto(SITE + 'c/ripple', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.documentElement.dataset.creator === 'ripple', null, { timeout: 20000 });
+
+    eq('the page is theirs', await page.title(), 'Ripple | @ripple');
+    eq('their handle is at the top', (await page.textContent('#site-handle')).trim(), '@ripple');
+    eq('and their tagline', (await page.textContent('#site-tagline')).trim(), 'Making waves');
+    eq('with their avatar', await page.getAttribute('#site-avatar', 'src'), 'https://img.test/ripple.png');
+
+    // Nothing of mine should be left on it.
+    ok('my contact buttons are gone', await page.locator('#site-contact').isVisible() === false);
+    ok('and my name is nowhere on the page',
+      !/solquicks/i.test(await page.textContent('#panel-links')), await page.textContent('#panel-links'));
+
+    eq('the three they picked are in the bar',
+      (await page.$$eval('.nav-quick-btn', (els) => els.map((e) => e.textContent.trim()))).join(','),
+      'Swap,Store,Book');
+    eq('and the fourth is in the menu',
+      (await page.$$eval('.nav-item[data-tab]', (els) => els.map((e) => e.dataset.tab))).join(','),
+      'links,cleanup');
+
+    // A page they did not choose must not be reachable by typing its name in.
+    eq('a page they did not pick does not exist here',
+      await page.locator('#panel-gacha').count(), 0);
+    eq('nor one that was never on offer to them', await page.locator('#panel-moon').count(), 0);
+
+    // The badge is the whole distribution plan, so it has to be on their site.
+    ok('the powered-by badge is on their site too', await page.locator('#powered').isVisible());
+    eq('still naming what built it', (await page.textContent('#powered-name')).trim(), 'solquicks');
+    ok('and still inviting the next one', await page.locator('#powered-cta').isVisible());
+
+    // An address nobody has claimed must not quietly render my site.
+    await page.goto(SITE + 'c/nobody', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => /No site at this address/.test(document.body.textContent), null, { timeout: 20000 });
+    ok('an unclaimed address says so rather than showing mine', true);
+    ok('and points them at the Launchpad',
+      /launch\.html/.test(await page.evaluate(() => document.body.innerHTML)));
+
+    await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
+    eq('and the main site is still itself', (await page.textContent('#site-handle')).trim(), '@solquicks');
   }
 
   section('settings survive a reload');

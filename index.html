@@ -33,7 +33,31 @@
   <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"
         integrity="sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ" crossorigin="anonymous" defer></script>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <script>
+    // This file is every creator's site as well as this one, and which it is
+    // rendering is only known once the worker answers. Painting my name and
+    // then swapping in theirs is a visible flash of the wrong site, so when
+    // the address says this is somebody's, the page is held back until it
+    // knows whose. Decided here because by the time the main script runs the
+    // page has already painted.
+    (function () {
+      var h = location.hostname.toLowerCase();
+      var root = 'solquicks.com';
+      var creator = /^\/c\/[a-z0-9-]{3,32}\/?$/.test(location.pathname) ||
+        (h !== root && h !== 'www.' + root && h.slice(-(root.length + 1)) === '.' + root &&
+         /^[a-z0-9-]{3,32}$/.test(h.slice(0, -(root.length + 1))));
+      if (creator) document.documentElement.className += ' site-loading';
+      // Never hidden for long, whatever happens to the request: a blank page
+      // is worse than the wrong name for a moment.
+      setTimeout(function () {
+        document.documentElement.classList.remove('site-loading');
+      }, 4000);
+    })();
+  </script>
   <style>
+    /* Held back only while the page does not yet know whose site it is. */
+    .site-loading body { visibility: hidden; }
+
     :root {
       --bg: #D9E4EB;
       --bg-deep: #C6D7E1;
@@ -2349,12 +2373,12 @@
     <div class="profile-band">
       <div class="profile">
         <div class="avatar-wrap">
-          <img class="avatar" src="avatar.png" alt="solquicks"/>
+          <img class="avatar" id="site-avatar" src="avatar.png" alt="solquicks"/>
           <div class="avatar-ring"></div>
         </div>
-        <div class="handle"><span>@</span>solquicks</div>
-        <div class="bio-tags">The Most Famous Fox</div>
-        <div class="contact-row">
+        <div class="handle" id="site-handle"><span>@</span>solquicks</div>
+        <div class="bio-tags" id="site-tagline">The Most Famous Fox</div>
+        <div class="contact-row" id="site-contact">
           <a href="https://t.me/solquicks" class="contact-btn" target="_blank" rel="noopener noreferrer">
             <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="12" r="12" fill="#29A9EB"/>
@@ -3276,6 +3300,125 @@
         menu.appendChild(btn);
       }
     }
+
+    // ── whose site is this ───────────────────────────────────────────────
+    // One file serves every creator. Which one it is rendering is decided by
+    // the address it was opened at: <slug>.solquicks.com, or /c/<slug> where a
+    // wildcard subdomain is not available.
+    //
+    // Nothing about a creator's site is in this file. It is all one row, read
+    // once at load, which is what makes the template a template.
+    const SITE_ROOT = 'solquicks.com';
+    var CREATOR = null;
+
+    function siteSlugFromLocation() {
+      const path = location.pathname.match(/^\/c\/([a-z0-9-]{3,32})\/?$/);
+      if (path) return path[1];
+      const host = location.hostname.toLowerCase();
+      if (host === SITE_ROOT || host === 'www.' + SITE_ROOT) return null;
+      if (!host.endsWith('.' + SITE_ROOT)) return null;   // localhost, previews
+      const label = host.slice(0, -(SITE_ROOT.length + 1));
+      // One label, and one that could really be a slug we issued. "a.b" is not
+      // a creator, it is somebody probing.
+      return /^[a-z0-9-]{3,32}$/.test(label) ? label : null;
+    }
+
+    /// Turns this page into that creator's site: their name at the top, their
+    /// pages in the bar, and everything they did not choose taken away.
+    function applySite(site) {
+      CREATOR = site;
+      document.title = site.name + (site.handle ? ' | ' + site.handle : '');
+      document.documentElement.dataset.creator = site.slug;
+
+      const handle = (site.handle || '').replace(/^@/, '');
+      const handleEl = document.getElementById('site-handle');
+      // Rebuilt rather than assigned into, so a name can never be markup.
+      handleEl.innerHTML = '';
+      if (handle) {
+        const at = document.createElement('span');
+        at.textContent = '@';
+        handleEl.append(at, document.createTextNode(handle));
+      } else {
+        handleEl.textContent = site.name;
+      }
+      document.getElementById('site-tagline').textContent = site.tagline || '';
+      if (/^https?:\/\//i.test(site.avatar || '')) {
+        const img = document.getElementById('site-avatar');
+        img.src = site.avatar;
+        img.alt = site.name;
+      }
+      // Their own links are not collected yet, so the contact row is theirs to
+      // fill rather than mine to leave showing my Telegram.
+      document.getElementById('site-contact').hidden = true;
+      const links = document.getElementById('panel-links');
+      if (links) links.innerHTML = '<p class="section-label">Find me on</p>' +
+        '<div class="soon"><div class="soon-lead">' + escapeHtml(site.name) + '</div>' +
+        '<p class="soon-what">' + escapeHtml(site.tagline || 'Links coming soon.') + '</p></div>';
+
+      // The bar gets their three; the menu keeps Contact and adds the rest.
+      const keep = site.topTabs.concat(site.moreTabs);
+      const quick = document.getElementById('nav-quick');
+      quick.innerHTML = '';
+      for (const tab of site.topTabs) {
+        const b = document.createElement('button');
+        b.className = 'nav-quick-btn';
+        b.dataset.tab = tab;
+        b.textContent = tabName(tab);
+        b.onclick = function () { switchTab(tab, b); };
+        quick.appendChild(b);
+      }
+      for (const el of document.querySelectorAll('.nav-item[data-tab]')) {
+        if (el.dataset.tab !== 'links' && keep.indexOf(el.dataset.tab) < 0) el.remove();
+      }
+      // A page nobody put on this site should not be reachable by typing its
+      // name into the address bar either.
+      for (const panel of document.querySelectorAll('.panel[id^="panel-"]')) {
+        const tab = panel.id.slice('panel-'.length);
+        if (tab !== 'links' && keep.indexOf(tab) < 0) panel.remove();
+      }
+      sortNavMenu();
+    }
+
+    const TAB_NAMES = {
+      swap: 'Swap', store: 'Store', book: 'Book', cleanup: 'Cleanup',
+      gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals'
+    };
+    function tabName(tab) {
+      return TAB_NAMES[tab] || tab;
+    }
+
+    // The page is held back by the head script until this has answered, so
+    // that nobody sees my site briefly wearing their address.
+    const whoseSite = (async function () {
+      const slug = siteSlugFromLocation();
+      if (!slug) return null;
+      try {
+        const res = await fetch(POINTS_API + '/api/site?slug=' + encodeURIComponent(slug));
+        const d = await res.json();
+        if (d && d.site) { applySite(d.site); return d.site; }
+        // A subdomain nobody has claimed. Rendering my site at their address
+        // would be worse than saying plainly that there is nothing here.
+        //
+        // Covered rather than emptied: the rest of the page is still starting
+        // up behind this, and taking its elements away mid-flight makes every
+        // loader fall over on something that was there a moment ago.
+        const cover = document.createElement('div');
+        cover.id = 'no-site';
+        cover.style.cssText = 'position:fixed;inset:0;z-index:999;background:var(--bg);' +
+          'display:grid;place-items:center;padding:20px;overflow:auto';
+        cover.innerHTML = '<div class="soon">' +
+          '<div class="soon-tag">Nothing here yet</div>' +
+          '<div class="soon-lead">No site at this address</div>' +
+          '<p class="soon-what">This name has not been claimed. ' +
+          '<a href="https://' + SITE_ROOT + '/launch.html">Launch your own website</a>.</p></div>';
+        document.body.appendChild(cover);
+        return null;
+      } catch (e) {
+        return null;   // the main site is what is left, which is a safe default
+      } finally {
+        document.documentElement.classList.remove('site-loading');
+      }
+    })();
 
     // Restore the tab from the URL on load.
     (function restoreTab() {
@@ -8222,8 +8365,6 @@
     /// one is a data change, not a deploy of the page — and the tab stays out
     /// of the menu entirely while there is nothing behind it.
     async function loadReferrals() {
-      const list = document.getElementById('ref-list');
-      const tab = document.getElementById('nav-referrals');
       let items = [];
       try {
         const res = await fetch('referrals.json', { cache: 'no-store' });
@@ -8231,12 +8372,21 @@
         items = Array.isArray(d.items) ? d.items.filter(function (r) { return r && r.name && r.url; }) : [];
       } catch (e) { /* no file, no tab */ }
 
+      // Looked up after the fetch, not before it. A creator who did not put
+      // this page on their site has it removed while this is still waiting on
+      // the network, and references taken earlier would still point at
+      // elements that are no longer in the document.
+      const list = document.getElementById('ref-list');
+      const tab = document.getElementById('nav-referrals');
+      const intro = document.getElementById('ref-intro');
+      if (!list || !tab || !intro) return;
+
       // Nothing to list yet. The tab stays, saying so, rather than vanishing —
       // it is a page that is coming, and the same notice as the other three
       // that are not open yet.
       if (!items.length) {
         tab.hidden = false;
-        document.getElementById('ref-intro').hidden = true;
+        intro.hidden = true;
         list.innerHTML = soonHtml('Referrals',
           'Platforms I actually use, and what you get for joining through them. ' +
           'Each one pays me a referral credit — that is the whole arrangement, said plainly.');
@@ -8244,7 +8394,7 @@
       }
 
       tab.hidden = false;
-      document.getElementById('ref-intro').hidden = false;
+      intro.hidden = false;
       list.innerHTML = items.map(function (r) {
         // rel="sponsored" is what these links are: paid placement, declared to
         // the browser as well as to the reader.
