@@ -616,6 +616,10 @@ try {
     null, { timeout: 10000 });
   ok('and it recovers when the shop comes back', true);
 
+  // Live features have partners too, and the same rule applies: name them.
+  ok('the store says who fulfils it', /store\.fun/.test(await page.textContent('#panel-store')));
+  ok('and who is coming', /Nomu/.test(await page.textContent('#panel-store')));
+
   section('the collectible: the mint instruction, byte for byte');
   {
     // index.html encodes the Candy Guard mint by hand rather than shipping
@@ -848,6 +852,16 @@ try {
 
   section('booking: the rate card');
   {
+    // "from $180 /week" was the best rate, only reached at three months. The
+    // cheapest way in is $250 for one week, so an advertiser clicked expecting
+    // $180 and found $250.
+    await page.evaluate(() => switchTab('book'));
+    await page.waitForSelector('.bk-ad', { timeout: 15000 });
+    const ad = (await page.textContent('.bk-ad')).replace(/\s+/g, ' ');
+    ok('the advertising price is one you can actually pay today', /\$250/.test(ad), ad);
+    ok('and the cheaper rate is explained rather than advertised as the price',
+      /down to \$180 on three months or more/.test(ad), ad);
+
     await page.evaluate(() => switchTab('book'));
     await page.waitForSelector('.bk-card', { timeout: 15000 });
 
@@ -1032,6 +1046,9 @@ try {
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
   ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+  // Scoped: the same small-print style is used on the store panel too.
+  ok('the swap names who routes it', /Jupiter/.test(await page.textContent('#panel-swap .sw-foot')));
+  ok('and who is coming', /Titan/.test(await page.textContent('#panel-swap .sw-foot')));
 
   section('swap: a leaderboard of one says so instead of naming me');
   {

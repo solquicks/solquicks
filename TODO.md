@@ -533,15 +533,34 @@ and where it is up to. Vague is worse than "not open yet" — a page that says
 who it is built with reads as a plan; one that says "still being decided" reads
 as an idea.
 
-**2. The ten referral links.**
+**2. Creator-minted collectibles.**
+A creator should be able to mint their own soulbound collectible the way
+solquicks.com has one — same shape, their artwork, their perks, their treasury.
+Everything needed already exists and is proven on mainnet: the Core collection,
+a candy machine with hidden settings, the permanent-freeze plugin that makes it
+soulbound, and `collectible/setup.mjs` which created this one. What is missing
+is doing it per creator from the Launchpad rather than from a script on one
+laptop, and deciding who pays the rent for the collection and the candy machine.
+
+**3. The six Book The Fox services do not look evenly considered.**
+Bullet counts per service: consulting 7, X Space 6, Stream 4, Podcast 3, Custom
+3, MC 3. A buyer comparing them sees the $100 option looking better value than
+the $350 one, which is the opposite of what is wanted. The copy for Podcast,
+Custom and MC is yours to write — I am not inventing what you deliver.
+
+Also worth a decision: **MC or speaking is $1,000 with "travel included"**. A
+flight can cost more than the booking. Either a distance limit, or travel billed
+separately, or the price goes up.
+
+**4. The ten referral links.**
 `referrals.json` is an empty list, so the tab says "coming soon". Each entry
 needs `name`, `url`, a logo in `img/referrals/`, `what` the platform does and
 `youGet`. Fill the file and the notice is replaced by the real cards on its
 own — no code change, no deploy.
 
-**3. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
+**5. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
 
-**4. Gacha odds.** The page already commits to publishing them before anyone
+**6. Gacha odds.** The page already commits to publishing them before anyone
 spends. Worth settling what they are before it is built, not after — paid
 chance-based pulls are regulated as gambling in a fair few places and published
 odds are usually the floor.
