@@ -484,11 +484,27 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,defi,gacha,leaderboard,mine,moon,referrals,wishlist');
+    'links,cleanup,defi,leaderboard,gacha,mine,moon,referrals,wishlist');
 
   // The Launchpad is a page of its own rather than a tab, so it is a link in
   // the same menu and has no panel behind it.
   const lp = page.locator('#nav-launchpad');
+  // Named for what it is rather than for one part of it. The tab id stays
+  // `leaderboard` so a shared #leaderboard link still works.
+  eq('the points page is named Fox Points',
+    (await page.locator('.nav-item[data-tab="leaderboard"] .nav-item-name').textContent()).trim(), 'Fox Points');
+  ok('and its own heading agrees',
+    /Fox Points/.test(await page.textContent('#panel-leaderboard .section-label')));
+  ok('a link straight to #leaderboard still works', await page.evaluate(() => {
+    location.hash = '#leaderboard';
+    const el = document.querySelector('[data-tab="leaderboard"]');
+    switchTab('leaderboard', el);
+    const ok = document.getElementById('panel-leaderboard').classList.contains('active');
+    location.hash = '';
+    switchTab('links');
+    return ok;
+  }));
+
   eq('the Launchpad sits in the menu as a link out', await lp.getAttribute('href'), 'launch.html');
   eq('and does not stand out as the one underlined thing in it',
     await lp.evaluate((e) => getComputedStyle(e).textDecorationLine), 'none');

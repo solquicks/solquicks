@@ -505,6 +505,46 @@ it has been sent.
 
 ---
 
+## Before the hackathon submission — go through every feature
+
+The plan is to walk each feature the way the early ones were done: read what is
+on the page, check the numbers and the claims are right, and fix the
+presentation. Nothing here is broken; it is that several pages were written
+before their partners were known, and a judge reads the page, not the code.
+
+**1. Every coming-soon page should name the project powering it.**
+Four of the five say what the feature will do and nothing about who is behind
+it, which is the part that makes it credible rather than a wish:
+
+| Page | Partner | Copy today |
+|---|---|---|
+| Mine Bitcoin | **Sat Rush** — named | rates and terms still to come |
+| Wishlist | **sp3nd** — named | fine |
+| DeFi | not named | "which protocols is still being decided" |
+| Gacha | not named | machine contents, price and odds all undecided |
+| Referrals | n/a — outbound links | waiting on the ten links |
+| Creator Launchpad | **D3 / Doma** — named on the wizard, not the page | |
+
+So: for each of these, the partner's name, what the integration actually does,
+and where it is up to. Vague is worse than "not open yet" — a page that says
+who it is built with reads as a plan; one that says "still being decided" reads
+as an idea.
+
+**2. The ten referral links.**
+`referrals.json` is an empty list, so the tab says "coming soon". Each entry
+needs `name`, `url`, a logo in `img/referrals/`, `what` the platform does and
+`youGet`. Fill the file and the notice is replaced by the real cards on its
+own — no code change, no deploy.
+
+**3. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
+
+**4. Gacha odds.** The page already commits to publishing them before anyone
+spends. Worth settling what they are before it is built, not after — paid
+chance-based pulls are regulated as gambling in a fair few places and published
+odds are usually the floor.
+
+---
+
 ## Cloudflare Workers Builds fails on every pull request
 
 It passes on `main` and fails on every PR — #2, #3 and #4 all show
