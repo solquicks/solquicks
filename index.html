@@ -651,6 +651,15 @@
       font-size: 1.5rem; line-height: 1.2; margin-bottom: 10px;
     }
     .soon-what { color: var(--muted); font-size: 0.95rem; line-height: 1.6; margin: 0; }
+    .soon-with {
+      margin-top: 18px; padding-top: 14px; border-top: var(--line);
+      font-size: 0.8rem; font-weight: 800; color: var(--ink-soft);
+    }
+    .soon-with b { color: var(--ink); }
+    .soon-with span {
+      display: block; font-weight: 600; color: var(--muted);
+      font-size: 0.8rem; margin-top: 3px; line-height: 1.5;
+    }
     @media (max-width: 480px) {
       .soon { padding: 28px 18px; }
       .soon-lead { font-size: 1.3rem; }
@@ -3256,11 +3265,11 @@
       },
       {
         tab: 'mine', name: 'Mine Bitcoin', icon: '₿',
+        partner: { name: 'Sat Rush', what: 'Bitcoin mining you take part in by depositing, rather than by running hardware.' },
         note: 'Deposit USDC, earn Bitcoin',
         lead: 'Mine Bitcoin',
-        what: 'Deposit USDC and earn Bitcoin, powered by Sat Rush — no rig, no ' +
-          'electricity bill and nothing to plug in. The rates and the terms are ' +
-          'still being worked out.'
+        what: 'Deposit USDC and earn Bitcoin — no rig, no electricity bill and ' +
+          'nothing to plug in. The rates and the terms are still being worked out.'
       },
       {
         tab: 'gacha', name: 'Gacha', icon: '✹',
@@ -3271,21 +3280,44 @@
           'settled — and the odds will be written down before anyone spends anything.'
       },
       {
+        tab: 'travel', name: 'Travel', icon: '✈',
+        partner: { name: 'Nomadz', what: 'Travel booked on chain, for people who already live out of a wallet.' },
+        note: 'Book trips, powered by Nomadz',
+        lead: 'Travel',
+        what: 'Flights and stays booked straight from a wallet. What is bookable, ' +
+          'and on what terms, is still being worked out.'
+      },
+      {
+        tab: 'games', name: 'Games', icon: '◈',
+        note: 'Play, and win something worth having',
+        lead: 'Games',
+        what: 'Games worth your time, with something real to win. There are a lot ' +
+          'of projects worth building this with and which ones is still open.'
+      },
+      {
         tab: 'wishlist', name: 'Wishlist', icon: '✦',
+        partner: { name: 'sp3nd', what: 'Real-world checkout paid from a wallet, with no card in between.' },
         note: 'My Amazon wishlist, paid in crypto',
         lead: 'Wishlist',
-        what: 'My Amazon wishlist, powered by sp3nd — so anything on it can be sent ' +
-          'straight from a wallet, without a card or a checkout in between.'
+        what: 'My Amazon wishlist, so anything on it can be sent straight from a ' +
+          'wallet, without a card or a checkout in between.'
       }
     ];
 
     /// The one place a not-yet-open page is described, so all four look the
     /// same and none of them looks like a page that failed to load.
-    function soonHtml(lead, what) {
+    function soonHtml(lead, what, partner) {
       return '<div class="soon">' +
         '<div class="soon-tag">Coming soon</div>' +
         '<div class="soon-lead">' + escapeHtml(lead) + '</div>' +
         '<p class="soon-what">' + escapeHtml(what) + '</p>' +
+        // Named where there is a name. A page that says who it is being built
+        // with reads as a plan; the same page without it reads as a wish, and
+        // several of these had real partners going uncredited.
+        (partner
+          ? '<div class="soon-with">Built with <b>' + escapeHtml(partner.name) + '</b>' +
+            (partner.what ? '<span>' + escapeHtml(partner.what) + '</span>' : '') + '</div>'
+          : '') +
         '</div>';
     }
 
@@ -3317,7 +3349,7 @@
         const panel = document.createElement('div');
         panel.id = 'panel-' + page.tab;
         panel.className = 'panel';
-        panel.innerHTML = soonHtml(page.lead, page.what);
+        panel.innerHTML = soonHtml(page.lead, page.what, page.partner);
         after.parentNode.insertBefore(panel, after.nextSibling);
       }
       sortNavMenu();
@@ -3477,7 +3509,7 @@
     const TAB_NAMES = {
       swap: 'Swap', store: 'Store', book: 'Book', cleanup: 'Cleanup',
       gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals',
-      mine: 'Mine Bitcoin'
+      mine: 'Mine Bitcoin', travel: 'Travel', games: 'Games'
     };
     function tabName(tab) {
       return TAB_NAMES[tab] || tab;
@@ -8270,19 +8302,34 @@
     /// hand, so the first sale made them wrong; they now come from the shop. If the
     /// shop cannot be reached the typed ones stay, which is no worse than before.
     var storeLoaded = false;
+    /// Stock, from the shop that actually holds it.
+    ///
+    /// The numbers in the markup are a placeholder for the moment before this
+    /// answers, not a fallback. Leaving them up when the shop cannot be
+    /// reached tells somebody there are 93 left because that is what was typed
+    /// into the page — which may be months old, and may be a lie about a
+    /// product that has sold out.
+    function storeUnknown() {
+      document.getElementById('product-stock').textContent = 'stock unavailable';
+      document.getElementById('store-progress').textContent = '—';
+      document.getElementById('store-fill').style.width = '0';
+    }
+
     async function loadStore() {
       if (storeLoaded) return;
       try {
         const res = await fetch(POINTS_API + '/api/store');
         const d = await res.json();
         const p = d && d.product;
-        if (!p || !p.quantity) return;
+        if (!p || !p.quantity) { storeUnknown(); return; }
         storeLoaded = true;
         document.getElementById('product-stock').textContent = p.soldOut
           ? 'Sold out' : p.available + ' available';
         document.getElementById('store-progress').textContent = p.sold + ' / ' + p.quantity;
         document.getElementById('store-fill').style.width = Math.min(100, (p.sold / p.quantity) * 100) + '%';
-      } catch (e) { /* the typed numbers remain */ }
+      } catch (e) {
+        storeUnknown();
+      }
     }
 
     /// The artwork is dropped in at img/collectible.png. Until it is there,

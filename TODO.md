@@ -512,7 +512,10 @@ on the page, check the numbers and the claims are right, and fix the
 presentation. Nothing here is broken; it is that several pages were written
 before their partners were known, and a judge reads the page, not the code.
 
-**1. Every coming-soon page should name the project powering it.**
+**1. ~~Every coming-soon page should name the project powering it.~~** Done
+2026-10-01 — Sat Rush, Nomadz and sp3nd are credited on their own pages, D3 on
+the Launchpad. DeFi, Gacha and Games have nobody to name yet and correctly show
+no credit line rather than an empty one. The old table, for reference:
 Four of the five say what the feature will do and nothing about who is behind
 it, which is the part that makes it credible rather than a wish:
 

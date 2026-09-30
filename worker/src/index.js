@@ -1693,6 +1693,8 @@ const LAUNCH_FEATURES = [
   { id: 'wishlist',  name: 'Wishlist',  earns: true,  live: false, blurb: 'Your wishlist, paid straight from a wallet.' },
   { id: 'defi',      name: 'DeFi',      earns: true,  live: false, blurb: 'Lending and earning in the same wallet.' },
   { id: 'mine',      name: 'Mine Bitcoin', earns: true, live: false, blurb: 'Your audience deposits USDC and earns Bitcoin, powered by Sat Rush.' },
+  { id: 'travel',    name: 'Travel',    earns: true,  live: false, blurb: 'Flights and stays booked from a wallet, powered by Nomadz.' },
+  { id: 'games',     name: 'Games',     earns: true,  live: false, blurb: 'Games worth playing, with something real to win.' },
   { id: 'referrals', name: 'Referrals', earns: true,  live: false, blurb: 'Platforms you use, and what your audience gets for joining.' }
 ];
 const RDAP_DEFAULT = 'https://rdap.org/domain/';

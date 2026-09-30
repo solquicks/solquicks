@@ -499,7 +499,7 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,defi,leaderboard,gacha,mine,moon,referrals,wishlist');
+    'links,cleanup,defi,leaderboard,gacha,games,mine,moon,referrals,travel,wishlist');
 
   // The Launchpad is a page of its own rather than a tab, so it is a link in
   // the same menu and has no panel behind it.
@@ -590,6 +590,31 @@ try {
   eq('stock comes from the shop, not the page', (await page.textContent('#product-stock')).trim(), '88 available');
   eq('and so does the order count', (await page.textContent('#store-progress')).trim(), '12 / 100');
   eq('the bar matches', await page.evaluate(() => document.getElementById('store-fill').style.width), '12%');
+
+  // The numbers in the markup are a placeholder for the moment before the shop
+  // answers, not a fallback. Leaving them up when it cannot be reached tells
+  // somebody there is stock because that is what was typed into the page.
+  const outage = await page.evaluate(async () => {
+    storeLoaded = false;
+    const real = window.fetch;
+    window.fetch = (u, o) => /\/api\/store/.test(String(u)) ? Promise.reject(new Error('down')) : real(u, o);
+    await loadStore();
+    window.fetch = real;
+    return {
+      stock: document.getElementById('product-stock').textContent.trim(),
+      progress: document.getElementById('store-progress').textContent.trim(),
+      fill: document.getElementById('store-fill').style.width
+    };
+  });
+  eq('a shop that cannot be reached says so', outage.stock, 'stock unavailable');
+  ok('rather than a number somebody typed into the page months ago',
+    !/available|Sold out/.test(outage.progress) && outage.progress === '—', outage.progress);
+  eq('and the bar does not claim a figure either', outage.fill, '0px');
+
+  await page.evaluate(() => { storeLoaded = false; return loadStore(); });
+  await page.waitForFunction(() => /88 available/.test(document.getElementById('product-stock').textContent),
+    null, { timeout: 10000 });
+  ok('and it recovers when the shop comes back', true);
 
   section('the collectible: the mint instruction, byte for byte');
   {
@@ -1702,8 +1727,12 @@ try {
     // will be, or the tab is just a dead end with a nice border.
     for (const [tab, lead, mustSay] of [
       ['defi', 'DeFi', /same wallet you swap with/],
-      ['wishlist', 'Wishlist', /sp3nd/],
-      ['mine', 'Mine Bitcoin', /Sat Rush/],
+      ['wishlist', 'Wishlist', /without a card/],
+      ['mine', 'Mine Bitcoin', /no rig, no electricity bill/],
+      ['travel', 'Travel', /Flights and stays/],
+      // Deliberately generic: there are too many projects worth building this
+      // with to name one before it is decided.
+      ['games', 'Games', /still open/],
       // Money and chance in the same sentence: whatever the machine ends up
       // being, the page must not imply the odds are a surprise.
       ['gacha', 'Gacha', /odds will be written down before anyone spends/]
@@ -1719,6 +1748,24 @@ try {
       const what = await panel.locator('.soon-what').textContent();
       ok(tab + ': and explains it rather than leaving a blank page', mustSay.test(what), what);
       ok(tab + ': with nothing pretending to work', await panel.locator('button, input, a').count() === 0);
+    }
+
+    // A page that names who it is being built with reads as a plan. The same
+    // page without it reads as a wish — and three of these had real partners
+    // going uncredited.
+    for (const [tab, partner] of [['mine', 'Sat Rush'], ['travel', 'Nomadz'], ['wishlist', 'sp3nd']]) {
+      await page.evaluate((t) => switchTab(t), tab);
+      await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
+      const with_ = await page.textContent('#panel-' + tab + ' .soon-with');
+      ok(tab + ': credits ' + partner, new RegExp('Built with\\s+' + partner).test(with_.replace(/\s+/g, ' ')), with_);
+      eq(tab + ': and says it once, not twice',
+        (await page.textContent('#panel-' + tab + ' .soon-what')).includes(partner), false);
+    }
+
+    // The two with nobody to name yet must not grow an empty credit box.
+    for (const tab of ['defi', 'games']) {
+      await page.evaluate((t) => switchTab(t), tab);
+      eq(tab + ': has no partner line, having no partner', await page.locator('#panel-' + tab + ' .soon-with').count(), 0);
     }
 
     // The badge is how anyone reaches the Launchpad, and it is on every page
