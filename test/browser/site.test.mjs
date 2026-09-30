@@ -1399,17 +1399,27 @@ try {
     eq('the column is named after the ranking',
       (await fees.$$eval('#table-wrap thead th', (th) => th.map((e) => e.textContent.trim()))).pop(),
       'Busiest — 24h volume');
-    // The header and the rows are written separately, so waiting on the header
-    // and then reading the rows can catch the old order still in the table —
-    // which is what it did in CI while passing here. Wait for the rows to have
-    // actually changed, then look at them.
+    // Changing the ranking re-runs the whole check, which reads the chain. The
+    // header and the rows are written separately and the read takes a while,
+    // so both are waited for; and the menu is waited for too, because it is
+    // disabled while the read runs and a change made in that window used to be
+    // swallowed. CI is slow enough to land in exactly that window.
     const rowsNow = () => fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[1].textContent.trim()));
+    const ready = () => fees.waitForFunction(
+      () => !document.getElementById('rank').disabled && !document.getElementById('check').disabled,
+      null, { timeout: 30000 });
+    const rankBy = async (rank, heading, was) => {
+      await ready();
+      await fees.selectOption('#rank', rank);
+      await fees.waitForFunction(([h, w]) =>
+        new RegExp(h).test(document.querySelector('#table-wrap thead').textContent) &&
+        [...document.querySelectorAll('#table-wrap tbody tr')].map((tr) => tr.children[1].textContent.trim()).join(',') !== w,
+        [heading, was], { timeout: 30000 });
+      return rowsNow();
+    };
+
     const before = (await rowsNow()).join(',');
-    await fees.selectOption('#rank', 'mcap');
-    await fees.waitForFunction((was) => /Biggest/.test(document.querySelector('#table-wrap thead').textContent) &&
-      [...document.querySelectorAll('#table-wrap tbody tr')].map((tr) => tr.children[1].textContent.trim()).join(',') !== was,
-      before, { timeout: 30000 });
-    const byMcap = await rowsNow();
+    const byMcap = await rankBy('mcap', 'Biggest', before);
     // BONK and WIF are swapped here so they lead whatever the ranking. Of the
     // rest, USDC is the busiest by far and RAY barely trades, but RAY is
     // worth five thousand times more — so by market cap RAY must come first.
@@ -1418,13 +1428,21 @@ try {
     eq('and the figures shown are market caps',
       (await fees.$$eval('#table-wrap tbody tr', (trs) => trs.map((tr) => tr.children[5].textContent.trim())))[byMcap.indexOf('USDC')],
       '$1,000');
-    await fees.selectOption('#rank', 'volume');
-    await fees.waitForFunction((was) => /Busiest/.test(document.querySelector('#table-wrap thead').textContent) &&
-      [...document.querySelectorAll('#table-wrap tbody tr')].map((tr) => tr.children[1].textContent.trim()).join(',') !== was,
-      byMcap.join(','), { timeout: 30000 });
-    const byVol = await rowsNow();
+    const byVol = await rankBy('volume', 'Busiest', byMcap.join(','));
     ok('and switching back puts the busiest in front again',
       byVol.includes('RAY') && byVol.indexOf('USDC') < byVol.indexOf('RAY'), byVol.join(','));
+
+    // The menu cannot be changed while the read it started is still running.
+    // It used to stay live, and a change made then clicked a disabled button
+    // and did nothing — the ranking said one thing and the table showed
+    // another, with nothing on screen to say why.
+    await ready();
+    await fees.selectOption('#rank', 'mcap');
+    eq('the ranking is held while it is being applied',
+      await fees.evaluate(() => document.getElementById('rank').disabled), true);
+    await ready();
+    eq('and is offered again once the table has caught up',
+      await fees.evaluate(() => document.getElementById('rank').disabled), false);
 
     // Filling a rent budget: ticks the busiest that can be created, and a
     // token the program refuses must not eat a slot in the budget.

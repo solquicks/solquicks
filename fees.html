@@ -330,7 +330,13 @@
 
   document.getElementById('check').onclick = async function () {
     const btn = document.getElementById('check');
+    if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Reading…';
+    // A change of ranking re-runs this, and this button is disabled while it
+    // does. Leaving the menu live meant a second change during the first read
+    // clicked a disabled button and did nothing at all — the ranking said one
+    // thing and the table went on showing another, with nothing to say why.
+    document.getElementById('rank').disabled = true;
     try {
       const c = conn();
       await readRent(c);
@@ -445,10 +451,12 @@
       document.getElementById('none').disabled = !ticked;
       btn.textContent = 'Check again';
       btn.disabled = false;
+      document.getElementById('rank').disabled = false;
     } catch (e) {
       log('Check failed: ' + (e.message || e), 'bad');
       btn.textContent = 'Check what is missing';
       btn.disabled = false;
+      document.getElementById('rank').disabled = false;
     }
   };
 
