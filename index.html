@@ -3219,6 +3219,14 @@
           'protocols go in is still being decided.'
       },
       {
+        tab: 'mine', name: 'Mine Bitcoin', icon: '₿',
+        note: 'Deposit USDC, earn Bitcoin',
+        lead: 'Mine Bitcoin',
+        what: 'Deposit USDC and earn Bitcoin, powered by Sat Rush — no rig, no ' +
+          'electricity bill and nothing to plug in. The rates and the terms are ' +
+          'still being worked out.'
+      },
+      {
         tab: 'gacha', name: 'Gacha', icon: '✹',
         note: 'Pull the handle, see what comes out',
         lead: 'Gacha',
@@ -3342,18 +3350,52 @@
         handleEl.textContent = site.name;
       }
       document.getElementById('site-tagline').textContent = site.tagline || '';
-      if (/^https?:\/\//i.test(site.avatar || '')) {
+      if (/^https:\/\//i.test(site.avatar || '') ||
+          /^data:image\/(png|jpeg|webp);base64,/.test(site.avatar || '')) {
         const img = document.getElementById('site-avatar');
         img.src = site.avatar;
         img.alt = site.name;
       }
-      // Their own links are not collected yet, so the contact row is theirs to
-      // fill rather than mine to leave showing my Telegram.
+      // My Telegram and my email have no business on somebody else's site.
       document.getElementById('site-contact').hidden = true;
+
       const links = document.getElementById('panel-links');
-      if (links) links.innerHTML = '<p class="section-label">Find me on</p>' +
-        '<div class="soon"><div class="soon-lead">' + escapeHtml(site.name) + '</div>' +
-        '<p class="soon-what">' + escapeHtml(site.tagline || 'Links coming soon.') + '</p></div>';
+      const socials = site.socials || [];
+      if (links) {
+        links.innerHTML = '<p class="section-label">Find me on</p><div class="links-list"></div>';
+        const list = links.querySelector('.links-list');
+        if (!socials.length) {
+          list.outerHTML = '<div class="soon"><div class="soon-lead">' + escapeHtml(site.name) + '</div>' +
+            '<p class="soon-what">' + escapeHtml(site.tagline || 'Links coming soon.') + '</p></div>';
+        } else {
+          for (const soc of socials) {
+            // Built as elements rather than markup: every part of this came
+            // from what somebody typed into the Launchpad.
+            const a = document.createElement('a');
+            a.className = 'link-card';
+            a.href = soc.href;
+            if (soc.href.slice(0, 7) !== 'mailto:') {
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+            }
+            const icon = document.createElement('div');
+            icon.className = 'link-icon';
+            icon.textContent = (soc.name || '?')[0].toUpperCase();
+            icon.style.cssText = 'display:grid;place-items:center;font-weight:800;background:var(--cream)';
+            const info = document.createElement('div');
+            info.className = 'link-info';
+            const nm = document.createElement('div');
+            nm.className = 'link-name';
+            nm.textContent = soc.name;
+            const hd = document.createElement('div');
+            hd.className = 'link-handle';
+            hd.textContent = soc.label;
+            info.append(nm, hd);
+            a.append(icon, info);
+            list.appendChild(a);
+          }
+        }
+      }
 
       // The bar gets their three; the menu keeps Contact and adds the rest.
       const keep = site.topTabs.concat(site.moreTabs);
@@ -3398,7 +3440,8 @@
 
     const TAB_NAMES = {
       swap: 'Swap', store: 'Store', book: 'Book', cleanup: 'Cleanup',
-      gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals'
+      gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals',
+      mine: 'Mine Bitcoin'
     };
     function tabName(tab) {
       return TAB_NAMES[tab] || tab;

@@ -135,6 +135,12 @@
     .picked { font-size: 0.84rem; color: var(--muted); margin-top: 12px; line-height: 1.6; }
 
     /* ── wallet ── */
+    /* one row per platform, all of them always shown so nothing has to be
+       hunted for in a menu */
+    .soc-row { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: center; margin-bottom: 7px; }
+    .soc-row label { font-size: 0.82rem; font-weight: 800; color: var(--ink-soft); }
+    .soc-row input { font-size: 0.88rem; padding: 8px 11px; }
+
     .wallets { display: grid; gap: 8px; }
     .wallet-pick {
       display: flex; align-items: center; gap: 10px; cursor: pointer; font: inherit;
@@ -187,7 +193,11 @@
     .pv-body { padding: 4px 12px 14px; text-align: center; }
     .pv-avatar {
       width: 58px; height: 58px; border-radius: 50%; border: var(--line);
-      margin: 6px auto 8px; display: block; object-fit: cover; background: var(--cream);
+      margin: 6px auto 8px; display: block; object-fit: cover;
+      /* The page colour, not the card colour: a picture with a transparent or
+         pale background should sit on the site rather than on a disc of a
+         different shade. */
+      background: var(--bg);
     }
     .pv-avatar-fallback { display: grid; place-items: center; font-family: 'Baloo 2', sans-serif;
       font-weight: 800; font-size: 1.5rem; color: var(--muted); }
@@ -272,8 +282,22 @@
         <p class="step-sub">This is the top of your site. Watch it appear on the right as you type.</p>
         <label class="fld"><span>Name</span><input type="text" id="f-name" maxlength="60" placeholder="Your name or project"/></label>
         <label class="fld"><span>Handle</span><input type="text" id="f-handle" maxlength="40" placeholder="@you"/></label>
-        <label class="fld"><span>Tagline</span><input type="text" id="f-tagline" maxlength="140" placeholder="What you do, in a line"/></label>
-        <label class="fld"><span>Avatar URL</span><input type="text" id="f-avatar" maxlength="400" placeholder="https://…" spellcheck="false"/></label>
+        <label class="fld"><span>Bio</span><input type="text" id="f-tagline" maxlength="300" placeholder="What you do, in a line or two"/></label>
+        <label class="fld">
+          <span>Picture</span>
+          <div class="row">
+            <input type="text" id="f-avatar" maxlength="400" placeholder="https://… or upload one" spellcheck="false"/>
+            <button class="go ghost" style="flex:0 0 auto" onclick="document.getElementById('f-file').click()">Upload</button>
+          </div>
+          <input type="file" id="f-file" accept="image/png,image/jpeg,image/webp" hidden/>
+        </label>
+        <div class="msg" id="avatar-msg"></div>
+
+        <div class="step-title" style="font-size:1rem;margin-top:18px">Where to find you</div>
+        <p class="step-sub" style="margin-left:0">These go on your contact page, which is where anyone
+           landing on your site starts. Put in your handle — the link is built for you.</p>
+        <div id="socials"></div>
+
         <div class="actions"><button class="go" id="brand-go" onclick="toStep('feats')">Next</button></div>
         <div class="msg" id="brand-msg"></div>
       </div>
@@ -375,11 +399,7 @@
           <div class="pv-name" id="pv-name">Your name</div>
           <div class="pv-handle" id="pv-handle">@you</div>
           <div class="pv-tagline" id="pv-tagline">What you do, in a line</div>
-          <div class="pv-links">
-            <span class="pv-link"><i></i> X (Twitter)</span>
-            <span class="pv-link"><i></i> YouTube</span>
-            <span class="pv-link"><i></i> Discord</span>
-          </div>
+          <div class="pv-links" id="pv-links"></div>
         </div>
         <div class="pv-foot">
           <span class="pv-badge">
@@ -404,10 +424,12 @@
   // Everything the creator has chosen so far. One object so the preview and
   // the launch call can never disagree about what is being built.
   const draft = {
-    code: null, name: '', handle: '', tagline: '', avatar: '',
+    code: null, name: '', handle: '', tagline: '', avatar: '', socials: {},
     picked: [], wallet: null, slug: '', domain: '', slugOk: false, domainOk: false
   };
   let FEATURES = [];
+  let SOCIALS = [];
+  let AVATAR_MAX = 400000;
   let ROOT = 'solquicks.com';
   let USDC_MAX = 50, PLATFORM = 1;
 
@@ -481,6 +503,73 @@
         if (key === 'name' && !draft.slug) $('f-slug').placeholder = slugify(this.value) || 'yourname';
         paintPreview();
       });
+    }
+  }
+
+  // ── the links on their contact page ────────────────────────────────────
+  function paintSocials() {
+    document.getElementById('socials').innerHTML = SOCIALS.map(function (p) {
+      return '<div class="soc-row"><label for="soc-' + esc(p.id) + '">' + esc(p.name) + '</label>' +
+        '<input type="text" id="soc-' + esc(p.id) + '" data-soc="' + esc(p.id) + '" ' +
+        'maxlength="200" spellcheck="false" placeholder="' + esc(p.hint) + '"/></div>';
+    }).join('');
+    document.getElementById('socials').addEventListener('input', function (ev) {
+      const el = ev.target.closest('[data-soc]');
+      if (!el) return;
+      const v = el.value.trim();
+      if (v) draft.socials[el.dataset.soc] = v; else delete draft.socials[el.dataset.soc];
+      paintPreview();
+    });
+  }
+
+  const socialList = () => Object.keys(draft.socials).map((id) => ({ id: id, value: draft.socials[id] }));
+  const socialName = (id) => (SOCIALS.find((p) => p.id === id) || { name: id }).name;
+
+  // ── a picture they upload ──────────────────────────────────────────────
+  // Resized here rather than sent whole. A phone photo is several megabytes
+  // and a 256px square is all the page ever shows, so shrinking it first is
+  // the difference between this working and timing out on mobile data.
+  function readPicture(file) {
+    return new Promise(function (resolve, reject) {
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+        reject(new Error('pictures only — PNG, JPEG or WebP'));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onerror = function () { reject(new Error('could not read that file')); };
+      reader.onload = function () {
+        const img = new Image();
+        img.onerror = function () { reject(new Error('that file is not a picture')); };
+        img.onload = function () {
+          const size = 256;
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          // Cropped square from the middle, which is how it is shown.
+          const side = Math.min(img.width, img.height);
+          ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+          // Re-encoded by the canvas, so whatever was in the original file —
+          // metadata, a payload dressed as an image — does not come with it.
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function pickPicture(file) {
+    note('avatar-msg', 'Reading…', '');
+    try {
+      const data = await readPicture(file);
+      if (data.length > AVATAR_MAX) throw new Error('that picture is too big even once shrunk');
+      draft.avatar = data;
+      document.getElementById('f-avatar').value = '';
+      document.getElementById('f-avatar').placeholder = 'Uploaded ✓';
+      note('avatar-msg', 'Picture ready.', 'ok');
+      paintPreview();
+    } catch (e) {
+      note('avatar-msg', (e && e.message) || 'That did not work.', 'bad');
     }
   }
 
@@ -709,6 +798,7 @@
       body: JSON.stringify({
         code: draft.code, slug: draft.slug, wallet: draft.wallet, name: draft.name,
         handle: draft.handle, tagline: draft.tagline, avatar: draft.avatar,
+        socials: socialList(),
         topTabs: draft.picked.slice(0, 3), moreTabs: draft.picked.slice(3),
         domain: draft.domain || null
       })
@@ -739,13 +829,18 @@
     const src = draft.avatar.trim();
     // Only ever an image over http(s): a data: or javascript: URL typed in here
     // has no business being loaded by this page.
-    if (/^https?:\/\//i.test(src)) {
+    if (/^https?:\/\//i.test(src) || /^data:image\/(png|jpeg|webp);base64,/.test(src)) {
       img.src = src; img.hidden = false; fb.hidden = true;
       img.onerror = function () { img.hidden = true; fb.hidden = false; };
     } else {
       img.hidden = true; fb.hidden = false;
       fb.textContent = (draft.name.trim()[0] || '?').toUpperCase();
     }
+
+    const socials = socialList();
+    $('pv-links').innerHTML = socials.length
+      ? socials.map((s) => '<span class="pv-link"><i></i> ' + esc(socialName(s.id)) + '</span>').join('')
+      : '<span class="pv-link" style="opacity:.45"><i></i> your links</span>';
 
     $('pv-tabs').innerHTML = draft.picked.slice(0, 3)
       .map((id, i) => '<span class="pv-tab' + (i === 1 ? ' first' : '') + '">' + esc(nameOf(id)) + '</span>')
@@ -759,10 +854,13 @@
   (async function start() {
     const r = await api('/api/launch/features');
     FEATURES = (r.body && r.body.features) || [];
+    SOCIALS = (r.body && r.body.socials) || [];
+    AVATAR_MAX = (r.body && r.body.avatarMaxBytes) || AVATAR_MAX;
     ROOT = (r.body && r.body.root) || ROOT;
     USDC_MAX = (r.body && r.body.usdcMaxPct) || USDC_MAX;
     PLATFORM = (r.body && r.body.platformPct) || PLATFORM;
     paintEarns();
+    paintSocials();
     paintFeats();
     paintSplit();
     paintPreview();
@@ -772,6 +870,7 @@
   bindAddress();
   $('feats').addEventListener('click', featClick);
   $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkCode(); });
+  $('f-file').addEventListener('change', function () { if (this.files[0]) pickPicture(this.files[0]); });
   findWallets();
 </script>
 </body>

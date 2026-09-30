@@ -1685,6 +1685,7 @@ const LAUNCH_FEATURES = [
   { id: 'gacha',     name: 'Gacha',     earns: true,  live: false, blurb: 'Pulls for something from your collection.' },
   { id: 'wishlist',  name: 'Wishlist',  earns: true,  live: false, blurb: 'Your wishlist, paid straight from a wallet.' },
   { id: 'defi',      name: 'DeFi',      earns: true,  live: false, blurb: 'Lending and earning in the same wallet.' },
+  { id: 'mine',      name: 'Mine Bitcoin', earns: true, live: false, blurb: 'Your audience deposits USDC and earns Bitcoin, powered by Sat Rush.' },
   { id: 'referrals', name: 'Referrals', earns: true,  live: false, blurb: 'Platforms you use, and what your audience gets for joining.' }
 ];
 const RDAP_DEFAULT = 'https://rdap.org/domain/';
@@ -1713,7 +1714,11 @@ function cleanSocials(raw) {
   for (const item of raw.slice(0, LAUNCH_SOCIALS.length)) {
     const def = LAUNCH_SOCIALS.find(function (x) { return x.id === (item && item.id); });
     if (!def) continue;
-    const value = String((item && item.value) || '').trim().slice(0, 200);
+    // `value` is what a creator typed; `label` is what was stored from it.
+    // Both are read so a stored row can be put back through this on the way
+    // out, which is the only way a platform removed from the list stops
+    // rendering on sites that already chose it.
+    const value = String((item && (item.value !== undefined ? item.value : item.label)) || '').trim().slice(0, 200);
     if (!value) continue;
     if (out.some(function (o) { return o.id === def.id; })) continue;   // one each
     let href;
@@ -4141,6 +4146,11 @@ export default {
         const usdc = Math.max(0, Math.min(LAUNCH_USDC_MAX_PCT, Number(body.usdcPct) || LAUNCH_USDC_MAX_PCT));
         const token = 100 - LAUNCH_PLATFORM_PCT - usdc;
 
+        const avatar = String(body.avatar || '').trim();
+        const badAvatar = avatarProblem(avatar);
+        if (badAvatar) return json(request, env, { error: badAvatar }, 400);
+        const socials = cleanSocials(body.socials);
+
         const domain = body.domain ? String(body.domain).trim().toLowerCase() : null;
 
         // The invite is spent in the same statement that checks it, so two
@@ -4151,15 +4161,17 @@ export default {
         if (spent.meta.changes !== 1) return json(request, env, { error: 'that code is not valid' }, 403);
 
         const made = await env.DB.prepare(
-          'INSERT INTO sites (slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, domain, ' +
+          'INSERT INTO sites (slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, socials, domain, ' +
           'invite_code, usdc_pct, token_pct, platform_pct, created_at) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING'
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING'
         ).bind(
           slug, wallet, name,
           String(body.handle || '').trim().slice(0, 40) || null,
-          String(body.tagline || '').trim().slice(0, 140) || null,
-          String(body.avatar || '').trim().slice(0, 400) || null,
-          JSON.stringify(top), JSON.stringify(more), domain, code,
+          // The bio. Longer than a tagline because it is the only prose on
+          // their contact page.
+          String(body.tagline || '').trim().slice(0, 300) || null,
+          avatar || null,
+          JSON.stringify(top), JSON.stringify(more), JSON.stringify(socials), domain, code,
           usdc, token, LAUNCH_PLATFORM_PCT, Date.now()
         ).run();
         if (made.meta.changes !== 1) {
@@ -4184,7 +4196,7 @@ export default {
         const slug = String(url.searchParams.get('slug') || '').trim().toLowerCase();
         if (!slug) return json(request, env, { site: null });
         const row = await env.DB.prepare(
-          "SELECT slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, domain FROM sites " +
+          "SELECT slug, wallet, name, handle, tagline, avatar, top_tabs, more_tabs, socials, domain FROM sites " +
           "WHERE slug = ? AND status = 'live'"
         ).bind(slug).first();
         if (!row) return json(request, env, { site: null });
@@ -4195,7 +4207,10 @@ export default {
             // Where this site's money goes. Public because it is the address
             // customers are about to be asked to pay.
             treasury: row.wallet,
-            topTabs: JSON.parse(row.top_tabs), moreTabs: JSON.parse(row.more_tabs)
+            topTabs: JSON.parse(row.top_tabs), moreTabs: JSON.parse(row.more_tabs),
+            // Re-cleaned on the way out as well as in. A row written before a
+            // platform was removed from the list should not still render one.
+            socials: cleanSocials(JSON.parse(row.socials || '[]'))
           }
         });
       }
@@ -4203,6 +4218,8 @@ export default {
       if (path === '/api/launch/features' && request.method === 'GET') {
         return json(request, env, {
           features: LAUNCH_FEATURES,
+          socials: LAUNCH_SOCIALS,
+          avatarMaxBytes: AVATAR_MAX_BYTES,
           usdcMaxPct: LAUNCH_USDC_MAX_PCT,
           platformPct: LAUNCH_PLATFORM_PCT,
           root: env.LAUNCH_ROOT || 'solquicks.com'

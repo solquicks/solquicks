@@ -201,6 +201,10 @@ CREATE TABLE IF NOT EXISTS sites (
   avatar TEXT,
   top_tabs TEXT NOT NULL,
   more_tabs TEXT NOT NULL,
+  -- The links on their contact page, as [{id, name, label, href}]. Built from
+  -- what they typed rather than stored as typed, so the page never has to
+  -- decide what a handle means.
+  socials TEXT NOT NULL DEFAULT '[]',
   domain TEXT,
   invite_code TEXT NOT NULL,
   usdc_pct INTEGER NOT NULL,

@@ -167,6 +167,10 @@ function workerAnswer(p, url) {
     return slug === 'ripple' ? { site: {
       slug: 'ripple', name: 'Ripple', handle: '@ripple', tagline: 'Making waves',
       avatar: 'https://img.test/ripple.png', domain: 'ripple.io',
+      socials: [
+        { id: 'x', name: 'X (Twitter)', label: '@ripple', href: 'https://x.com/ripple' },
+        { id: 'email', name: 'Email', label: 'hi@ripple.io', href: 'mailto:hi@ripple.io' }
+      ],
       treasury: '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey',
       topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup']
     } } : { site: null };
@@ -480,7 +484,7 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,defi,gacha,leaderboard,moon,referrals,wishlist');
+    'links,cleanup,defi,gacha,leaderboard,mine,moon,referrals,wishlist');
 
   // The Launchpad is a page of its own rather than a tab, so it is a link in
   // the same menu and has no panel behind it.
@@ -1593,6 +1597,7 @@ try {
     for (const [tab, lead, mustSay] of [
       ['defi', 'DeFi', /same wallet you swap with/],
       ['wishlist', 'Wishlist', /sp3nd/],
+      ['mine', 'Mine Bitcoin', /Sat Rush/],
       // Money and chance in the same sentence: whatever the machine ends up
       // being, the page must not imply the odds are a surprise.
       ['gacha', 'Gacha', /odds will be written down before anyone spends/]
@@ -1816,6 +1821,22 @@ try {
     ok('my contact buttons are gone', await page.locator('#site-contact').isVisible() === false);
     ok('and my name is nowhere on the page',
       !/solquicks/i.test(await page.textContent('#panel-links')), await page.textContent('#panel-links'));
+
+    // Their contact page is where anyone landing on the site starts, so the
+    // links they gave have to actually be there, and be links.
+    const socials = await page.$$eval('#panel-links .link-card', (els) => els.map((e) => ({
+      href: e.getAttribute('href'),
+      name: e.querySelector('.link-name').textContent.trim(),
+      label: e.querySelector('.link-handle').textContent.trim(),
+      rel: e.getAttribute('rel') || ''
+    })));
+    eq('the links they gave are on their contact page', socials.length, 2);
+    eq('a handle became a link to the platform', socials[0].href, 'https://x.com/ripple');
+    eq('named as the platform', socials[0].name, 'X (Twitter)');
+    eq('and showing what they typed', socials[0].label, '@ripple');
+    ok('opened without handing over the referrer', /noopener/.test(socials[0].rel), socials[0].rel);
+    eq('an email is a mailto', socials[1].href, 'mailto:hi@ripple.io');
+    ok('and is not opened in a new tab', socials[1].rel === '', socials[1].rel);
 
     eq('the three they picked are in the bar',
       (await page.$$eval('.nav-quick-btn', (els) => els.map((e) => e.textContent.trim()))).join(','),

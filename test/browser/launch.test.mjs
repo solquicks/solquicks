@@ -51,9 +51,18 @@ const FEATURES = [
   { id: 'referrals', name: 'Referrals', earns: true, live: false, blurb: 'Platforms you use.' }
 ];
 
+const SOCIALS = [
+  { id: 'x', name: 'X (Twitter)', hint: 'yourhandle', url: 'https://x.com/' },
+  { id: 'youtube', name: 'YouTube', hint: '@yourchannel', url: 'https://youtube.com/' },
+  { id: 'discord', name: 'Discord', hint: 'invite code', url: 'https://discord.gg/' },
+  { id: 'website', name: 'Website', hint: 'https://…', url: '' },
+  { id: 'email', name: 'Email', hint: 'you@example.com', url: 'mailto:' }
+];
+
 function answer(p, url, body) {
   if (p === '/api/launch/features') {
-    return { features: FEATURES, root: 'solquicks.com', usdcMaxPct: 50, platformPct: 1 };
+    return { features: FEATURES, socials: SOCIALS, avatarMaxBytes: 400000,
+      root: 'solquicks.com', usdcMaxPct: 50, platformPct: 1 };
   }
   if (p === '/api/launch/invite') {
     const code = String((body && body.code) || '').toUpperCase();
@@ -174,6 +183,69 @@ try {
   await page.fill('#f-avatar', SITE + 'avatar.png');
   await page.waitForFunction(() => !document.getElementById('pv-avatar').hidden, null, { timeout: 10000 });
   ok('a real image is shown', await page.locator('#pv-avatar').isVisible());
+
+  section('the bio, the picture and the links');
+  {
+    await page.fill('#f-tagline', 'Making waves since 2019');
+    eq('a bio longer than a tagline is allowed',
+      await page.evaluate(() => document.getElementById('f-tagline').maxLength), 300);
+    eq('and shows in the preview', await pv.tagline(), 'Making waves since 2019');
+
+    // Every platform has its own row, so nothing has to be hunted for.
+    eq('every platform gets a row', await page.locator('#socials .soc-row').count(), SOCIALS.length);
+    eq('nothing is in the preview until something is typed',
+      (await page.$$eval('#pv-links .pv-link', (e) => e.map((x) => x.textContent.trim())))[0], 'your links');
+
+    await page.fill('#soc-x', '@ripple');
+    await page.fill('#soc-email', 'hi@ripple.io');
+    eq('a link typed in appears in the preview',
+      (await page.$$eval('#pv-links .pv-link', (e) => e.map((x) => x.textContent.trim()))).join(','),
+      'X (Twitter),Email');
+    await page.fill('#soc-email', '');
+    eq('and clearing one takes it away again',
+      (await page.$$eval('#pv-links .pv-link', (e) => e.map((x) => x.textContent.trim()))).join(','),
+      'X (Twitter)');
+    await page.fill('#soc-email', 'hi@ripple.io');
+
+    // A picture off a phone is megabytes; the page shows a 256px square. It is
+    // shrunk here so that uploading one is not a minute of waiting.
+    const big = await page.evaluate(async () => {
+      const c = document.createElement('canvas');
+      c.width = 1200; c.height = 800;
+      const x = c.getContext('2d');
+      x.fillStyle = '#F0821E'; x.fillRect(0, 0, 1200, 800);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+      return { size: blob.size, data: await new Promise((r) => {
+        const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob);
+      }) };
+    });
+    ok('the picture under test is a real one', big.size > 2000, String(big.size));
+
+    await page.setInputFiles('#f-file', {
+      name: 'me.png', mimeType: 'image/png',
+      buffer: Buffer.from(big.data.split(',')[1], 'base64')
+    });
+    await page.waitForFunction(() => /ready/i.test(document.getElementById('avatar-msg').textContent),
+      null, { timeout: 15000 });
+
+    const pic = await page.evaluate(() => ({
+      stored: draft.avatar.slice(0, 22), bytes: draft.avatar.length,
+      shown: document.getElementById('pv-avatar').src.slice(0, 22),
+      visible: !document.getElementById('pv-avatar').hidden
+    }));
+    eq('an uploaded picture is stored as a picture', pic.stored, 'data:image/png;base64,');
+    ok('shrunk on the way in rather than sent whole', pic.bytes < big.data.length, pic.bytes + ' vs ' + big.data.length);
+    ok('and it shows in the preview', pic.visible && pic.shown === 'data:image/png;base64,');
+
+    // The avatar sits on the page colour, not the card colour, so a picture
+    // with a pale or transparent background does not sit on a disc of a
+    // different shade.
+    const bg = await page.evaluate(() => {
+      const pv = getComputedStyle(document.querySelector('.pv-frame')).backgroundColor;
+      return { avatar: getComputedStyle(document.getElementById('pv-avatar')).backgroundColor, frame: pv };
+    });
+    eq('the picture sits on the same colour as the site behind it', bg.avatar, bg.frame);
+  }
 
   section('a name is not optional');
   await page.fill('#f-name', '');
@@ -298,6 +370,10 @@ try {
   await page.waitForSelector('#s-done:not([hidden])', { timeout: 10000 });
 
   eq('the site is made with the name they chose', net.created.name, 'Ripple');
+  eq('with the bio they wrote', net.created.tagline, 'Making waves since 2019');
+  eq('the links they gave', net.created.socials.map((s) => s.id + '=' + s.value).join(','),
+    'x=@ripple,email=hi@ripple.io');
+  eq('and the picture they uploaded', net.created.avatar.slice(0, 22), 'data:image/png;base64,');
   eq('at the address they chose', net.created.slug, 'ripple');
   eq('paying into the wallet they connected', net.created.wallet, WALLET);
   eq('with three in the bar', net.created.topTabs.join(','), 'swap,store,book');

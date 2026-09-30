@@ -32,6 +32,7 @@ const domain = (env, n) => call(env, 'GET', '/api/launch/domain?name=' + encodeU
 const good = {
   code: 'FOX-ALPHA', slug: 'ripple', wallet: CREATOR, name: 'Ripple',
   handle: '@ripple', tagline: 'Making waves', avatar: 'https://img.test/r.png',
+  socials: [{ id: 'x', value: '@ripple' }, { id: 'email', value: 'hi@ripple.io' }],
   topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup', 'gacha'], domain: 'ripple.io'
 };
 const create = (env, body) => call(env, 'POST', '/api/launch/create', { body: Object.assign({}, good, body) });
@@ -288,6 +289,75 @@ section('a basket cannot mix two sites');
   });
   eq('two from the same site is fine', same.status, 200);
   eq('and the whole basket is owed to that site', same.body.payTo, CREATOR);
+}
+
+section('the links on a creator\'s contact page');
+{
+  const env = freshEnv();
+  await create(env, {});
+  const socials = (await call(env, 'GET', '/api/site?slug=ripple')).body.site.socials;
+
+  eq('the ones they gave are there', socials.length, 2);
+  eq('a handle becomes a link to the platform',
+    socials.find((s) => s.id === 'x').href, 'https://x.com/ripple');
+  eq('shown as they typed it', socials.find((s) => s.id === 'x').label, '@ripple');
+  eq('and an email becomes a mailto', socials.find((s) => s.id === 'email').href, 'mailto:hi@ripple.io');
+
+  // What a creator types goes into a URL, so anything that is not a handle is
+  // dropped rather than pasted into one.
+  const env2 = freshEnv();
+  await create(env2, { slug: 'probe', socials: [
+    { id: 'x', value: '../../evil' },
+    { id: 'youtube', value: 'a b c' },                   // a space is not a handle
+    { id: 'website', value: 'javascript:alert(1)' },     // not https
+    { id: 'website', value: 'http://insecure.test' },    // not https either
+    { id: 'email', value: 'not-an-email' },
+    { id: 'mainframe', value: 'whatever' },              // not a platform at all
+    { id: 'telegram', value: '' }                        // nothing typed
+  ] });
+  const probed = (await call(env2, 'GET', '/api/site?slug=probe')).body.site.socials;
+  eq('every bad one is dropped', probed.length, 0, JSON.stringify(probed));
+
+  // One entry per platform: a second is ignored rather than shown twice.
+  const env4 = freshEnv();
+  await create(env4, { slug: 'twice', socials: [{ id: 'x', value: 'first' }, { id: 'x', value: 'second' }] });
+  const twice = (await call(env4, 'GET', '/api/site?slug=twice')).body.site.socials;
+  eq('a platform given twice appears once', twice.length, 1);
+  eq('and it is the first one', twice[0].href, 'https://x.com/first');
+
+  const env3 = freshEnv();
+  await create(env3, { slug: 'fine', socials: [
+    { id: 'x', value: 'ripple' }, { id: 'discord', value: 'aBc123' },
+    { id: 'website', value: 'https://ripple.io' }
+  ] });
+  const fine = (await call(env3, 'GET', '/api/site?slug=fine')).body.site.socials;
+  eq('good ones survive', fine.length, 3);
+  eq('a bare handle works as well as an @ one', fine[0].href, 'https://x.com/ripple');
+  eq('an https site is taken as typed', fine[2].href, 'https://ripple.io');
+  ok('and every link is http(s) or mailto, never anything else',
+    fine.every((f) => /^(https:\/\/|mailto:)/.test(f.href)), JSON.stringify(fine));
+}
+
+section('the picture');
+{
+  const png = 'data:image/png;base64,' + 'A'.repeat(200);
+  let n = 0;
+  const status = async (avatar) =>
+    (await create(freshEnv(), { slug: 'pic' + (++n), avatar: avatar })).status;
+
+  eq('an https link is fine', await status('https://img.test/a.png'), 200);
+  eq('a picture the browser made is fine', await status(png), 200);
+  eq('and none at all is fine', await status(''), 200);
+
+  eq('http is refused', await status('http://img.test/a.png'), 400);
+  eq('so is javascript:', await status('javascript:alert(1)'), 400);
+  // An SVG is a document that can carry script, not just an image.
+  eq('and an SVG, which is a document rather than a picture',
+    await status('data:image/svg+xml;base64,PHN2Zy8+'), 400);
+  eq('anything dressed as a picture is refused',
+    await status('data:text/html;base64,PHNjcmlwdD4='), 400);
+  eq('and one too big to be a resized square',
+    await status('data:image/png;base64,' + 'A'.repeat(500000)), 400);
 }
 
 finish();
