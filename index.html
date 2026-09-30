@@ -6335,11 +6335,23 @@
         const days = Math.floor(left / 86400000), hours = Math.floor(left / 3600000) % 24;
         document.getElementById('sw-board-ends').textContent = '· ends in ' + (days ? days + 'd ' : '') + hours + 'h';
         const place = ['1st', '2nd', '3rd'];
+        // The unit goes first. "1st 500 · 2nd 250 · 3rd 100 Fox Points" reads
+        // as money for as long as it takes to reach the last two words, and
+        // beside a column of dollar amounts that is long enough to mislead.
         document.getElementById('sw-board-prizes').textContent =
-          d.prizes.map(function (p, i) { return place[i] + ' ' + p.toLocaleString(); }).join(' · ') +
-          ' Fox Points · at least $' + d.minUsd + ' to place';
+          'Fox Points: ' + d.prizes.map(function (p, i) { return place[i] + ' ' + p.toLocaleString(); }).join(' · ') +
+          ' · at least $' + d.minUsd + ' of swaps to place';
         const list = document.getElementById('sw-board-list');
-        list.innerHTML = d.top.length ? d.top.map(function (r) {
+        // A board of one or two names reads as nobody is here — and worse, the
+        // one name is usually mine, which reads as nobody but me. The same
+        // treatment the staking board already has: say the number instead, and
+        // open the list once there is a race worth showing.
+        const RACE_NEEDS = 3;
+        list.innerHTML = d.top.length && d.top.length < RACE_NEEDS
+          ? '<div class="sw-empty">' + d.top.length + ' wallet' + (d.top.length === 1 ? '' : 's') +
+            ' swapping this week. The board opens up once a few more join — ' +
+            '$' + d.minUsd + ' is all it takes to place.</div>'
+          : d.top.length ? d.top.map(function (r) {
           const me = Wallet.pubkey && r.wallet === Wallet.pubkey;
           return '<div class="sw-hrow' + (me ? ' sw-board-me' : '') + '"><div>' +
             '<div class="sw-hpair"><span class="sw-board-rank">' + r.rank + '</span>' +
@@ -6350,7 +6362,9 @@
             (r.rank <= d.prizes.length && r.usd >= d.minUsd ? '<span class="sw-hpts">+' + d.prizes[r.rank - 1].toLocaleString() + ' pts</span>' : '') +
             '</div></div>';
         }).join('') : '<div class="sw-empty">No swaps yet this week. First place is open.</div>';
-        document.getElementById('sw-board-last').textContent = d.lastWeek.length
+        // Last week's winners are only worth naming if last week was a race.
+        // One name here is the same problem as one name above.
+        document.getElementById('sw-board-last').textContent = d.lastWeek.length >= RACE_NEEDS
           ? 'Last week: ' + d.lastWeek.map(function (r) { return place[r.rank - 1] + ' ' + r.wallet.slice(0, 4) + '…' + r.wallet.slice(-4); }).join(', ')
           : '';
         box.hidden = false;

@@ -59,7 +59,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
-  quoteFail: 0, siteDelay: 0,
+  quoteFail: 0, siteDelay: 0, boardThin: true,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
@@ -108,6 +108,20 @@ function workerAnswer(p, url) {
     { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
   ] };
   if (p === '/api/swap/holdings') return { wallet: WALLET, tokens: HOLDINGS, totalUsd: 262, more: 0 };
+  if (p === '/api/swap/leaderboard') {
+    const many = [
+      { rank: 1, wallet: WALLET, usd: 328.53, swaps: 2, tier: 'ranger' },
+      { rank: 2, wallet: 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp', usd: 210, swaps: 4, tier: null },
+      { rank: 3, wallet: '7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL', usd: 90, swaps: 1, tier: 'collectible' }
+    ];
+    return {
+      weekStart: Date.now() - 3 * 86400000, weekEnd: Date.now() + 4 * 86400000,
+      prizes: [500, 250, 100], minUsd: 25,
+      top: net.boardThin ? many.slice(0, 1) : many,
+      lastWeek: net.boardThin ? [{ rank: 1, wallet: WALLET }]
+        : many.map((r) => ({ rank: r.rank, wallet: r.wallet }))
+    };
+  }
   // a pair with no fee account on either side: the fee is a SOL payment
   if (p === '/api/swap/quote' && url.searchParams.get('in') === BONK) return {
     quote: {
@@ -449,6 +463,7 @@ const page = await context.newPage();
 // the page, which is where loadInvite runs.
 await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
 await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
+await page.exposeFunction('net_boardThin', (v) => { net.boardThin = v; return v; });
 await page.exposeFunction('net_invite', () => net.invite);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -992,6 +1007,42 @@ try {
   eq('the route is shown', (await page.textContent('#sw-route')).trim(), 'Meteora DLMM');
   ok('Auto slippage shows the value the server picked', /Auto · 0\.5%/.test(await page.textContent('#sw-slip-auto')));
   ok('the swap button is ready', /Swap SOL for USDC/.test(await page.textContent('#sw-go')));
+
+  section('swap: a leaderboard of one says so instead of naming me');
+  {
+    // The board is on my own site with my own wallet on it. One name reads as
+    // nobody is here — and the one name being mine reads as nobody but me,
+    // which is worse. The staking board already solved this; this one had not.
+    await page.evaluate(() => loadSwapLeaderboard());
+    await page.waitForSelector('#sw-board:not([hidden])', { timeout: 10000 });
+
+    const thin = await page.evaluate(() => ({
+      list: document.getElementById('sw-board-list').textContent.replace(/\s+/g, ' ').trim(),
+      last: document.getElementById('sw-board-last').textContent.trim(),
+      prizes: document.getElementById('sw-board-prizes').textContent.trim()
+    }));
+    ok('one swapper is reported as a count', /1 wallet swapping this week/.test(thin.list), thin.list);
+    ok('and nobody is named', !/…/.test(thin.list), thin.list);
+    ok('with what it takes to join them', /\$25/.test(thin.list), thin.list);
+    eq('last week is not named either, for the same reason', thin.last, '');
+
+    // "1st 500 · 2nd 250 · 3rd 100 Fox Points" reads as money right up to the
+    // last two words, next to a column of real dollar amounts.
+    ok('the prizes say what they are before they say how much',
+      thin.prizes.indexOf('Fox Points') < thin.prizes.indexOf('500'), thin.prizes);
+
+    // Once there is a real race, the names are the point.
+    await page.evaluate(() => { net_boardThin(false); return loadSwapLeaderboard(); });
+    await page.waitForFunction(() => document.querySelectorAll('#sw-board-list .sw-hrow').length === 3,
+      null, { timeout: 10000 });
+    const full = await page.evaluate(() => ({
+      rows: document.querySelectorAll('#sw-board-list .sw-hrow').length,
+      last: document.getElementById('sw-board-last').textContent.trim()
+    }));
+    eq('three swappers are listed by name', full.rows, 3);
+    ok('and last week is named too', /Last week: 1st/.test(full.last), full.last);
+    await page.evaluate(() => { net_boardThin(true); return loadSwapLeaderboard(); });
+  }
 
   section('swap: being busy does not become "No route"');
   {
