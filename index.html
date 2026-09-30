@@ -290,10 +290,12 @@
       left: 0;
       z-index: 60;
       width: min(340px, calc(100vw - 40px));
-      /* Eight entries are taller than a phone, and a menu that runs off the
-         bottom hides whatever sorts last — which is exactly where the newest
-         pages land. */
-      max-height: min(70vh, 560px);
+      /* Ten entries are taller than most screens. Capping the height and
+         letting it scroll was the first answer and it was worse than the
+         problem: the last two entries sat below the fold with nothing to
+         suggest the menu scrolled at all, so they read as missing. Two
+         columns where there is room fits every entry without scrolling. */
+      max-height: min(78vh, 620px);
       overflow-y: auto;
       overscroll-behavior: contain;
       background: var(--card);
@@ -304,15 +306,44 @@
       display: flex;
       flex-direction: column;
       gap: 2px;
-      max-height: min(70vh, 520px);
-      overflow-y: auto;
     }
+
+    /* Wide enough for two columns: ten entries become six rows, which fits
+       without scrolling on anything desktop-sized. Placed after the rule above
+       because they have the same specificity, so source order is what decides
+       — the first version of this sat before it and did nothing at all. */
+    @media (min-width: 680px) {
+      .nav-menu {
+        width: 620px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-content: start;
+      }
+      /* Contact is the landing page and stays on its own row across the top. */
+      .nav-menu .nav-item[data-tab="links"] { grid-column: 1 / -1; }
+    }
+
+    /* If it ever does scroll — a short window, a longer menu — say so, rather
+       than letting the last entries vanish silently, which is what happened to
+       Referrals and Wishlist. */
+    .nav-menu.scrolls::after {
+      content: '';
+      position: sticky; bottom: -7px; left: 0; right: 0;
+      display: block; height: 28px; margin-top: -28px; pointer-events: none;
+      grid-column: 1 / -1;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), var(--card));
+      border-radius: 0 0 16px 16px;
+    }
+
     .nav-item {
       appearance: none; cursor: pointer; text-align: left;
       display: flex; align-items: flex-start; gap: 11px;
       background: transparent; border: 2px solid transparent;
       border-radius: 14px; padding: 10px 12px; width: 100%;
       font-family: inherit; color: var(--ink);
+      /* One of these is a link to another page rather than a tab, and it was
+         the only underlined thing in the menu. */
+      text-decoration: none;
     }
     .nav-item:hover { background: var(--cream); }
     .nav-item:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
@@ -3103,8 +3134,13 @@
     }
 
     function openMenu() {
-      document.getElementById('nav-menu').hidden = false;
+      const menu = document.getElementById('nav-menu');
+      menu.hidden = false;
       document.getElementById('nav-trigger').setAttribute('aria-expanded', 'true');
+      // Measured on opening rather than guessed at from a breakpoint: whether
+      // it scrolls depends on how many entries there are and how tall the
+      // window is, and entries are added at runtime.
+      menu.classList.toggle('scrolls', menu.scrollHeight > menu.clientHeight + 2);
     }
 
     function closeMenu() {

@@ -490,6 +490,8 @@ try {
   // the same menu and has no panel behind it.
   const lp = page.locator('#nav-launchpad');
   eq('the Launchpad sits in the menu as a link out', await lp.getAttribute('href'), 'launch.html');
+  eq('and does not stand out as the one underlined thing in it',
+    await lp.evaluate((e) => getComputedStyle(e).textDecorationLine), 'none');
   eq('named like everything else', (await lp.locator('.nav-item-name').textContent()).trim(), 'Creator Launchpad');
   eq('and still in alphabetical order', await page.$$eval('.nav-item',
     (els) => els.filter((e) => !e.hidden).map((e) => (e.querySelector('.nav-item-name') || e).textContent.trim()))
@@ -506,18 +508,37 @@ try {
   eq('and the rest alphabetical, by the name people actually read',
     names.slice(1).join(','), names.slice(1).slice().sort((a, b) => a.localeCompare(b)).join(','));
 
-  // Eight entries are taller than a phone. A menu that runs off the bottom
-  // hides whatever sorts last, which is where the newest pages land.
-  const menuFits = await page.evaluate(() => {
-    const m = document.getElementById('nav-menu');
-    const was = m.hidden;
-    m.hidden = false;
-    const r = { max: getComputedStyle(m).maxHeight, scrolls: getComputedStyle(m).overflowY };
-    m.hidden = was;
-    return r;
-  });
-  ok('the menu is capped rather than running off the screen', menuFits.max !== 'none', menuFits.max);
-  ok('and scrolls instead of hiding the last entries', /auto|scroll/.test(menuFits.scrolls), menuFits.scrolls);
+  // Ten entries are taller than most screens. Capping the height and letting
+  // it scroll hid the last two — Referrals and Wishlist — below the fold with
+  // nothing to suggest the menu scrolled, so they read as missing entirely.
+  // Two columns on a desktop fits every entry without scrolling.
+  const menuAt = async (w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(150);
+    return page.evaluate(() => {
+      openMenu();
+      const m = document.getElementById('nav-menu');
+      const box = m.getBoundingClientRect();
+      const hidden = [...m.querySelectorAll('.nav-item')]
+        .filter((e) => e.getBoundingClientRect().bottom > box.bottom + 1)
+        .map((e) => (e.querySelector('.nav-item-name') || e).textContent.trim());
+      const r = { hidden: hidden, scrolls: m.classList.contains('scrolls'),
+                  cols: getComputedStyle(m).gridTemplateColumns.split(' ').length };
+      closeMenu();
+      return r;
+    });
+  };
+
+  const wide = await menuAt(1200, 800);
+  eq('on a desktop every entry is reachable without scrolling', wide.hidden.join(','), '');
+  eq('because it lays out in two columns', wide.cols, 2);
+  ok('so nothing has to be scrolled for', !wide.scrolls);
+
+  // On a phone it does scroll, and that has to be visible rather than silent.
+  const narrow = await menuAt(390, 700);
+  ok('on a phone it scrolls', narrow.scrolls);
+  ok('and says so, rather than letting the last entries vanish', narrow.scrolls);
+  await page.setViewportSize({ width: 900, height: 700 });
 
   for (const tab of quick) {
     await page.click('.nav-quick-btn[data-tab="' + tab + '"]');
