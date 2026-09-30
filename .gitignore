@@ -1,5 +1,7 @@
 .DS_Store
-.claude/
+# Local Claude settings stay private; shared skills are committed.
+.claude/*
+!.claude/skills/
 
 # wrangler local state
 worker/.wrangler/
