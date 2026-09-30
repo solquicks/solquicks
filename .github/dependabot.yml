@@ -1,0 +1,39 @@
+# Security fixes are already on (repo settings). This adds routine version
+# updates, most of all for the Actions: they are pinned to commit SHAs, which is
+# safer than tags but means nothing ever moves them forward on its own.
+#
+# One grouped PR per folder per run, and nothing younger than a week — a freshly
+# published version is where a hijacked package usually shows up.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: npm
+    directories: [/test/browser, /collectible, /program/scripts, /program/migration]
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    # Major versions change behaviour; those are upgraded by hand.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      npm: { patterns: ["*"] }
+
+  # Anchor and the Solana crates move together and are upgraded by hand; this
+  # keeps everything else current.
+  - package-ecosystem: cargo
+    directory: /program
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    ignore:
+      - dependency-name: "anchor-*"
+      - dependency-name: "solana-*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      cargo: { patterns: ["*"] }

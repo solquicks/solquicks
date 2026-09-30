@@ -22,6 +22,10 @@ COLLECTIBLE_COLLECTION = "GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW"
 # unstake open, so anyone mid-position can still get out.
 STAKING_ONCHAIN = "false"
 
+# The domain creator sites are subdomains of. Also what the origin check uses
+# to decide which callers are one of ours, so it is not only cosmetic.
+LAUNCH_ROOT = "solquicks.com"
+
 # health check every 30 minutes; alerts only when the state changes
 [triggers]
 crons = ["*/30 * * * *"]
@@ -37,10 +41,6 @@ crons = ["*/30 * * * *"]
 #   npx wrangler secret put CONSULT_CALENDLY
 #
 # With one set, the page offers it instead of asking when they are free.
-
-# The domain creator sites are subdomains of. Also what the origin check uses
-# to decide which callers are one of ours, so it is not only cosmetic.
-LAUNCH_ROOT = "solquicks.com"
 
 [[d1_databases]]
 binding = "DB"

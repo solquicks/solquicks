@@ -1,8 +1,10 @@
 .DS_Store
 .claude/
 
-# wrangler local state
+# wrangler local state and local secrets
+.wrangler/
 worker/.wrangler/
+.dev.vars
 # Dependencies are installed, never committed. program/scripts/node_modules was
 # tracked — 16,690 files — which kept them out of npm audit's normal workflow and
 # put a third-party tree in every clone of a public repo.
