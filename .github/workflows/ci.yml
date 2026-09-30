@@ -64,7 +64,7 @@ jobs:
           fi
 
           # Secrets belong in wrangler secrets and gitignored files, never here.
-          if git ls-files | grep -qE '(^|/)(uploader\.json|\.env$|.*-keypair\.json)$'; then
+          if git ls-files | grep -qE '(^|/)(uploader\.json|authority\.json|id\.json|\.dev\.vars|\.env(\.local|\.production|\.development)?|.*-keypair\.json)$'; then
             echo "::error::A secret-bearing filename is tracked by git."
             fail=1
           fi
@@ -146,6 +146,12 @@ jobs:
 
       - name: Worker parses
         run: node --check worker/src/index.js
+
+      # Every env.X the Worker reads must be declared somewhere: a [vars] entry or
+      # binding in wrangler.toml, or a secret listed in .dev.vars.example. A
+      # setting in the wrong section fails silently in production.
+      - name: Every setting the Worker reads is declared
+        run: node worker/test/env-check.mjs
 
       # Runs the shipped verifyInvoice against nine payment shapes: exact,
       # overpaid and short USDC, SOL, wrong wallet, nothing received, not yet on

@@ -505,6 +505,26 @@ it has been sent.
 
 ---
 
+## Two hosts, one domain — know this before touching deploys
+
+**solquicks.com is served by Vercel.** GitHub Pages is also still enabled on the
+repo with `cname: solquicks.com` and `status: built`, but no traffic reaches it:
+DNS points at Vercel and DNS decides. Nothing is broken, and it is left enabled
+deliberately.
+
+The trap: a CI job that publishes to Pages looks like it is deploying the site
+and is not. One was written on 2026-09-30 and removed before merging for exactly
+that reason. And if DNS were ever repointed at Pages, `vercel.json` would stop
+applying — losing the `/c/:slug` rewrite that creator sites use, and all six
+security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options,
+Referrer-Policy, Permissions-Policy).
+
+So: deploys go through Vercel's own Git integration on push to main. Gating that
+on CI means turning Vercel's auto-deploy off and triggering it from a workflow
+with a Vercel token — not adding a Pages job.
+
+---
+
 ## Blocked
 
 **14. Five pages are announced but not open.** Added 2026-09-29, live.

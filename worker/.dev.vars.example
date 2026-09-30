@@ -1,0 +1,18 @@
+# Secrets the Worker reads. Values never go in this file or in wrangler.toml;
+# set each one with `npx wrangler secret put NAME` from worker/. For local
+# `wrangler dev`, copy this to .dev.vars (gitignored) and fill it in.
+
+# Required: without these, /api/health reports ok: false.
+HELIUS_API_KEY=
+JUPITER_API_KEY=
+ADMIN_TOKEN=
+
+# Optional: health alerts to Telegram. See docs/operations.md.
+TELEGRAM_ALERT_TOKEN=
+TELEGRAM_ALERT_CHAT=
+
+# Optional: a scheduling link shown after a consulting hour is paid for.
+CONSULT_CALENDLY=
+
+# Optional: lamports charged per Ranger staked. Unset means free.
+STAKE_FEE_LAMPORTS=

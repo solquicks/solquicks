@@ -95,12 +95,34 @@ const context = await browser.newContext({ viewport: { width: 1200, height: 900 
 // extension registers itself.
 await context.addInitScript(() => {
   const account = { address: '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd', chains: ['solana:mainnet'] };
-  const make = (name) => ({
-    name, version: '1.0.0', icon: 'data:image/svg+xml;base64,PHN2Zy8+', chains: ['solana:mainnet'],
+  const make = (name, chains) => ({
+    name, version: '1.0.0', icon: 'data:image/svg+xml;base64,PHN2Zy8+', chains: chains || ['solana:mainnet'],
     accounts: [], features: { 'standard:connect': { version: '1.0.0', connect: async () => ({ accounts: [account] }) } }
   });
-  const wallets = [make('Test Wallet'), make('Other Wallet')];
-  window.addEventListener('wallet-standard:app-ready', (ev) => { ev.detail.register(...wallets); });
+
+  // One that waits to be told the page is ready...
+  window.addEventListener('wallet-standard:app-ready', (ev) => { ev.detail.register(make('Test Wallet')); });
+
+  // ...and one that turns up after the page has already looked. An extension
+  // that loads slowly announces itself with register-wallet, and the page is
+  // expected to hand back an object with register on it. Being handed the
+  // wrong shape is silent — the wallet calls into nothing and never appears,
+  // which is how several of them went missing.
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('wallet-standard:register-wallet', {
+      detail: (api) => api.register(make('Late Wallet'))
+    }));
+  }, 300);
+
+  // An Ethereum wallet, which cannot hold the Solana address a creator's
+  // customers pay into.
+  window.addEventListener('wallet-standard:app-ready', (ev) => {
+    ev.detail.register(make('Ethereum Only', ['eip155:1']));
+  });
+
+  // A wallet that injects a provider instead of registering at all. Several
+  // Solana wallets still only do this.
+  window.solflare = { connect: async () => ({ publicKey: { toString: () => account.address } }) };
 });
 
 const page = await context.newPage();
@@ -257,37 +279,80 @@ try {
   await page.waitForSelector('#s-feats:not([hidden])', { timeout: 10000 });
 
   section('picking pages');
-  eq('all eight are offered', await page.locator('.feat').count(), 8);
+  eq('all of them are offered', await page.locator('.feat').count(), FEATURES.length);
   ok('and the ones that are not built yet say so',
-    (await page.locator('.feat', { hasText: 'Gacha' }).locator('.feat-soon').count()) === 1);
+    /Coming soon/i.test(await page.locator('.feat[data-id="gacha"] .feat-foot').textContent()));
 
-  eq('nothing is picked to begin with', (await pv.tabs())[0], 'your pages');
+  // The name and the blurb are separate lines. They were inline spans, which
+  // ran the two together into one paragraph on every card.
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.feat[data-id="swap"]');
+    const n = c.querySelector('.feat-name').getBoundingClientRect();
+    const b = c.querySelector('.feat-blurb').getBoundingClientRect();
+    return { stacked: b.top >= n.bottom - 1, nameBlock: getComputedStyle(c.querySelector('.feat-name')).display };
+  });
+  ok('the name sits above the blurb rather than running into it', card.stacked, JSON.stringify(card));
+
+  // Nothing floats over the text any more — the footer is a row along the
+  // bottom, so a long blurb cannot end up underneath a badge.
+  const overlap = await page.evaluate(() => {
+    const c = document.querySelector('.feat[data-id="swap"]');
+    const b = c.querySelector('.feat-blurb').getBoundingClientRect();
+    const f = c.querySelector('.feat-foot').getBoundingClientRect();
+    return f.top >= b.bottom - 1;
+  });
+  ok('and the footer sits below it, not on top of it', overlap);
+
+  section('three slots, filled in order');
+  eq('there are three slots', await page.locator('.slot').count(), 3);
+  eq('all empty to begin with', await page.locator('.slot.filled').count(), 0);
+  ok('and it asks for three', /Pick 3 more/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
+  eq('nothing is in the preview yet', (await pv.tabs())[0], 'your pages');
+
   await page.locator('.feat[data-id="swap"]').click();
+  eq('a pick fills the first slot', (await page.locator('.slot.filled .slot-name').first().textContent()).trim(), 'Swap');
+  eq('and the card says where it went',
+    (await page.locator('.feat[data-id="swap"] .feat-where').textContent()).trim(), '✓ In the top bar');
+  ok('with two slots still asked for', /Pick 2 more/.test(await page.textContent('#feats-head')));
+
   await page.locator('.feat[data-id="store"]').click();
   eq('two picked is not enough to go on', await page.locator('#feats-go').click().then(
     () => page.locator('#s-wallet').isVisible()), false);
-  ok('and it says why', /at least three/.test(await page.textContent('#feats-msg')));
+  ok('and it says why', /all three slots/i.test(await page.textContent('#feats-msg')),
+    await page.textContent('#feats-msg'));
 
   await page.locator('.feat[data-id="book"]').click();
-  eq('three picked fills the top bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
-  ok('and the card says where each one landed',
-    (await page.locator('.feat[data-id="swap"] .feat-where').textContent()).trim() === 'Top bar');
+  eq('three fills the bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
+  eq('every slot is taken', await page.locator('.slot.filled').count(), 3);
+  ok('and it stops asking for more', /goes in the menu/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
 
   await page.locator('.feat[data-id="cleanup"]').click();
   eq('a fourth goes to the menu, not the bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
   eq('and is labelled as such',
-    (await page.locator('.feat[data-id="cleanup"] .feat-where').textContent()).trim(), 'Menu');
+    (await page.locator('.feat[data-id="cleanup"] .feat-where').textContent()).trim(), '✓ In the menu');
   ok('the summary says both', /Top bar: Swap, Store, Bookings/.test(await page.textContent('#picked')) &&
     /In the menu: Cleanup/.test(await page.textContent('#picked')), await page.textContent('#picked'));
 
-  // Promoting one out of the menu and into the bar.
-  await page.locator('.feat[data-id="cleanup"] .feat-up').click();
-  eq('moving one up swaps it into the bar', (await pv.tabs()).join(','), 'Swap,Store,Cleanup');
-  ok('and the one it displaced is now in the menu',
-    (await page.locator('.feat[data-id="book"] .feat-where').textContent()).trim() === 'Menu');
+  // Taking one out of a slot: the menu page that was chosen first moves up.
+  await page.locator('.slot.filled .slot-drop').nth(1).click();
+  eq('dropping one out of a slot lets the next take its place',
+    (await pv.tabs()).join(','), 'Swap,Bookings,Cleanup');
+  eq('and the one dropped is off the site entirely',
+    (await page.locator('.feat[data-id="store"] .feat-where').textContent()).trim(), '');
+  // Four picks minus one is still three, so the bar refills itself from the
+  // menu rather than leaving a hole for somebody to notice and fix.
+  eq('the bar stays full, filled from the menu', await page.locator('.slot.filled').count(), 3);
+  ok('so nothing is asked for', /goes in the menu/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
 
-  // Clear it down and pick again in the order the rest of this expects,
-  // which also checks that a picked page can be un-picked.
+  await page.locator('.feat[data-id="store"]').click();
+  eq('picking it again leaves the bar alone', (await pv.tabs()).join(','), 'Swap,Bookings,Cleanup');
+  ok('and puts it in the menu, where there is room',
+    /In the menu: Store/.test(await page.textContent('#picked')), await page.textContent('#picked'));
+
+  // Back to what the rest of this expects, which also checks un-picking.
   for (const id of ['swap', 'store', 'book', 'cleanup']) {
     const el = page.locator('.feat[data-id="' + id + '"]');
     if ((await el.getAttribute('class')).includes('on')) await el.click();
@@ -300,8 +365,24 @@ try {
   await page.waitForSelector('#s-wallet:not([hidden])', { timeout: 10000 });
 
   section('the wallet, and what it is for');
-  eq('every wallet in the browser is offered, not just the first',
-    await page.locator('.wallet-pick').count(), 2);
+  {
+    // The late one arrives on its own schedule, as a real extension does.
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.wallet-pick')].some((e) => /Late Wallet/.test(e.textContent)),
+      null, { timeout: 15000 }).catch(() => {});
+    const offered = await page.$$eval('.wallet-pick', (els) => els.map((e) => e.textContent.trim()));
+
+    // Three ways a wallet makes itself known, and all three have to be found.
+    // Only one of them worked before: a wallet that announces itself first was
+    // handed a callback of the wrong shape and simply never appeared.
+    ok('a wallet that waits for the page is offered', offered.includes('Test Wallet'), offered.join(','));
+    ok('one that turns up after the page has looked is too', offered.includes('Late Wallet'), offered.join(','));
+    ok('and one that only injects a provider', offered.includes('Solflare'), offered.join(','));
+
+    // This wallet becomes the address a creator's customers pay into.
+    ok('an Ethereum wallet is not offered for a Solana payout',
+      !offered.includes('Ethereum Only'), offered.join(','));
+  }
   ok('the split is shown before they commit to anything',
     /50%/.test(await page.textContent('#split')) && /Into your domain token/.test(await page.textContent('#split')));
   ok('and says the cash share is a ceiling',
@@ -316,7 +397,8 @@ try {
   // Several wallets in a browser, and the first to register is not necessarily
   // the one somebody meant.
   await page.click('text=Use another wallet');
-  eq('there is always a way back to the chooser', await page.locator('.wallet-pick').count(), 2);
+  ok('there is always a way back to the chooser, with every wallet still on it',
+    await page.locator('.wallet-pick').count() === 3);
   await page.locator('.wallet-pick', { hasText: 'Test Wallet' }).click();
   await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 10000 });
   await page.click('#wallet-go');

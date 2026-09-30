@@ -105,33 +105,51 @@
     .msg.bad { color: var(--crimson); }
     .msg.ok { color: var(--green); }
 
+    /* ── the three slots in the top bar ── */
+    .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; }
+    .slot {
+      border: 2px dashed var(--muted); border-radius: 14px; min-height: 62px;
+      display: grid; place-items: center; text-align: center; padding: 8px;
+      color: var(--muted); font-size: 0.78rem; font-weight: 800;
+    }
+    .slot.filled {
+      border: var(--line); border-style: solid; background: var(--orange-soft); color: var(--ink);
+      position: relative;
+    }
+    .slot-name { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.95rem; line-height: 1.15; }
+    .slot-drop {
+      position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; padding: 0;
+      border-radius: 50%; border: var(--line); background: var(--card); color: var(--ink);
+      cursor: pointer; font: inherit; font-size: 0.8rem; line-height: 1;
+    }
+    .slot-drop:hover { background: var(--crimson); color: #fff; border-color: var(--crimson); }
+    @media (max-width: 480px) { .slots { grid-template-columns: 1fr; } }
+
     /* ── features ── */
-    .feats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .feats { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
     .feat {
+      /* A column, so the name is always above the blurb. They were inline
+         spans, which ran the two together into one paragraph. */
+      display: flex; flex-direction: column; gap: 4px;
       text-align: left; cursor: pointer; font: inherit; color: inherit;
       background: var(--cream); border: var(--line); border-radius: 14px; padding: 11px 12px;
-      position: relative;
     }
     .feat:hover { background: var(--orange-soft); }
     .feat.on { background: var(--orange-soft); }
-    .feat-name { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.96rem; }
-    .feat-blurb { font-size: 0.76rem; color: var(--muted); line-height: 1.4; margin-top: 3px; }
-    .feat-where {
-      position: absolute; top: -8px; right: 8px; font-size: 0.6rem; font-weight: 800;
-      letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px;
-      border-radius: 999px; border: var(--line); background: var(--card);
+    .feat.full { opacity: 0.55; cursor: default; }
+    .feat.full:hover { background: var(--cream); }
+    .feat-name { display: block; font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 0.96rem; }
+    .feat-blurb { display: block; font-size: 0.76rem; color: var(--muted); line-height: 1.4; }
+    /* Along the bottom rather than floating over a corner, which is what was
+       landing on top of the text. margin-top:auto keeps it on the bottom edge
+       however tall the blurb above it is, so the cards line up. */
+    .feat-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      margin-top: auto; padding-top: 6px;
+      font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+      color: var(--muted);
     }
-    .feat.top .feat-where { background: var(--orange); color: #fff; border-color: var(--orange); }
-    .feat-soon {
-      display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em;
-      text-transform: uppercase; color: var(--muted); margin-top: 5px;
-    }
-    .feat-up {
-      position: absolute; bottom: 6px; right: 6px; width: 22px; height: 22px;
-      border-radius: 50%; border: var(--line); background: var(--card); cursor: pointer;
-      font-size: 0.7rem; line-height: 1; display: none; padding: 0;
-    }
-    .feat.on:not(.top) .feat-up { display: block; }
+    .feat-where { color: var(--ink); }
     .picked { font-size: 0.84rem; color: var(--muted); margin-top: 12px; line-height: 1.6; }
 
     /* ── wallet ── */
@@ -305,8 +323,10 @@
       <!-- ── 2. pages ── -->
       <div class="card" id="s-feats" hidden>
         <div class="step-head"><span class="step-no">2</span><span class="step-title">Your pages</span></div>
-        <p class="step-sub">Pick what your site does. The first three go in your top bar, where nobody
-           can miss them; anything else after that goes in the menu.</p>
+        <p class="step-sub">Three go in your top bar, where nobody can miss them. Fill those first,
+           then add anything else you want in the menu.</p>
+        <div class="slots" id="slots"></div>
+        <div class="step-title" style="font-size:0.95rem;margin:16px 0 8px" id="feats-head">Pick three for the top bar</div>
         <div class="feats" id="feats"></div>
         <div class="picked" id="picked"></div>
         <div class="actions">
@@ -455,8 +475,8 @@
       note('brand-msg', 'Your site needs a name.', 'bad');
       return;
     }
-    if (name === 'wallet' && draft.picked.length < 3) {
-      note('feats-msg', 'Pick at least three — the first three go in your top bar.', 'bad');
+    if (name === 'wallet' && draft.picked.length < TOP_SLOTS) {
+      note('feats-msg', 'Fill all three slots in your top bar first.', 'bad');
       return;
     }
     at = name;
@@ -576,48 +596,73 @@
   const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
 
   // ── features ───────────────────────────────────────────────────────────
+  // The three slots are the whole model: picks fill them in order, and once
+  // they are full everything else goes in the menu. Explicit slots rather
+  // than "the first three you pick", which asked people to hold an ordering
+  // in their head and gave them no way to see it.
+  const TOP_SLOTS = 3;
+
   function paintFeats() {
-    $('feats').innerHTML = FEATURES.map(function (f) {
-      const i = draft.picked.indexOf(f.id);
-      const on = i >= 0, top = on && i < 3;
-      return '<button type="button" class="feat' + (on ? ' on' : '') + (top ? ' top' : '') +
-        '" data-id="' + esc(f.id) + '">' +
-        (on ? '<span class="feat-where">' + (top ? 'Top bar' : 'Menu') + '</span>' : '') +
-        '<span class="feat-name">' + esc(f.name) + '</span>' +
-        '<span class="feat-blurb">' + esc(f.blurb) + '</span>' +
-        (f.live ? '' : '<span class="feat-soon">Coming soon page</span>') +
-        (on ? '<button type="button" class="feat-up" data-up="' + esc(f.id) + '" title="Move up">▲</button>' : '') +
-        '</button>';
+    const top = draft.picked.slice(0, TOP_SLOTS);
+    const rest = draft.picked.slice(TOP_SLOTS);
+    const full = top.length === TOP_SLOTS;
+
+    $('slots').innerHTML = Array.from({ length: TOP_SLOTS }, function (_, i) {
+      const id = top[i];
+      return id
+        ? '<div class="slot filled"><span class="slot-name">' + esc(nameOf(id)) + '</span>' +
+          '<button type="button" class="slot-drop" data-drop="' + esc(id) + '" ' +
+          'aria-label="Remove ' + esc(nameOf(id)) + ' from the top bar">×</button></div>'
+        : '<div class="slot">Slot ' + (i + 1) + '</div>';
     }).join('');
 
-    const n = draft.picked.length;
-    $('picked').textContent = n === 0
-      ? 'Nothing picked yet. The first three you pick go in your top bar.'
-      : n < 3
-        ? n + ' picked — pick ' + (3 - n) + ' more to fill your top bar.'
-        : 'Top bar: ' + draft.picked.slice(0, 3).map(nameOf).join(', ') +
-          (n > 3 ? ' · In the menu: ' + draft.picked.slice(3).map(nameOf).join(', ') : '');
+    $('feats-head').textContent = full
+      ? 'Anything else goes in the menu'
+      : 'Pick ' + (TOP_SLOTS - top.length) + ' more for the top bar';
+
+    $('feats').innerHTML = FEATURES.map(function (f) {
+      const i = draft.picked.indexOf(f.id);
+      const on = i >= 0;
+      const where = !on ? '' : i < TOP_SLOTS ? 'In the top bar' : 'In the menu';
+      return '<button type="button" class="feat' + (on ? ' on' : '') + '" data-id="' + esc(f.id) + '">' +
+        '<span class="feat-name">' + esc(f.name) + '</span>' +
+        '<span class="feat-blurb">' + esc(f.blurb) + '</span>' +
+        '<span class="feat-foot">' +
+          '<span class="feat-where">' + (on ? '✓ ' + where : '') + '</span>' +
+          '<span>' + (f.live ? '' : 'Coming soon') + '</span>' +
+        '</span></button>';
+    }).join('');
+
+    $('picked').textContent = !top.length
+      ? 'Nothing in your top bar yet.'
+      : !full
+        ? top.map(nameOf).join(', ') + ' in the top bar — ' + (TOP_SLOTS - top.length) + ' slot' +
+          (TOP_SLOTS - top.length === 1 ? '' : 's') + ' still free.'
+        : 'Top bar: ' + top.map(nameOf).join(', ') +
+          (rest.length ? ' · In the menu: ' + rest.map(nameOf).join(', ') : ' · nothing in the menu yet');
     paintPreview();
   }
 
   const nameOf = (id) => (FEATURES.find((f) => f.id === id) || { name: id }).name;
 
   function featClick(ev) {
-    const up = ev.target.closest('[data-up]');
-    if (up) {
-      ev.stopPropagation();
-      const i = draft.picked.indexOf(up.dataset.up);
-      if (i > 0) {
-        draft.picked.splice(i - 1, 0, draft.picked.splice(i, 1)[0]);
-        paintFeats();
-      }
-      return;
-    }
     const card = ev.target.closest('[data-id]');
     if (!card) return;
     const id = card.dataset.id;
     const i = draft.picked.indexOf(id);
     if (i >= 0) draft.picked.splice(i, 1); else draft.picked.push(id);
+    note('feats-msg', '', '');
+    paintFeats();
+  }
+
+  /// Taking one out of a slot. Everything after it moves up, so the page a
+  /// creator put in the menu first is the one that fills the gap — which is
+  /// the order they chose them in.
+  function slotClick(ev) {
+    const drop = ev.target.closest('[data-drop]');
+    if (!drop) return;
+    const i = draft.picked.indexOf(drop.dataset.drop);
+    if (i >= 0) draft.picked.splice(i, 1);
     note('feats-msg', '', '');
     paintFeats();
   }
@@ -631,14 +676,50 @@
 
   function findWallets() {
     const found = [];
+    const add = function (entry) {
+      if (found.some((x) => x.name === entry.name)) return;
+      found.push(entry);
+      paintWallets(found);
+    };
+
+    // Wallet Standard. The registry is handed to the wallet, which calls
+    // register with itself — so what goes into e.detail is an object with a
+    // register function on it, not a callback taking a wallet. Getting that
+    // shape wrong is silent: the wallet calls into nothing and simply never
+    // appears, which is how half of them went missing.
+    const register = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const w = arguments[i];
+        if (!w || !w.features || !w.features['standard:connect']) continue;
+        // Solana only. This wallet becomes the address a creator's customers
+        // pay into, and an Ethereum wallet cannot hold it.
+        if (!(w.chains || []).some(function (c) { return String(c).indexOf('solana') === 0; })) continue;
+        add({ kind: 'standard', name: w.name, icon: w.icon, w: w });
+      }
+    };
     try {
-      window.addEventListener('wallet-standard:register-wallet', function (ev) {
-        ev.detail(function (w) { if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); });
+      // Both directions: wallets that register on hearing this page is ready,
+      // and wallets that already announced themselves before this ran.
+      window.addEventListener('wallet-standard:register-wallet', function (e) {
+        try { e.detail({ register: register }); } catch (err) { /* not one of ours */ }
       });
-      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
-        detail: { register: function (...ws) { for (const w of ws) if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); return () => {}; } }
-      }));
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
     } catch (e) { /* no wallets is a state, not an error */ }
+
+    // Wallets that inject a provider instead of registering. Several Solana
+    // wallets still only do this, so leaving it out drops them entirely.
+    const injected = [
+      { name: 'Solflare', p: window.solflare },
+      { name: 'Backpack', p: window.backpack },
+      { name: 'Glow', p: window.glow },
+      { name: 'Solana Wallet', p: window.solana }
+    ];
+    for (const entry of injected) {
+      if (entry.p && typeof entry.p.connect === 'function') {
+        add({ kind: 'injected', name: entry.name, icon: entry.p.icon || null, w: entry.p });
+      }
+    }
+
     wallets = found;
     paintWallets(found);
   }
@@ -677,16 +758,24 @@
     }
   }
 
-  async function connect(w) {
+  async function connect(entry) {
     note('wallet-msg', 'Approve it in your wallet…', '');
     try {
-      const feature = w.features && w.features['standard:connect'];
-      if (!feature) throw new Error('that wallet cannot connect here');
-      const out = await feature.connect();
-      const account = (out && out.accounts && out.accounts[0]) || (w.accounts && w.accounts[0]);
-      if (!account) throw new Error('no account came back');
-      draft.wallet = account.address;
-      try { localStorage.setItem(WALLET_KEY, w.name); } catch (e) { /* fine */ }
+      let address;
+      if (entry.kind === 'standard') {
+        const out = await entry.w.features['standard:connect'].connect();
+        const account = (out && out.accounts && out.accounts[0]) || (entry.w.accounts && entry.w.accounts[0]);
+        if (!account) throw new Error('no account came back');
+        address = account.address;
+      } else {
+        const out = await entry.w.connect();
+        const key = (out && out.publicKey) || entry.w.publicKey;
+        if (!key) throw new Error('no account came back');
+        address = key.toString();
+      }
+      draft.wallet = address;
+      const account = { address: address };
+      try { localStorage.setItem(WALLET_KEY, entry.name); } catch (e) { /* fine */ }
       $('wallets').innerHTML = '';
       $('wallet-have').hidden = false;
       $('wallet-addr').textContent = account.address;
@@ -869,6 +958,7 @@
   bindBrand();
   bindAddress();
   $('feats').addEventListener('click', featClick);
+  $('slots').addEventListener('click', slotClick);
   $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkCode(); });
   $('f-file').addEventListener('change', function () { if (this.files[0]) pickPicture(this.files[0]); });
   findWallets();

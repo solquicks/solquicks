@@ -504,9 +504,16 @@ async function alert(env, text) {
   } catch (e) { /* an alert failing must not cascade */ }
 }
 
+const REQUIRED_SETTINGS = ['HELIUS_API_KEY', 'JUPITER_API_KEY', 'ADMIN_TOKEN', 'TREASURY_WALLET', 'ALLOWED_ORIGINS'];
+
 async function healthCheck(env) {
   const detail = {};
   let ok = true;
+
+  // A missing secret used to be skipped here, so health said ok while every
+  // Helius-backed route quietly returned nothing. Names only, never values.
+  const missing = REQUIRED_SETTINGS.filter((k) => !env[k]);
+  if (missing.length) { ok = false; detail.missing = missing; }
 
   try {
     const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM players').first();
@@ -542,7 +549,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'quote-speed-1';
+const BUILD = 'health-settings-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
