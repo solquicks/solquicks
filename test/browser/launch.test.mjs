@@ -95,12 +95,34 @@ const context = await browser.newContext({ viewport: { width: 1200, height: 900 
 // extension registers itself.
 await context.addInitScript(() => {
   const account = { address: '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd', chains: ['solana:mainnet'] };
-  const make = (name) => ({
-    name, version: '1.0.0', icon: 'data:image/svg+xml;base64,PHN2Zy8+', chains: ['solana:mainnet'],
+  const make = (name, chains) => ({
+    name, version: '1.0.0', icon: 'data:image/svg+xml;base64,PHN2Zy8+', chains: chains || ['solana:mainnet'],
     accounts: [], features: { 'standard:connect': { version: '1.0.0', connect: async () => ({ accounts: [account] }) } }
   });
-  const wallets = [make('Test Wallet'), make('Other Wallet')];
-  window.addEventListener('wallet-standard:app-ready', (ev) => { ev.detail.register(...wallets); });
+
+  // One that waits to be told the page is ready...
+  window.addEventListener('wallet-standard:app-ready', (ev) => { ev.detail.register(make('Test Wallet')); });
+
+  // ...and one that turns up after the page has already looked. An extension
+  // that loads slowly announces itself with register-wallet, and the page is
+  // expected to hand back an object with register on it. Being handed the
+  // wrong shape is silent — the wallet calls into nothing and never appears,
+  // which is how several of them went missing.
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('wallet-standard:register-wallet', {
+      detail: (api) => api.register(make('Late Wallet'))
+    }));
+  }, 300);
+
+  // An Ethereum wallet, which cannot hold the Solana address a creator's
+  // customers pay into.
+  window.addEventListener('wallet-standard:app-ready', (ev) => {
+    ev.detail.register(make('Ethereum Only', ['eip155:1']));
+  });
+
+  // A wallet that injects a provider instead of registering at all. Several
+  // Solana wallets still only do this.
+  window.solflare = { connect: async () => ({ publicKey: { toString: () => account.address } }) };
 });
 
 const page = await context.newPage();
@@ -300,8 +322,24 @@ try {
   await page.waitForSelector('#s-wallet:not([hidden])', { timeout: 10000 });
 
   section('the wallet, and what it is for');
-  eq('every wallet in the browser is offered, not just the first',
-    await page.locator('.wallet-pick').count(), 2);
+  {
+    // The late one arrives on its own schedule, as a real extension does.
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.wallet-pick')].some((e) => /Late Wallet/.test(e.textContent)),
+      null, { timeout: 15000 }).catch(() => {});
+    const offered = await page.$$eval('.wallet-pick', (els) => els.map((e) => e.textContent.trim()));
+
+    // Three ways a wallet makes itself known, and all three have to be found.
+    // Only one of them worked before: a wallet that announces itself first was
+    // handed a callback of the wrong shape and simply never appeared.
+    ok('a wallet that waits for the page is offered', offered.includes('Test Wallet'), offered.join(','));
+    ok('one that turns up after the page has looked is too', offered.includes('Late Wallet'), offered.join(','));
+    ok('and one that only injects a provider', offered.includes('Solflare'), offered.join(','));
+
+    // This wallet becomes the address a creator's customers pay into.
+    ok('an Ethereum wallet is not offered for a Solana payout',
+      !offered.includes('Ethereum Only'), offered.join(','));
+  }
   ok('the split is shown before they commit to anything',
     /50%/.test(await page.textContent('#split')) && /Into your domain token/.test(await page.textContent('#split')));
   ok('and says the cash share is a ceiling',
@@ -316,7 +354,8 @@ try {
   // Several wallets in a browser, and the first to register is not necessarily
   // the one somebody meant.
   await page.click('text=Use another wallet');
-  eq('there is always a way back to the chooser', await page.locator('.wallet-pick').count(), 2);
+  ok('there is always a way back to the chooser, with every wallet still on it',
+    await page.locator('.wallet-pick').count() === 3);
   await page.locator('.wallet-pick', { hasText: 'Test Wallet' }).click();
   await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 10000 });
   await page.click('#wallet-go');

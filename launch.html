@@ -631,14 +631,50 @@
 
   function findWallets() {
     const found = [];
+    const add = function (entry) {
+      if (found.some((x) => x.name === entry.name)) return;
+      found.push(entry);
+      paintWallets(found);
+    };
+
+    // Wallet Standard. The registry is handed to the wallet, which calls
+    // register with itself — so what goes into e.detail is an object with a
+    // register function on it, not a callback taking a wallet. Getting that
+    // shape wrong is silent: the wallet calls into nothing and simply never
+    // appears, which is how half of them went missing.
+    const register = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const w = arguments[i];
+        if (!w || !w.features || !w.features['standard:connect']) continue;
+        // Solana only. This wallet becomes the address a creator's customers
+        // pay into, and an Ethereum wallet cannot hold it.
+        if (!(w.chains || []).some(function (c) { return String(c).indexOf('solana') === 0; })) continue;
+        add({ kind: 'standard', name: w.name, icon: w.icon, w: w });
+      }
+    };
     try {
-      window.addEventListener('wallet-standard:register-wallet', function (ev) {
-        ev.detail(function (w) { if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); });
+      // Both directions: wallets that register on hearing this page is ready,
+      // and wallets that already announced themselves before this ran.
+      window.addEventListener('wallet-standard:register-wallet', function (e) {
+        try { e.detail({ register: register }); } catch (err) { /* not one of ours */ }
       });
-      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
-        detail: { register: function (...ws) { for (const w of ws) if (!found.some((x) => x.name === w.name)) found.push(w); paintWallets(found); return () => {}; } }
-      }));
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register: register } }));
     } catch (e) { /* no wallets is a state, not an error */ }
+
+    // Wallets that inject a provider instead of registering. Several Solana
+    // wallets still only do this, so leaving it out drops them entirely.
+    const injected = [
+      { name: 'Solflare', p: window.solflare },
+      { name: 'Backpack', p: window.backpack },
+      { name: 'Glow', p: window.glow },
+      { name: 'Solana Wallet', p: window.solana }
+    ];
+    for (const entry of injected) {
+      if (entry.p && typeof entry.p.connect === 'function') {
+        add({ kind: 'injected', name: entry.name, icon: entry.p.icon || null, w: entry.p });
+      }
+    }
+
     wallets = found;
     paintWallets(found);
   }
@@ -677,16 +713,24 @@
     }
   }
 
-  async function connect(w) {
+  async function connect(entry) {
     note('wallet-msg', 'Approve it in your wallet…', '');
     try {
-      const feature = w.features && w.features['standard:connect'];
-      if (!feature) throw new Error('that wallet cannot connect here');
-      const out = await feature.connect();
-      const account = (out && out.accounts && out.accounts[0]) || (w.accounts && w.accounts[0]);
-      if (!account) throw new Error('no account came back');
-      draft.wallet = account.address;
-      try { localStorage.setItem(WALLET_KEY, w.name); } catch (e) { /* fine */ }
+      let address;
+      if (entry.kind === 'standard') {
+        const out = await entry.w.features['standard:connect'].connect();
+        const account = (out && out.accounts && out.accounts[0]) || (entry.w.accounts && entry.w.accounts[0]);
+        if (!account) throw new Error('no account came back');
+        address = account.address;
+      } else {
+        const out = await entry.w.connect();
+        const key = (out && out.publicKey) || entry.w.publicKey;
+        if (!key) throw new Error('no account came back');
+        address = key.toString();
+      }
+      draft.wallet = address;
+      const account = { address: address };
+      try { localStorage.setItem(WALLET_KEY, entry.name); } catch (e) { /* fine */ }
       $('wallets').innerHTML = '';
       $('wallet-have').hidden = false;
       $('wallet-addr').textContent = account.address;
