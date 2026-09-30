@@ -279,37 +279,80 @@ try {
   await page.waitForSelector('#s-feats:not([hidden])', { timeout: 10000 });
 
   section('picking pages');
-  eq('all eight are offered', await page.locator('.feat').count(), 8);
+  eq('all of them are offered', await page.locator('.feat').count(), FEATURES.length);
   ok('and the ones that are not built yet say so',
-    (await page.locator('.feat', { hasText: 'Gacha' }).locator('.feat-soon').count()) === 1);
+    /Coming soon/i.test(await page.locator('.feat[data-id="gacha"] .feat-foot').textContent()));
 
-  eq('nothing is picked to begin with', (await pv.tabs())[0], 'your pages');
+  // The name and the blurb are separate lines. They were inline spans, which
+  // ran the two together into one paragraph on every card.
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.feat[data-id="swap"]');
+    const n = c.querySelector('.feat-name').getBoundingClientRect();
+    const b = c.querySelector('.feat-blurb').getBoundingClientRect();
+    return { stacked: b.top >= n.bottom - 1, nameBlock: getComputedStyle(c.querySelector('.feat-name')).display };
+  });
+  ok('the name sits above the blurb rather than running into it', card.stacked, JSON.stringify(card));
+
+  // Nothing floats over the text any more — the footer is a row along the
+  // bottom, so a long blurb cannot end up underneath a badge.
+  const overlap = await page.evaluate(() => {
+    const c = document.querySelector('.feat[data-id="swap"]');
+    const b = c.querySelector('.feat-blurb').getBoundingClientRect();
+    const f = c.querySelector('.feat-foot').getBoundingClientRect();
+    return f.top >= b.bottom - 1;
+  });
+  ok('and the footer sits below it, not on top of it', overlap);
+
+  section('three slots, filled in order');
+  eq('there are three slots', await page.locator('.slot').count(), 3);
+  eq('all empty to begin with', await page.locator('.slot.filled').count(), 0);
+  ok('and it asks for three', /Pick 3 more/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
+  eq('nothing is in the preview yet', (await pv.tabs())[0], 'your pages');
+
   await page.locator('.feat[data-id="swap"]').click();
+  eq('a pick fills the first slot', (await page.locator('.slot.filled .slot-name').first().textContent()).trim(), 'Swap');
+  eq('and the card says where it went',
+    (await page.locator('.feat[data-id="swap"] .feat-where').textContent()).trim(), '✓ In the top bar');
+  ok('with two slots still asked for', /Pick 2 more/.test(await page.textContent('#feats-head')));
+
   await page.locator('.feat[data-id="store"]').click();
   eq('two picked is not enough to go on', await page.locator('#feats-go').click().then(
     () => page.locator('#s-wallet').isVisible()), false);
-  ok('and it says why', /at least three/.test(await page.textContent('#feats-msg')));
+  ok('and it says why', /all three slots/i.test(await page.textContent('#feats-msg')),
+    await page.textContent('#feats-msg'));
 
   await page.locator('.feat[data-id="book"]').click();
-  eq('three picked fills the top bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
-  ok('and the card says where each one landed',
-    (await page.locator('.feat[data-id="swap"] .feat-where').textContent()).trim() === 'Top bar');
+  eq('three fills the bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
+  eq('every slot is taken', await page.locator('.slot.filled').count(), 3);
+  ok('and it stops asking for more', /goes in the menu/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
 
   await page.locator('.feat[data-id="cleanup"]').click();
   eq('a fourth goes to the menu, not the bar', (await pv.tabs()).join(','), 'Swap,Store,Bookings');
   eq('and is labelled as such',
-    (await page.locator('.feat[data-id="cleanup"] .feat-where').textContent()).trim(), 'Menu');
+    (await page.locator('.feat[data-id="cleanup"] .feat-where').textContent()).trim(), '✓ In the menu');
   ok('the summary says both', /Top bar: Swap, Store, Bookings/.test(await page.textContent('#picked')) &&
     /In the menu: Cleanup/.test(await page.textContent('#picked')), await page.textContent('#picked'));
 
-  // Promoting one out of the menu and into the bar.
-  await page.locator('.feat[data-id="cleanup"] .feat-up').click();
-  eq('moving one up swaps it into the bar', (await pv.tabs()).join(','), 'Swap,Store,Cleanup');
-  ok('and the one it displaced is now in the menu',
-    (await page.locator('.feat[data-id="book"] .feat-where').textContent()).trim() === 'Menu');
+  // Taking one out of a slot: the menu page that was chosen first moves up.
+  await page.locator('.slot.filled .slot-drop').nth(1).click();
+  eq('dropping one out of a slot lets the next take its place',
+    (await pv.tabs()).join(','), 'Swap,Bookings,Cleanup');
+  eq('and the one dropped is off the site entirely',
+    (await page.locator('.feat[data-id="store"] .feat-where').textContent()).trim(), '');
+  // Four picks minus one is still three, so the bar refills itself from the
+  // menu rather than leaving a hole for somebody to notice and fix.
+  eq('the bar stays full, filled from the menu', await page.locator('.slot.filled').count(), 3);
+  ok('so nothing is asked for', /goes in the menu/.test(await page.textContent('#feats-head')),
+    await page.textContent('#feats-head'));
 
-  // Clear it down and pick again in the order the rest of this expects,
-  // which also checks that a picked page can be un-picked.
+  await page.locator('.feat[data-id="store"]').click();
+  eq('picking it again leaves the bar alone', (await pv.tabs()).join(','), 'Swap,Bookings,Cleanup');
+  ok('and puts it in the menu, where there is room',
+    /In the menu: Store/.test(await page.textContent('#picked')), await page.textContent('#picked'));
+
+  // Back to what the rest of this expects, which also checks un-picking.
   for (const id of ['swap', 'store', 'book', 'cleanup']) {
     const el = page.locator('.feat[data-id="' + id + '"]');
     if ((await el.getAttribute('class')).includes('on')) await el.click();
