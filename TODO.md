@@ -505,6 +505,19 @@ it has been sent.
 
 ---
 
+## Cloudflare Workers Builds fails on every pull request
+
+It passes on `main` and fails on every PR — #2, #3 and #4 all show
+`Workers Builds: solquicks` red while all four GitHub checks are green. So it
+is the PR/preview build that is misconfigured, not anything a PR contains.
+
+It is not a required check, so it does not block a merge. It does make every
+PR look broken, which is the sort of noise that trains people to merge past red
+checks — worth fixing or turning off for PRs. The reason needs the Cloudflare
+dashboard, which is not reachable from here.
+
+---
+
 ## Two hosts, one domain — know this before touching deploys
 
 **solquicks.com is served by Vercel.** GitHub Pages is also still enabled on the
