@@ -1,4 +1,13 @@
 {
   "note": "Platforms solquicks uses and gets a referral credit from. Each entry needs a logo in img/referrals/, what the platform does, and what the visitor gets for using the link. The Referrals tab does not appear at all while items is empty.",
-  "items": []
+  "items": [
+    {
+      "name": "Superteam Talent",
+      "tag": "Jobs",
+      "url": "https://talent.superteam.fun/join?scout=solquicks",
+      "what": "The Solana ecosystem's talent platform. One profile, matched continuously with the teams that are hiring.",
+      "youGet": "A profile that gets matched with active roles, the job board, and your interviews tracked in one place.",
+      "cta": "Join as talent"
+    }
+  ]
 }

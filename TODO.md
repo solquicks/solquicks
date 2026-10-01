@@ -580,11 +580,20 @@ Also worth a decision: **MC or speaking is $1,000 with "travel included"**. A
 flight can cost more than the booking. Either a distance limit, or travel billed
 separately, or the price goes up.
 
-**4. The ten referral links.**
-`referrals.json` is an empty list, so the tab says "coming soon". Each entry
-needs `name`, `url`, a logo in `img/referrals/`, `what` the platform does and
-`youGet`. Fill the file and the notice is replaced by the real cards on its
-own — no code change, no deploy.
+**4. The ten referral links.** 1 of 10 in — Superteam Talent, 2026-10-02.
+Each entry needs `name`, `url`, `what` the platform does and `youGet`. Adding
+one is a change to `referrals.json` and nothing else: no code, and the tab
+flips itself from the notice to real cards.
+
+Two things outstanding on the one that is in:
+
+- **No logo.** `img/referrals/superteam.jpg` is not there, so the card shows an
+  "S" tile instead. It is a deliberate fallback rather than a broken image, but
+  a real mark is better. Same for the next nine.
+- **Named "Superteam Talent", not "Superteam Scout".** Scout is what you are in
+  that arrangement; talent is what the visitor becomes. Naming the card after
+  the scout programme would tell a visitor they are signing up to be something
+  they are not. Say if you would rather it read differently.
 
 **5. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
 

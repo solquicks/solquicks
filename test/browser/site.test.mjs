@@ -2049,20 +2049,53 @@ try {
       await page.evaluate(() => document.getElementById('panel-wishlist').classList.contains('active')));
   }
 
-  section('referrals: says it is coming until it has something to show');
+  section('referrals: the real file, and the empty state it came from');
   {
-    // The real file ships empty, so this is the state a visitor sees today:
-    // the tab is there and says so, rather than disappearing.
-    eq('with nothing in the file the tab is still in the menu',
+    eq('the tab is in the menu',
       await page.evaluate(() => document.getElementById('nav-referrals').hidden), false);
     await page.evaluate(() => switchTab('referrals'));
     await page.waitForSelector('#panel-referrals.active', { timeout: 10000 });
-    ok('and the page says it is coming', await page.locator('#ref-list .soon').count() === 1);
+
+    // What ships today. Driven off the file rather than a copy of it here, so
+    // adding the next nine cannot quietly make this test describe the past.
+    const shipped = JSON.parse(fs.readFileSync(path.join(ROOT, 'referrals.json'), 'utf8')).items;
+    ok('the file that ships has something in it', shipped.length > 0);
+    eq('and every one of them is on the page',
+      await page.locator('#ref-list .ref-card').count(), shipped.length);
+    for (const r of shipped) {
+      // These are paid placements that send a visitor off this site. A
+      // referral link that is not https, or that points somewhere other than
+      // where it says, is the one thing here that could actually cost someone.
+      ok(r.name + ': goes somewhere over https', /^https:\/\//.test(r.url || ''), r.url);
+      ok(r.name + ': says what the platform is', !!(r.what || '').trim());
+      ok(r.name + ': and what the visitor gets, which is what the intro promises',
+        !!(r.youGet || '').trim());
+    }
+    const live = await page.evaluate(() => [...document.querySelectorAll('#ref-list .ref-go')]
+      .map((a) => ({ href: a.getAttribute('href'), rel: a.getAttribute('rel') })));
+    ok('each link is declared as the paid placement it is',
+      live.every((a) => /sponsored/.test(a.rel || '')), JSON.stringify(live));
+    ok('and opens without handing over this page',
+      live.every((a) => /noopener/.test(a.rel || '')), JSON.stringify(live));
+    eq('the first one points where it says it does', live[0].href, shipped[0].url);
+
+    // The empty state is still a real code path — it is what a creator's own
+    // site shows before they have added any — so it is kept under test even
+    // though this site has grown out of it.
+    await page.route('**/referrals.json', (route) => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ items: [] })
+    }));
+    await page.evaluate(() => loadReferrals());
+    await page.waitForFunction(() => document.querySelectorAll('#ref-list .soon').length === 1,
+      null, { timeout: 10000 });
+    ok('with nothing in the file the page says it is coming',
+      await page.locator('#ref-list .soon').count() === 1);
     ok('naming what it will be, not just that it is empty',
       /referral credit/.test(await page.textContent('#ref-list .soon-what')),
       await page.textContent('#ref-list .soon-what'));
     eq('with the introduction held back until there is something to introduce',
       await page.evaluate(() => document.getElementById('ref-intro').hidden), true);
+    await page.unroute('**/referrals.json');
 
     // Now stand in a populated file, including one entry that should never
     // become a link.
