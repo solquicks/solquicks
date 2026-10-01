@@ -593,6 +593,38 @@ spends. Worth settling what they are before it is built, not after — paid
 chance-based pulls are regulated as gambling in a fair few places and published
 odds are usually the floor.
 
+**7. Partner logos on the coming-soon pages.**
+Item 1 put the partners' *names* on their pages. The next pass is their marks,
+walked through feature by feature together. A logo does more than a name here:
+it is the difference between a page that claims a partner and one that visibly
+has one, which is exactly what a judge is scanning for.
+
+Where it stands:
+
+| Page | Partner | Logo |
+|---|---|---|
+| Mine Bitcoin | Sat Rush | **have it** — `img/partners/sat-rush.jpg`, 400×400, sent 2026-10-01 |
+| Travel | Nomadz | needed |
+| Wishlist | sp3nd | needed |
+| Creator Launchpad | D3 / Doma | needed |
+| Swap | Jupiter (live), Titan (coming) | needed |
+| Store | store.fun (live), Nomu (coming) | needed |
+| DeFi, Gacha, Games | nobody named yet | — |
+
+What to get from each: the logo file itself, how they want to be named in
+writing, and the link it should point at. Square and transparent-background is
+easiest — Sat Rush's is a 400×400 JPEG on dark, which works on our dark cards
+but would show a box on a light one.
+
+The code side is small and not started: `soonHtml(lead, what, partner)` in
+`index.html` renders `Built with **Name**` plus a blurb, text only. It needs a
+`logo` field on `partner` and a slot to draw it in, same as the referral cards
+will want. One change serves every page.
+
+Worth saying once: a logo is someone's trademark and showing it reads as their
+endorsement. Fine where there is a real agreement — which is the point of
+walking through them with you rather than my adding marks to pages on my own.
+
 ---
 
 ## Cloudflare Workers Builds fails on every pull request
