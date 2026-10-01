@@ -59,7 +59,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
-  quoteFail: 0, siteDelay: 0, boardThin: true,
+  quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
@@ -107,6 +107,15 @@ function workerAnswer(p, url) {
     { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9 },
     { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
   ] };
+  if (p === '/api/leaderboard') return {
+    players: Array.from({ length: net.players }, (_, i) => ({
+      wallet: ['6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd',
+        'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
+        '7y4zjYuiFw7eHDUYWByqMSmu3SebpzvvBJSQz8BVbmXL',
+        '3w3oJv6xjbUTEJKfLcoijjAtAEUJkZ64po6nBBCjSijn'][i],
+      points: 1000 - i * 100
+    }))
+  };
   if (p === '/api/swap/holdings') return { wallet: WALLET, tokens: HOLDINGS, totalUsd: 262, more: 0 };
   if (p === '/api/swap/leaderboard') {
     const many = [
@@ -464,6 +473,7 @@ const page = await context.newPage();
 await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
 await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
 await page.exposeFunction('net_boardThin', (v) => { net.boardThin = v; return v; });
+await page.exposeFunction('net_players', (n) => { net.players = n; return n; });
 await page.exposeFunction('net_invite', () => net.invite);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -1370,6 +1380,47 @@ try {
   net.lamports = 2e9;
   await bonkForWif();
   await page.click('.sw-protect button[data-protect="on"]');
+
+  section('Fox Points: a board of two, both of them mine');
+  {
+    // Same rule as the swap and staking boards. Two names reads as nobody is
+    // here; two names that both belong to the site owner reads as nobody but
+    // him, which is worse than no board.
+    await page.evaluate(() => switchTab('leaderboard'));
+    await page.evaluate(() => { net_players(2); return renderLeaderboard(); });
+    await page.waitForFunction(() => /earning so far/.test(document.getElementById('lb-table').textContent),
+      null, { timeout: 10000 });
+    const thin = (await page.textContent('#lb-table')).replace(/\s+/g, ' ').trim();
+    ok('two players are reported as a count', /earning so far/.test(thin), thin);
+    ok('and nobody is named', !/…/.test(thin), thin);
+
+    await page.evaluate(() => { net_players(4); return renderLeaderboard(); });
+    await page.waitForFunction(() => document.querySelectorAll('#lb-table .lb-table-row').length >= 3,
+      null, { timeout: 10000 });
+    ok('four players are listed by name',
+      (await page.locator('#lb-table .lb-table-row').count()) >= 3);
+
+    await page.evaluate(() => { net_players(0); return renderLeaderboard(); });
+    await page.waitForFunction(() => /Be the first fox/.test(document.getElementById('lb-table').textContent),
+      null, { timeout: 10000 });
+    ok('and an empty board invites the first one', true);
+    await page.evaluate(() => { net_players(2); });
+  }
+
+  section('wallet cleanup: what burning an NFT actually gives back');
+  {
+    // The page used to say "about 0.002 SOL". A token account's rent-exempt
+    // minimum is 0.00148844 today, and one created before Solana reduced rent
+    // holds 0.00203928 — so a single quoted figure is right for some accounts
+    // and a third too high for others. It is the number somebody weighs
+    // against an NFT before destroying it irreversibly, and the real one is
+    // already shown against each row.
+    await page.evaluate(() => switchTab('cleanup'));
+    const note = (await page.textContent('#cl-nft-note')).replace(/\s+/g, ' ');
+    ok('no single figure is quoted for what rent comes back', !/0\.002/.test(note), note);
+    ok('it points at the amount shown against each one', /shown against each one/.test(note), note);
+    ok('and still says destroying is permanent', /destroying it/.test(note), note);
+  }
 
   section('wallet cleanup: the reclaim button comes back');
   await page.click('#nav-trigger');

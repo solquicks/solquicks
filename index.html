@@ -2742,7 +2742,8 @@
             <div class="cl-block">
               <div class="cl-block-title">NFTs <span class="cl-danger-tag">burning is permanent</span></div>
               <p class="cl-block-note" id="cl-nft-note">Collectibles. Closing one means <strong>destroying it</strong>
-                to reclaim about 0.002 SOL. Check what it is worth first.</p>
+                to reclaim the rent it holds — a fraction of a SOL, shown against each one. Check what
+                it is worth first.</p>
               <div class="cl-bar"><button class="cl-selall" onclick="selectGroup('nft')">Select all</button>
                 <span class="cl-count" id="cl-nft-count"></span></div>
               <div class="cl-list" id="cl-nfts"></div>
@@ -9130,6 +9131,22 @@
 
       rows.sort(function (a, b) { return b.points - a.points; });
 
+      // Two names on a board reads as nobody is here, and on this site both of
+      // them were mine — which reads as nobody but the owner, and is worse
+      // than showing no board at all. The swap and staking boards already say
+      // the number instead; so does this one, until there is a race.
+      const RACE_NEEDS = 3;
+      const others = rows.filter(function (r) { return !r.me; }).length;
+      if (rows.length && rows.length < RACE_NEEDS) {
+        el.innerHTML = '<div class="lb-log-empty">' +
+          (others === 0
+            ? 'Be the first fox on the board — connect a wallet and start earning.'
+            : others + ' fox' + (others === 1 ? '' : 'es') + ' earning so far. ' +
+              'The board opens up once a few more join.') +
+          '</div>';
+        return;
+      }
+
       const medals = ['\ud83e\udd47', '\ud83e\udd48', '\ud83e\udd49'];
       el.innerHTML = rows.map(function (r, i) {
         return '<div class="lb-table-row' + (r.me ? ' me' : '') + '">' +
@@ -9140,8 +9157,8 @@
           '</div><div class="lb-score">' + r.points.toLocaleString() + '</div></div>';
       }).join('');
 
-      if (rows.length <= 1) {
-        el.innerHTML += '<div class="lb-log-empty">Be the first fox on the board \u2014 connect a wallet and start earning.</div>';
+      if (!rows.length) {
+        el.innerHTML = '<div class="lb-log-empty">Be the first fox on the board \u2014 connect a wallet and start earning.</div>';
       }
     }
 
