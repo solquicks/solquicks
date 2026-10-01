@@ -505,6 +505,34 @@ it has been sent.
 
 ---
 
+## Creator Launchpad — what the walkthrough turned up
+
+**1. Privy, at the wallet step.** A creator with no self-custody wallet has
+nowhere to go: step 3 says "No Solana wallet found in this browser" and stops.
+Privy would let them sign in with Google, Apple or a phone number and have a
+wallet made for them. The app ID is a public identifier and belongs in the page;
+the app secret is a real credential and goes in as `wrangler secret put
+PRIVY_APP_SECRET`, never in a file — this repo is public.
+
+**2. The 49% has nowhere to go yet.** Step 3 shows "49% into your domain token"
+at a point where no token exists. Honest options: say "once your domain token
+exists" on that line, hold the 49% as a credit until it does, or default the
+split to cash-only until tokenization lands and let them move it afterwards.
+Decide before a creator reads it as a promise.
+
+**3. Doma tokenizes `.io` only, so far.** The flow accepts any TLD the registry
+can answer for, which now means most of them. If only `.io` can actually be
+tokenized, the domain step should say so rather than letting somebody reserve a
+`.com` it cannot deliver on. Worth confirming with D3 what is live.
+
+**4. `.xyz` cannot be checked.** Its registry, rdap.centralnic.com, answers
+normally from a laptop and not from the Worker — almost certainly the same
+egress blocking CoinGecko does. It reports `unknown`, never `free`, so nothing
+is claimed falsely; it is a coverage gap rather than a correctness bug. `.com`,
+`.net`, `.org`, `.app` and `.io` all work.
+
+---
+
 ## Before the hackathon submission — go through every feature
 
 The plan is to walk each feature the way the early ones were done: read what is
