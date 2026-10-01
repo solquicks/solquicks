@@ -666,6 +666,10 @@
       display: inline-flex; flex-direction: column; gap: 18px;
       text-align: left; max-width: 100%;
     }
+    /* The row is as wide as the line underneath it, so centring the row moved
+       nothing — the mark and the name inside it have to be centred too. */
+    .soon-with-list.one { align-items: center; text-align: center; }
+    .soon-with-list.one .soon-partner-top { justify-content: center; }
     .soon-partner-top {
       display: flex; align-items: center; gap: 12px;
     }
@@ -3393,7 +3397,10 @@
             // row on its own put Slabz's mark and Collector Crypt's at
             // different places on the line, because their names are different
             // lengths — tidy one at a time, ragged together.
-            '<div class="soon-with-list">' +
+            // One partner has nothing to line up with, so it is centred. The
+            // ranging-left only exists to stop two marks sitting at different
+            // places on the line because their names are different lengths.
+            '<div class="soon-with-list' + (with_.length === 1 ? ' one' : '') + '">' +
             with_.map(function (p) {
               return '<div class="soon-partner">' +
                 '<div class="soon-partner-top">' +

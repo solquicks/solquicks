@@ -1894,6 +1894,40 @@ try {
       eq(tab + ': and is not read out twice to a screen reader', shown.alt, '');
     }
 
+    // Two different layouts, for two different problems. Alone, a mark has
+    // nothing to line up with, so it is centred. Together, centring each row
+    // on its own put the marks at different places on the line because the
+    // names are different lengths — so they range left off a common edge and
+    // the group is centred instead. Measured, because this is the kind of
+    // thing that looks fine in the markup and wrong on the page.
+    for (const [tab, count] of [['mine', 1], ['wishlist', 1], ['travel', 1], ['gacha', 2]]) {
+      await page.evaluate((t) => switchTab(t), tab);
+      await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
+      const m = await page.evaluate((t) => {
+        const card = document.querySelector('#panel-' + t + ' .soon');
+        const mid = (r) => Math.round(r.x + r.width / 2);
+        return {
+          head: mid(card.querySelector('.soon-with-head').getBoundingClientRect()),
+          pairs: [...card.querySelectorAll('.soon-partner-top')].map((e) => {
+            const img = e.querySelector('img'), name = e.querySelector('b');
+            return Math.round((img.getBoundingClientRect().x + name.getBoundingClientRect().right) / 2);
+          }),
+          logoX: [...card.querySelectorAll('.soon-logo')].map((e) => Math.round(e.getBoundingClientRect().x))
+        };
+      }, tab);
+      eq(tab + ': has ' + count, m.pairs.length, count);
+      if (count === 1) {
+        ok(tab + ': its mark and name sit under the middle of "Powered by"',
+          Math.abs(m.pairs[0] - m.head) <= 2, JSON.stringify(m));
+      } else {
+        ok(tab + ': every mark starts on the same line',
+          new Set(m.logoX).size === 1, JSON.stringify(m.logoX));
+        ok(tab + ': and the group of them is still under the middle',
+          Math.abs(Math.round((Math.min(...m.pairs) + Math.max(...m.pairs)) / 2) - m.head) <= 24,
+          JSON.stringify(m));
+      }
+    }
+
     // Swap already works, so its marks are a different claim from the
     // coming-soon ones: one of these is routing swaps today and one is not,
     // and the row has to say which without anybody reading the small print.
