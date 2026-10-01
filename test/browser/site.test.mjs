@@ -1845,7 +1845,7 @@ try {
       await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
       const sel = '#panel-' + tab + ' ';
       eq(tab + ': credits them under one heading',
-        (await page.textContent(sel + '.soon-with-head')).trim(), 'Built with');
+        (await page.textContent(sel + '.soon-with-head')).trim(), 'Powered by');
       eq(tab + ': names ' + names.join(' and '),
         await page.$$eval(sel + '.soon-partner b', (e) => e.map((x) => x.textContent.trim())).then((n) => n.join(',')),
         names.join(','));

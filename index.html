@@ -659,16 +659,19 @@
       text-transform: uppercase; letter-spacing: 0.06em;
       font-size: 0.7rem; color: var(--muted); margin-bottom: 10px;
     }
-    .soon-partner {
-      display: flex; align-items: center; gap: 10px; text-align: left;
+    .soon-partner { text-align: center; }
+    .soon-partner + .soon-partner { margin-top: 16px; }
+    .soon-partner-top {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
     }
-    .soon-partner + .soon-partner { margin-top: 10px; }
-    /* Same tile as the referral cards use. Every mark we have been given so
-       far is a square on a black field, and this site is light — a border and
-       a radius make that read as a logo rather than as a hole in the page. */
+    .soon-partner-top b { font-size: 1.05rem; }
+    /* Same tile as the referral cards use, at the same size. Every mark we
+       have been given is a square on a solid field, and this site is light —
+       a border and a radius make that read as a logo rather than as a hole in
+       the page. */
     .soon-logo {
-      width: 40px; height: 40px; flex: 0 0 auto;
-      border-radius: 11px; border: var(--line);
+      width: 56px; height: 56px; flex: 0 0 auto;
+      border-radius: 14px; border: var(--line);
       object-fit: cover; background: var(--cream); display: block;
     }
     .soon-with b { color: var(--ink); }
@@ -3353,16 +3356,20 @@
         // with reads as a plan; the same page without it reads as a wish, and
         // several of these had real partners going uncredited.
         (with_.length
-          ? '<div class="soon-with"><div class="soon-with-head">Built with</div>' +
+          ? '<div class="soon-with"><div class="soon-with-head">Powered by</div>' +
             with_.map(function (p) {
               return '<div class="soon-partner">' +
-                // Only ever a file in this repo. A mark is somebody else's
-                // property and showing it reads as their endorsement, so the
-                // path is never something that arrived at runtime.
-                (p.logo ? '<img class="soon-logo" src="' + escapeHtml(p.logo) + '" alt="" loading="lazy"/>' : '') +
-                '<div><b>' + escapeHtml(p.name) + '</b>' +
+                '<div class="soon-partner-top">' +
+                  // Only ever a file in this repo. A mark is somebody else's
+                  // property and showing it reads as their endorsement, so the
+                  // path is never something that arrived at runtime.
+                  (p.logo ? '<img class="soon-logo" src="' + escapeHtml(p.logo) + '" alt="" loading="lazy"/>' : '') +
+                  '<b>' + escapeHtml(p.name) + '</b>' +
+                '</div>' +
+                // The line goes under the pair rather than beside it, so a long
+                // one does not drag the name off centre.
                 (p.what ? '<span>' + escapeHtml(p.what) + '</span>' : '') +
-                '</div></div>';
+                '</div>';
             }).join('') +
             '</div>'
           : '') +
