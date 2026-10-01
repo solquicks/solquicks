@@ -34,4 +34,4 @@ solana-transaction = "4.1"
 solana-system-interface = "2.0"
 
 spl-token = { version = "8.0", features = ["no-entrypoint"] }
-spl-associated-token-account = { version = "7.0", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "8.0", features = ["no-entrypoint"] }
