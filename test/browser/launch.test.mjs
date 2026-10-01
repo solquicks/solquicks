@@ -276,6 +276,29 @@ try {
   ok('and lists what actually earns', earns.includes('Swap'), earns.join(','));
   eq('all of them, not the first few', earns.length, FEATURES.filter((f) => f.earns).length);
 
+  // The claim on this card is that a creator's domain becomes an asset they
+  // own. Who makes that true is the part that turns the claim into a plan.
+  {
+    const marks = await page.$$eval('.pitch-mark', (els) => els.map((e) => ({
+      name: e.textContent.trim(),
+      src: (e.querySelector('img') || {}).getAttribute
+        ? e.querySelector('img').getAttribute('src') : null,
+      alt: e.querySelector('img') ? e.querySelector('img').getAttribute('alt') : null
+    })));
+    eq('the pitch names who tokenizes the domain', marks.map((m) => m.name).join(','), 'D3,Doma');
+    ok('from our own repo, not somebody else\'s host',
+      marks.every((m) => /^img\/partners\//.test(m.src || '')), JSON.stringify(marks));
+    // The name is right beside each mark, so reading the image out as well
+    // would say everything twice.
+    ok('and not read out twice to a screen reader', marks.every((m) => m.alt === ''));
+
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.pitch-mark img')].every((i) => i.complete),
+      null, { timeout: 15000 }).catch(() => {});
+    const loaded = await page.$$eval('.pitch-mark img', (els) => els.map((i) => i.naturalWidth > 0));
+    ok('and the files behind them really load', loaded.every(Boolean), JSON.stringify(loaded));
+  }
+
   // The preview is there from the first second, before a single keystroke.
   ok('the preview is on screen from the start', await page.locator('.pv-frame').isVisible());
   eq('showing a placeholder site', await pv.name(), 'Your name');

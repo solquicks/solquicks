@@ -294,6 +294,23 @@
       border-top: var(--line); padding-top: 14px; margin: 18px 0 0;
     }
     .pitch-with b { color: var(--ink); }
+    /* The marks behind the claim above. A row rather than the stacked list the
+       coming-soon pages use: two names with no description between them would
+       be a tall, thin column on what is meant to be a short pitch. */
+    .pitch-marks {
+      display: flex; justify-content: center; flex-wrap: wrap;
+      gap: 10px 22px; margin-top: 14px;
+    }
+    .pitch-mark {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.86rem; font-weight: 800; color: var(--ink);
+    }
+    /* Same tile as every other mark on the site: each one we have been given
+       is a square on a solid field, and this page is light. */
+    .pitch-mark img {
+      width: 34px; height: 34px; border-radius: 10px; border: var(--line);
+      object-fit: cover; background: var(--cream); display: block;
+    }
     @media (max-width: 560px) { .pitch h1 { font-size: 1.6rem; } }
 
     .done-big { text-align: center; }
@@ -323,6 +340,13 @@
           <p class="pitch-with">Your site launches on <b>solquicks.com</b> straight away.
              Your domain is tokenized on Solana with <b>D3</b>, so it is an asset you own
              rather than a name you rent.</p>
+          <!-- Named with no line under them on purpose, as on the coming-soon
+               pages: describing somebody else's business for them, on a page
+               that credits them, is not ours to write. -->
+          <div class="pitch-marks">
+            <span class="pitch-mark"><img src="img/partners/d3.jpg" alt="" loading="lazy"/>D3</span>
+            <span class="pitch-mark"><img src="img/partners/doma.jpg" alt="" loading="lazy"/>Doma</span>
+          </div>
         </div>
         <label class="fld">
           <span>Invite code</span>

@@ -608,15 +608,22 @@ Where it stands:
 | Gacha | Collector Crypt | **in** | **needed** |
 | Travel | Nomadz | **in** | written |
 | Wishlist | sp3nd | **in** | written |
-| Creator Launchpad | D3 / Doma | needed | — |
+| Creator Launchpad | D3 and Doma | **in** | not needed — the sentence above them says it |
 | Swap | Jupiter (live), Titan (coming) | needed | — |
 | Store | store.fun (live), Nomu (coming) | needed | — |
 | DeFi, Games | nobody named yet | — | — |
 
-Every coming-soon page that has a partner now shows their mark. What is left
-is the three live features — Swap, Store and the Launchpad — which credit their
-partners in prose rather than through this slot, so they need a decision about
-where a logo would even go before anyone is asked for one.
+Every coming-soon page with a partner now shows their mark, and so does the
+Launchpad. The Launchpad marks sit on the pitch card under the line that
+already claims the domain gets tokenized — a row rather than the stacked list,
+since two names with no description would be a tall thin column on a short
+pitch. That is `.pitch-marks` in `launch.html`, separate from `soonHtml`
+because it is a different page with a different shape.
+
+What is left is **Swap and Store**. Both are live features, both credit their
+partners in prose, and neither has anywhere a logo obviously goes yet — the
+swap panel is a working form, not a pitch. Worth deciding where before asking
+Jupiter, Titan, store.fun or Nomu for anything.
 
 What to get from each: the logo file itself, how they want to be named in
 writing, and the link it should point at. Square with a transparent background
