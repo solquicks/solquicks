@@ -1345,9 +1345,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1a0311bb515940ae255499311e26598ca4f4133b784275985c0dc3af597cfa9"
+checksum = "7ff429bc2721548ac78bf7032d50c2bffeaef0273b17c71511f673b66d069bf6"
 dependencies = [
  "anchor-lang",
  "base64ct",
@@ -1374,9 +1374,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk-attribute-action"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3425b0a6bd0a748eee4e61c2b3e1c5bfa97ebd4622c5130b8629ee86b5273eca"
+checksum = "581730b2731b0cee8075e4a09b296ed9a38f1d703a74570413e6a31e3b16dbbe"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -1384,9 +1384,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk-attribute-commit"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "245924d68fe3664b415c984a5bcf8d2607a7a433f5e07f72e804f8835fde4c06"
+checksum = "d3e8b45470695e9f8b6a6562b7b8af3830b4948ee91cdc0f49c99c53f36bc8fd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1395,9 +1395,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk-attribute-delegate"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d413b0d272105921683cb41c5906bd52f7b5d4907a7f81813e38ea81ead3937b"
+checksum = "17dcb08f05eea7cf850c7c608a1f5113cc394158b941f404d24d2841c5955bc4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1406,9 +1406,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk-attribute-ephemeral"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce0d248780313174fe67d065b1540fc0b4adc075030b6dd69795f37f42a900e7"
+checksum = "b87795268970cbe3ddd0cd4c8730d2388bd2021f118dd2325edf49e48d99322e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1417,9 +1417,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-rollups-sdk-attribute-ephemeral-accounts"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a226f030b816320c4ba18539b4f03c639407127a5b699abe4518fc7384487c66"
+checksum = "8e3573876e6cc71f38a3385c884248e9d87f46b9211203caae3c72cb3ecb4cea"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1428,9 +1428,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-vrf-sdk"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95dc3ece860b604d9f7c46ad3a63b2cb9abd6106967db0cac57317b53ed35580"
+checksum = "a6e80db66b345edea9bd07834bcc7a6ba490d1485f26694f0997a0329c702f77"
 dependencies = [
  "anchor-lang",
  "borsh 1.8.1",
@@ -1441,9 +1441,9 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-vrf-sdk-vrf-macro"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb3c61029b5419848873536edeaa17d0ccda66fa69c980c23258a1eaa5a49555"
+checksum = "4db39f8c0da21e16b3e57141959023a3de6f759eb0b258ae5c9441c938160480"
 dependencies = [
  "proc-macro2",
  "quote",
