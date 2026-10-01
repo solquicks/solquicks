@@ -1833,14 +1833,82 @@ try {
     // A page that names who it is being built with reads as a plan. The same
     // page without it reads as a wish — and three of these had real partners
     // going uncredited.
-    for (const [tab, partner] of [['mine', 'Sat Rush'], ['travel', 'Nomadz'], ['wishlist', 'sp3nd']]) {
+    const credited = [
+      ['mine', ['Sat Rush']],
+      ['travel', ['Nomadz']],
+      ['wishlist', ['sp3nd']],
+      // Two, which is why the credit is a list rather than a single name.
+      ['gacha', ['Slabz', 'Collector Crypt']]
+    ];
+    for (const [tab, names] of credited) {
       await page.evaluate((t) => switchTab(t), tab);
       await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
-      const with_ = await page.textContent('#panel-' + tab + ' .soon-with');
-      ok(tab + ': credits ' + partner, new RegExp('Built with\\s+' + partner).test(with_.replace(/\s+/g, ' ')), with_);
-      eq(tab + ': and says it once, not twice',
-        (await page.textContent('#panel-' + tab + ' .soon-what')).includes(partner), false);
+      const sel = '#panel-' + tab + ' ';
+      eq(tab + ': credits them under one heading',
+        (await page.textContent(sel + '.soon-with-head')).trim(), 'Built with');
+      eq(tab + ': names ' + names.join(' and '),
+        await page.$$eval(sel + '.soon-partner b', (e) => e.map((x) => x.textContent.trim())).then((n) => n.join(',')),
+        names.join(','));
+      for (const n of names) {
+        eq(tab + ': says ' + n + ' once, not twice',
+          (await page.textContent(sel + '.soon-what')).includes(n), false);
+      }
     }
+
+    // A mark does what a name cannot: it is the difference between a page that
+    // claims a partner and one that visibly has one.
+    const marks = [['mine', 'Sat Rush'], ['gacha', 'Slabz'], ['gacha', 'Collector Crypt']];
+    for (const [tab, name] of marks) {
+      await page.evaluate((t) => switchTab(t), tab);
+      await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
+      // The marks are lazy, so they load when the panel is opened rather than
+      // with the page. Waiting is the point: what matters is that it arrives.
+      await page.waitForFunction((who) => {
+        const rows = [...document.querySelectorAll('.soon-partner')];
+        const row = rows.find((r) => (r.querySelector('b') || {}).textContent === who);
+        const img = row && row.querySelector('img.soon-logo');
+        return !img || img.complete;
+      }, name, { timeout: 15000 }).catch(() => {});
+      const shown = await page.$$eval('#panel-' + tab + ' .soon-partner', (rows, who) => {
+        const row = rows.find((r) => (r.querySelector('b') || {}).textContent === who);
+        const img = row && row.querySelector('img.soon-logo');
+        if (!img) return { there: false };
+        return {
+          there: true,
+          // naturalWidth is 0 for an image that failed to load, so this is the
+          // difference between the markup being right and the file being there.
+          loaded: img.complete && img.naturalWidth > 0,
+          src: img.getAttribute('src'),
+          alt: img.getAttribute('alt')
+        };
+      }, name);
+      ok(tab + ': ' + name + ' shows its mark', shown.there);
+      ok(tab + ': and the file behind it really loads', shown.loaded, JSON.stringify(shown));
+      ok(tab + ': served from our own repo, not somebody else\'s host',
+        /^img\/partners\//.test(shown.src || ''), shown.src);
+      // The name is right beside it, so reading the logo out as well would say
+      // everything twice.
+      eq(tab + ': and is not read out twice to a screen reader', shown.alt, '');
+    }
+
+    // Driven off the data rather than off the list above, so a mark added
+    // later with a typo in its path is caught here instead of by whoever
+    // opens the page and sees a broken image next to a partner's name.
+    const declared = await page.evaluate(() => SOON_TABS.flatMap(
+      (t) => (t.partners || []).filter((p) => p.logo).map((p) => t.tab + ' ' + p.name + ' ' + p.logo)));
+    ok('every mark the data declares is accounted for', declared.length >= 3, declared.join(' | '));
+    for (const row of declared) {
+      const file = row.split(' ').pop();
+      ok('the file for ' + row.split(' ').slice(0, -1).join(' ') + ' is in the repo',
+        fs.existsSync(path.join(ROOT, file)), file);
+    }
+
+    // A partner we have no mark for yet is still named — a missing logo must
+    // not take the credit down with it.
+    await page.evaluate(() => switchTab('travel'));
+    eq('travel: Nomadz is credited without a mark we do not have',
+      await page.locator('#panel-travel .soon-partner img').count(), 0);
+    eq('and is still named', (await page.textContent('#panel-travel .soon-partner b')).trim(), 'Nomadz');
 
     // The two with nobody to name yet must not grow an empty credit box.
     for (const tab of ['defi', 'games']) {
@@ -1898,8 +1966,16 @@ try {
     // Fixed to the corner, so at the bottom of a page it lands on whatever is
     // there. The footer is centred and nearly full width on a phone, which is
     // exactly the width that runs underneath it.
-    const clears = async () => page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
+    const clears = async () => page.evaluate(async () => {
+      // The page scrolls smoothly, so scrollTo animates. Measuring straight
+      // after it was measuring the footer part-way down — which is why this
+      // check passed or failed depending on how busy the machine was. Jump
+      // instead, and wait for the position to actually stop changing.
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
+      for (let last = -1; last !== window.scrollY;) {
+        last = window.scrollY;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
       const t = document.getElementById('back-to-top');
       t.classList.add('visible');
       // The line itself, not the footer box — that box includes the padding

@@ -655,6 +655,22 @@
       margin-top: 18px; padding-top: 14px; border-top: var(--line);
       font-size: 0.8rem; font-weight: 800; color: var(--ink-soft);
     }
+    .soon-with-head {
+      text-transform: uppercase; letter-spacing: 0.06em;
+      font-size: 0.7rem; color: var(--muted); margin-bottom: 10px;
+    }
+    .soon-partner {
+      display: flex; align-items: center; gap: 10px; text-align: left;
+    }
+    .soon-partner + .soon-partner { margin-top: 10px; }
+    /* Same tile as the referral cards use. Every mark we have been given so
+       far is a square on a black field, and this site is light — a border and
+       a radius make that read as a logo rather than as a hole in the page. */
+    .soon-logo {
+      width: 40px; height: 40px; flex: 0 0 auto;
+      border-radius: 11px; border: var(--line);
+      object-fit: cover; background: var(--cream); display: block;
+    }
     .soon-with b { color: var(--ink); }
     .soon-with span {
       display: block; font-weight: 600; color: var(--muted);
@@ -3268,7 +3284,10 @@
       },
       {
         tab: 'mine', name: 'Mine Bitcoin', icon: '₿',
-        partner: { name: 'Sat Rush', what: 'Bitcoin mining you take part in by depositing, rather than by running hardware.' },
+        partners: [
+          { name: 'Sat Rush', logo: 'img/partners/sat-rush.jpg',
+            what: 'Bitcoin mining you take part in by depositing, rather than by running hardware.' }
+        ],
         note: 'Deposit USDC, earn Bitcoin',
         lead: 'Mine Bitcoin',
         what: 'Deposit USDC and earn Bitcoin — no rig, no electricity bill and ' +
@@ -3276,6 +3295,13 @@
       },
       {
         tab: 'gacha', name: 'Gacha', icon: '✹',
+        // Name and mark only. The line describing what each of these does is
+        // theirs to write — describing somebody else's business for them, on a
+        // page that credits them, is not ours to guess at.
+        partners: [
+          { name: 'Slabz', logo: 'img/partners/slabz.jpg' },
+          { name: 'Collector Crypt', logo: 'img/partners/collector-crypt.jpg' }
+        ],
         note: 'Pull the handle, see what comes out',
         lead: 'Gacha',
         what: 'A pull of the handle for something out of the collection. What goes ' +
@@ -3284,7 +3310,9 @@
       },
       {
         tab: 'travel', name: 'Travel', icon: '✈',
-        partner: { name: 'Nomadz', what: 'Travel booked on chain, for people who already live out of a wallet.' },
+        partners: [
+          { name: 'Nomadz', what: 'Travel booked on chain, for people who already live out of a wallet.' }
+        ],
         note: 'Book trips, powered by Nomadz',
         lead: 'Travel',
         what: 'Flights and stays booked straight from a wallet. What is bookable, ' +
@@ -3299,7 +3327,9 @@
       },
       {
         tab: 'wishlist', name: 'Wishlist', icon: '✦',
-        partner: { name: 'sp3nd', what: 'Real-world checkout paid from a wallet, with no card in between.' },
+        partners: [
+          { name: 'sp3nd', what: 'Real-world checkout paid from a wallet, with no card in between.' }
+        ],
         note: 'My Amazon wishlist, paid in crypto',
         lead: 'Wishlist',
         what: 'My Amazon wishlist, so anything on it can be sent straight from a ' +
@@ -3309,7 +3339,10 @@
 
     /// The one place a not-yet-open page is described, so all four look the
     /// same and none of them looks like a page that failed to load.
-    function soonHtml(lead, what, partner) {
+    function soonHtml(lead, what, partners) {
+      // A list, not one: Gacha is built with two, and the next feature along
+      // will be too. One shape for every page beats a special case per page.
+      const with_ = partners || [];
       return '<div class="soon">' +
         '<div class="soon-tag">Coming soon</div>' +
         '<div class="soon-lead">' + escapeHtml(lead) + '</div>' +
@@ -3317,9 +3350,19 @@
         // Named where there is a name. A page that says who it is being built
         // with reads as a plan; the same page without it reads as a wish, and
         // several of these had real partners going uncredited.
-        (partner
-          ? '<div class="soon-with">Built with <b>' + escapeHtml(partner.name) + '</b>' +
-            (partner.what ? '<span>' + escapeHtml(partner.what) + '</span>' : '') + '</div>'
+        (with_.length
+          ? '<div class="soon-with"><div class="soon-with-head">Built with</div>' +
+            with_.map(function (p) {
+              return '<div class="soon-partner">' +
+                // Only ever a file in this repo. A mark is somebody else's
+                // property and showing it reads as their endorsement, so the
+                // path is never something that arrived at runtime.
+                (p.logo ? '<img class="soon-logo" src="' + escapeHtml(p.logo) + '" alt="" loading="lazy"/>' : '') +
+                '<div><b>' + escapeHtml(p.name) + '</b>' +
+                (p.what ? '<span>' + escapeHtml(p.what) + '</span>' : '') +
+                '</div></div>';
+            }).join('') +
+            '</div>'
           : '') +
         '</div>';
     }
@@ -3352,7 +3395,7 @@
         const panel = document.createElement('div');
         panel.id = 'panel-' + page.tab;
         panel.className = 'panel';
-        panel.innerHTML = soonHtml(page.lead, page.what, page.partner);
+        panel.innerHTML = soonHtml(page.lead, page.what, page.partners);
         after.parentNode.insertBefore(panel, after.nextSibling);
       }
       sortNavMenu();

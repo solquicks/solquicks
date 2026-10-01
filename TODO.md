@@ -601,25 +601,32 @@ has one, which is exactly what a judge is scanning for.
 
 Where it stands:
 
-| Page | Partner | Logo |
-|---|---|---|
-| Mine Bitcoin | Sat Rush | **have it** — `img/partners/sat-rush.jpg`, 400×400, sent 2026-10-01 |
-| Travel | Nomadz | needed |
-| Wishlist | sp3nd | needed |
-| Creator Launchpad | D3 / Doma | needed |
-| Swap | Jupiter (live), Titan (coming) | needed |
-| Store | store.fun (live), Nomu (coming) | needed |
-| DeFi, Gacha, Games | nobody named yet | — |
+| Page | Partner | Logo | Their one-liner |
+|---|---|---|---|
+| Mine Bitcoin | Sat Rush | **in** | written |
+| Gacha | Slabz | **in** | **needed** |
+| Gacha | Collector Crypt | **in** | **needed** |
+| Travel | Nomadz | needed | written |
+| Wishlist | sp3nd | needed | written |
+| Creator Launchpad | D3 / Doma | needed | — |
+| Swap | Jupiter (live), Titan (coming) | needed | — |
+| Store | store.fun (live), Nomu (coming) | needed | — |
+| DeFi, Games | nobody named yet | — | — |
 
 What to get from each: the logo file itself, how they want to be named in
-writing, and the link it should point at. Square and transparent-background is
-easiest — Sat Rush's is a 400×400 JPEG on dark, which works on our dark cards
-but would show a box on a light one.
+writing, and the link it should point at. Square with a transparent background
+is easiest — all three we have are square JPEGs on black, which is why the slot
+draws them as bordered tiles rather than bare.
 
-The code side is small and not started: `soonHtml(lead, what, partner)` in
-`index.html` renders `Built with **Name**` plus a blurb, text only. It needs a
-`logo` field on `partner` and a slot to draw it in, same as the referral cards
-will want. One change serves every page.
+**Slabz and Collector Crypt are named with no line under them**, because I am
+not describing somebody else's business for them on a page that credits them.
+One sentence each from them, and it drops straight in.
+
+The slot itself is built. `soonHtml(lead, what, partners)` in `index.html` now
+takes a list, each entry `{ name, logo?, what? }`, and draws the mark where
+there is one. Missing logo, missing line, one partner or several — all handled,
+so adding the rest is data only, no code. A test reads the data and checks
+every file it names is really in the repo.
 
 Worth saying once: a logo is someone's trademark and showing it reads as their
 endorsement. Fine where there is a real agreement — which is the point of
