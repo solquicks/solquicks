@@ -580,20 +580,40 @@ Also worth a decision: **MC or speaking is $1,000 with "travel included"**. A
 flight can cost more than the booking. Either a distance limit, or travel billed
 separately, or the price goes up.
 
-**4. The ten referral links.** 1 of 10 in — Superteam Talent, 2026-10-02.
+**4. The ten referral links.** 7 of 10 in, 2026-10-02 — Superteam Talent,
+Sat Rush, Meteora, Sanctum, Titan, Fomo, JungleFun. All seven checked for a
+200 before going in.
 Each entry needs `name`, `url`, `what` the platform does and `youGet`. Adding
 one is a change to `referrals.json` and nothing else: no code, and the tab
 flips itself from the notice to real cards.
 
-Two things outstanding on the one that is in:
+Outstanding:
 
-- **No logo.** `img/referrals/superteam.jpg` is not there, so the card shows an
-  "S" tile instead. It is a deliberate fallback rather than a broken image, but
-  a real mark is better. Same for the next nine.
+- **What the visitor gets, on six of the seven.** Only Superteam carries a
+  "You get" line, because it is the only one whose own site says what a
+  referred person receives. The rest publish nothing, and inventing a discount
+  on a page about money is not something to do. You signed up to these
+  programmes, so you know — send a line each and they drop in.
+
+  The introduction was changed to match: it used to say joining "gets you
+  something" and now says "some of them give you something", because the first
+  was a promise six of seven cards did not keep. A test checks the two against
+  each other, so if every card ends up with a "You get", the wording can go
+  back and the test will say so.
+
+- **Five of the seven have no mark.** Superteam, Meteora, Sanctum, Fomo and
+  JungleFun show an initial tile — a deliberate fallback, not a broken image,
+  but three "S" tiles in a row is not what this should look like. Sat Rush and
+  Titan already had marks in the repo from the partner work and now use them.
+
 - **Named "Superteam Talent", not "Superteam Scout".** Scout is what you are in
   that arrangement; talent is what the visitor becomes. Naming the card after
   the scout programme would tell a visitor they are signing up to be something
   they are not. Say if you would rather it read differently.
+
+- **JungleFun is a gacha product**, built by MonkeDAO and MagicBlock. The Gacha
+  feature is credited to Slabz and Collector Crypt. Worth knowing they are in
+  the same room, whether or not that changes anything.
 
 **5. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
 

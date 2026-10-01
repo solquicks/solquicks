@@ -2094,6 +2094,15 @@ try {
     // adding the next nine cannot quietly make this test describe the past.
     const shipped = JSON.parse(fs.readFileSync(path.join(ROOT, 'referrals.json'), 'utf8')).items;
     ok('the file that ships has something in it', shipped.length > 0);
+    // The introduction cannot promise every visitor something when most of
+    // these publish no such thing. It says "some of them" for that reason.
+    const intro = (await page.textContent('#ref-intro .bk-sub')).replace(/\s+/g, ' ');
+    const givers = shipped.filter((r) => (r.youGet || '').trim()).length;
+    ok('the introduction claims no more than the cards deliver',
+      givers === shipped.length ? true : /some of them/i.test(intro),
+      givers + ' of ' + shipped.length + ' — ' + intro);
+    ok('while still declaring what is in it for the owner',
+      /referral credit/.test(intro), intro);
     eq('and every one of them is on the page',
       await page.locator('#ref-list .ref-card').count(), shipped.length);
     for (const r of shipped) {
@@ -2102,8 +2111,13 @@ try {
       // where it says, is the one thing here that could actually cost someone.
       ok(r.name + ': goes somewhere over https', /^https:\/\//.test(r.url || ''), r.url);
       ok(r.name + ': says what the platform is', !!(r.what || '').trim());
-      ok(r.name + ': and what the visitor gets, which is what the intro promises',
-        !!(r.youGet || '').trim());
+      // Not every one of these gives the visitor anything, and most do not say
+      // so publicly. So a missing "You get" is allowed and an empty one is
+      // not — a card promising something blank is worse than one that is
+      // quiet. The introduction above says "some of them", which is the line
+      // this rule exists to keep true.
+      ok(r.name + ': makes no empty promise',
+        r.youGet === undefined || !!String(r.youGet).trim(), JSON.stringify(r.youGet));
     }
     const live = await page.evaluate(() => [...document.querySelectorAll('#ref-list .ref-go')]
       .map((a) => ({ href: a.getAttribute('href'), rel: a.getAttribute('rel') })));
