@@ -507,12 +507,10 @@ it has been sent.
 
 ## Creator Launchpad — what the walkthrough turned up
 
-**1. Privy, at the wallet step.** A creator with no self-custody wallet has
-nowhere to go: step 3 says "No Solana wallet found in this browser" and stops.
-Privy would let them sign in with Google, Apple or a phone number and have a
-wallet made for them. The app ID is a public identifier and belongs in the page;
-the app secret is a real credential and goes in as `wrangler secret put
-PRIVY_APP_SECRET`, never in a file — this repo is public.
+**1. ~~Privy, at the wallet step.~~** Built 2026-10-01. Email and phone codes,
+Google and Apple, each making a Solana wallet that becomes the creator's
+treasury, and the wizard survives the redirect. What is left is two settings in
+their dashboard — see the Privy section at the end of this file.
 
 **2. The 49% has nowhere to go yet.** Step 3 shows "49% into your domain token"
 at a point where no token exists. Honest options: say "once your domain token
@@ -750,12 +748,9 @@ The three new ones are defined in one place, `SOON_TABS` in `index.html`, which
 builds the menu entry and the page together. Adding a fifth is one entry;
 opening one for real means replacing its panel's contents.
 
-**13. Referrals page has no referrals in it.**
-Built 2026-09-22. `referrals.json` is an empty list, so the tab says "coming
-soon" rather than listing anything. Each entry needs `name`, `url`, a logo
-in `img/referrals/`, `what` the platform does and `youGet` — fill the file and
-the notice is replaced by the real cards on its own. Waiting on the ten links,
-logos and blurbs.
+**13. ~~Referrals page has no referrals in it.~~** 7 of 10 live 2026-10-02.
+What is still outstanding on it is under item 4 of the hackathon section:
+what the visitor gets, on six of the seven, and five missing marks.
 
 **12. ~~The consulting hour~~** — live 2026-09-22. Scheduled by hand rather
 than through Calendly, whose free plan allows one event type and the 30-minute
@@ -833,8 +828,10 @@ Open and undecided: points earned before signing in still vanish when you
 connect. The clean fix is to stop showing points to signed-out visitors so the
 site never displays a number it will not honour.
 
-Housekeeping: 58 dependency warnings, two critical, all in build tooling that
-never reaches the browser.
+Housekeeping: Dependabot is down to one open alert from five, 2026-10-01. The
+one left is a `low` with no reachable fix — cargo cannot get to the patched
+`rand` until `ephemeral-rollups-sdk` moves to `solana-program` 3.x. Reasoning
+for the four dismissed ones is in `docs/audits/dependabot-2026-10-01.md`.
 
 ## Privy sign-in — what is still on you
 
