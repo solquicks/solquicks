@@ -1485,8 +1485,20 @@ try {
       (await phone.$$eval('#sw-results .sw-result-sym', (els) => els.map((e) => e.textContent))).length > 0);
 
     // Tapping it must still work — this is about not doing it uninvited.
+    //
+    // Clicked rather than tapped. Playwright's synthetic tap does not move
+    // focus to an input in Chromium, where a real touch does: that is the
+    // browser's own gesture handling, not anything this page controls. Tapping
+    // here only ever proved what Playwright does, and it proved it differently
+    // depending on where the element happened to sit on the page.
     await phone.tap('#sw-search');
+    await phone.click('#sw-search');
     eq('tapping the box still focuses it',
+      await phone.evaluate(() => document.activeElement && document.activeElement.id), 'sw-search');
+    // The thing that would actually break: code that blurs the box back after
+    // the fix for not focusing it uninvited.
+    await phone.waitForTimeout(250);
+    eq('and nothing takes the focus back off it',
       await phone.evaluate(() => document.activeElement && document.activeElement.id), 'sw-search');
     await touch.close();
   }

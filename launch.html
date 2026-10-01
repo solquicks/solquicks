@@ -729,12 +729,29 @@
     const injected = [
       { name: 'Solflare', p: window.solflare },
       { name: 'Backpack', p: window.backpack },
-      { name: 'Glow', p: window.glow },
-      { name: 'Solana Wallet', p: window.solana }
+      { name: 'Glow', p: window.glow }
     ];
     for (const entry of injected) {
       if (entry.p && typeof entry.p.connect === 'function') {
         add({ kind: 'injected', name: entry.name, icon: entry.p.icon || null, w: entry.p });
+      }
+    }
+
+    // window.solana is the last resort, and almost never its own wallet —
+    // most wallets set it as well as their own name, so it was appearing as a
+    // nameless "Solana Wallet" beside the same wallet listed properly. Offered
+    // only when it is a different object from everything already found, and
+    // named from whatever it says about itself rather than generically.
+    const generic = window.solana;
+    if (generic && typeof generic.connect === 'function' &&
+        !found.some(function (f) { return f.w === generic; })) {
+      const named = generic.name ||
+        (generic.isBackpack && 'Backpack') || (generic.isGlow && 'Glow') ||
+        (generic.isSolflare && 'Solflare') || null;
+      // No name and no icon means nothing to show somebody except a blank row,
+      // and a blank row beside real wallets is worse than one fewer option.
+      if (named || generic.icon) {
+        add({ kind: 'injected', name: named || 'Browser wallet', icon: generic.icon || null, w: generic });
       }
     }
 

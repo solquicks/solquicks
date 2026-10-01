@@ -123,6 +123,9 @@ await context.addInitScript(() => {
   // A wallet that injects a provider instead of registering at all. Several
   // Solana wallets still only do this.
   window.solflare = { connect: async () => ({ publicKey: { toString: () => account.address } }) };
+  // ...and it sets window.solana too, as most of them do. That was showing up
+  // as a second, nameless "Solana Wallet" row beside the real one.
+  window.solana = window.solflare;
 });
 
 const page = await context.newPage();
@@ -386,6 +389,14 @@ try {
     // This wallet becomes the address a creator's customers pay into.
     ok('an Ethereum wallet is not offered for a Solana payout',
       !offered.includes('Ethereum Only'), offered.join(','));
+
+    // Most wallets set window.solana as well as their own name, so the generic
+    // fallback was listing the same wallet twice — once properly, once as a
+    // nameless "Solana Wallet" with no icon.
+    ok('a wallet that also sets window.solana is listed once, not twice',
+      offered.filter((n) => /Solflare/.test(n)).length === 1, offered.join(','));
+    ok('and no nameless row is offered beside the real ones',
+      !offered.some((n) => /Solana Wallet/.test(n)), offered.join(','));
   }
   ok('the split is shown before they commit to anything',
     /50%/.test(await page.textContent('#split')) && /Into your domain token/.test(await page.textContent('#split')));

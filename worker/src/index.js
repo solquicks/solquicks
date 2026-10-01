@@ -1658,7 +1658,9 @@ const LAUNCH_RESERVED = [
 ];
 // 200 means the registry knows it, 404 means nobody has it. rdap.org bootstraps
 // most of them; .io needs its registry named directly.
-const RDAP_HOSTS = { io: 'https://rdap.identitydigital.services/rdap/domain/' };
+// Which registry answers for a TLD comes from IANA's own bootstrap, below.
+// .io is not in that file at all, so it is named here directly.
+const RDAP_HOSTS = { io: 'https://rdap.identitydigital.services/rdap/' };
 
 // What a creator can put on their site. Three go in the top bar and any others
 // they want fall into the dropdown; the contact page and the advertising slot
@@ -1697,7 +1699,11 @@ const LAUNCH_FEATURES = [
   { id: 'games',     name: 'Games',     earns: true,  live: false, blurb: 'Games worth playing, with something real to win.' },
   { id: 'referrals', name: 'Referrals', earns: true,  live: false, blurb: 'Platforms you use, and what your audience gets for joining.' }
 ];
-const RDAP_DEFAULT = 'https://rdap.org/domain/';
+// IANA's RDAP bootstrap: every TLD mapped to its registry, republished daily.
+// rdap.org was used for this and only ever answered with a 302 to the real
+// registry, which the lookup read as "the registry did not answer" — so every
+// .com came back unknown, which is most of what anybody would type.
+const RDAP_BOOTSTRAP = 'https://data.iana.org/rdap/dns.json';
 
 // An avatar is either a link to a picture or a picture itself. The picture is
 // resized in the browser before it is sent, so this cap is generous for a
@@ -1766,11 +1772,44 @@ function slugProblem(slug) {
 /// Whether a real domain is already registered, asked of the registry itself.
 /// Returns null when the question could not be answered, which is different
 /// from "it is free" and must never be shown as though it were.
-async function domainTaken(name) {
+/// Which RDAP service answers for a TLD. Cached for a day: the bootstrap is a
+/// sizeable file covering twelve hundred TLDs and it changes about that often.
+async function rdapBase(env, tld) {
+  if (RDAP_HOSTS[tld]) return RDAP_HOSTS[tld];
+  const cache = caches.default;
+  const key = new Request('https://rdap-bootstrap.cache/dns.json');
+  let doc = null;
+  const hit = await cache.match(key);
+  if (hit) doc = await hit.json().catch(function () { return null; });
+  if (!doc) {
+    const res = await fetch(RDAP_BOOTSTRAP);
+    if (!res.ok) return null;
+    doc = await res.json().catch(function () { return null; });
+    if (!doc) return null;
+    await cache.put(key, new Response(JSON.stringify(doc), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=86400' }
+    }));
+  }
+  for (const svc of doc.services || []) {
+    if ((svc[0] || []).indexOf(tld) >= 0) {
+      const base = (svc[1] || [])[0];
+      return base ? (base.slice(-1) === '/' ? base : base + '/') : null;
+    }
+  }
+  return null;
+}
+
+async function domainTaken(env, name) {
   const tld = String(name).split('.').pop().toLowerCase();
-  const url = (RDAP_HOSTS[tld] || RDAP_DEFAULT) + encodeURIComponent(name);
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/rdap+json' } });
+    const base = await rdapBase(env, tld);
+    // A TLD nobody publishes a registry for cannot be checked at all. That is
+    // not the same as free, and must never be shown as though it were.
+    if (!base) return null;
+    const res = await fetch(base + 'domain/' + encodeURIComponent(name), {
+      headers: { Accept: 'application/rdap+json' },
+      redirect: 'follow'
+    });
     if (res.status === 404) return false;
     if (res.ok) return true;
     return null;
@@ -4116,7 +4155,7 @@ export default {
         }
         const mine = await env.DB.prepare('SELECT slug FROM sites WHERE domain = ?').bind(name).first();
         if (mine) return json(request, env, { name: name, status: 'taken', reason: 'already claimed here' });
-        const taken = await domainTaken(name);
+        const taken = await domainTaken(env, name);
         return json(request, env, {
           name: name,
           status: taken === null ? 'unknown' : taken ? 'taken' : 'free',

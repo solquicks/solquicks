@@ -22,8 +22,15 @@ const freshEnv = (o) => {
 // RDAP, as the registries answer it: 200 for a name somebody owns, 404 for one
 // nobody does.
 const REGISTERED = ['google.io', 'taken.com'];
-const registries = (u) => new Response('',
-  { status: REGISTERED.indexOf(decodeURIComponent(u.split('/').pop())) >= 0 ? 200 : 404 });
+// IANA's bootstrap decides which registry answers for a TLD; the registry then
+// answers 200 for a name somebody owns and 404 for one nobody does.
+const BOOTSTRAP = { services: [[['com', 'net'], ['https://rdap.verisign.com/com/v1/']]] };
+const registries = (u) => {
+  if (u.indexOf('data.iana.org') >= 0) {
+    return new Response(JSON.stringify(BOOTSTRAP), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  return new Response('', { status: REGISTERED.indexOf(decodeURIComponent(u.split('/').pop())) >= 0 ? 200 : 404 });
+};
 chain.rdap = registries;
 
 const slug = (env, s) => call(env, 'GET', '/api/launch/slug?s=' + encodeURIComponent(s));
@@ -120,7 +127,9 @@ section('the domain, asked of the registry rather than guessed');
 
   // A registry that will not answer is unknown. Showing that as "free" would
   // have somebody reserve a name that is already somebody else's.
-  chain.rdap = () => new Response('', { status: 500 });
+  chain.rdap = (u) => u.indexOf('data.iana.org') >= 0
+    ? new Response(JSON.stringify(BOOTSTRAP), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    : new Response('', { status: 500 });
   const out = await domain(env, 'ripple.io');
   eq('a registry that will not answer says so', out.body.status, 'unknown');
   ok('rather than claiming it is available', out.body.status !== 'free', out.body.status);
@@ -128,6 +137,18 @@ section('the domain, asked of the registry rather than guessed');
 
   await create(env, {});
   eq('a domain already claimed here is taken', (await domain(env, 'ripple.io')).body.status, 'taken');
+
+  // .com is most of what anyone would type, and it used to come back unknown:
+  // the old lookup went through a service that only ever answered with a
+  // redirect to the real registry, which read as the registry not answering.
+  const env5 = freshEnv();
+  eq('a .com nobody owns is free', (await domain(env5, 'zzq-fox-9183.com')).body.status, 'free');
+  eq('and one somebody owns is taken', (await domain(env5, 'taken.com')).body.status, 'taken');
+
+  // A TLD with no RDAP service at all cannot be checked, which is not the
+  // same as being free.
+  eq('a TLD nobody publishes a registry for is unknown',
+    (await domain(env5, 'ripple.nowhere')).body.status, 'unknown');
 }
 
 section('launching');
