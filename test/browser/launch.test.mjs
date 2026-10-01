@@ -452,6 +452,15 @@ try {
   ok('what goes in the bar', /Swap, Store, Bookings/.test(review), review);
   ok('and the split, one more time', /50% cash/.test(review), review);
 
+  // Nothing touches Solana when this is pressed — the site is made and the
+  // domain reserved, and tokenization happens with D3 afterwards. A button
+  // promising a signature that never comes is the one claim this site would
+  // be making that it does not keep.
+  eq('the button says what it actually does', (await page.textContent('#launch-go')).trim(), 'Launch my site');
+  const sub = (await page.textContent('#s-launch .step-sub')).replace(/\s+/g, ' ');
+  ok('and says no signature is needed', /no wallet signature needed/.test(sub), sub);
+  ok('while naming what does go on Solana, and when', /tokenized on Solana with D3 after/.test(sub), sub);
+
   await page.click('#launch-go');
   await page.waitForSelector('#s-done:not([hidden])', { timeout: 10000 });
 

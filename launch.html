@@ -393,11 +393,18 @@
       <!-- ── 5. launch ── -->
       <div class="card" id="s-launch" hidden>
         <div class="step-head"><span class="step-no">5</span><span class="step-title">Launch</span></div>
-        <p class="step-sub">This makes your site. It is live the moment you press it.</p>
+        <p class="step-sub">This makes your site and it is live the moment you press it —
+           no wallet signature needed. Your domain is reserved to you now and tokenized on
+           Solana with D3 after that.</p>
         <div id="review"></div>
         <div class="actions">
           <button class="go ghost" onclick="toStep('domain')">Back</button>
-          <button class="go" id="launch-go" onclick="launchSite()">Launch on Solana</button>
+          <!-- Not "Launch on Solana". Nothing touches Solana when this is
+               pressed: the site is made and the domain reserved, and the
+               tokenization happens with D3 afterwards. A button that promises
+               a signature and gives none is the one thing on this site that
+               would claim something it does not do. -->
+          <button class="go" id="launch-go" onclick="launchSite()">Launch my site</button>
         </div>
         <div class="msg" id="launch-msg"></div>
       </div>
