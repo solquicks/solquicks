@@ -185,6 +185,21 @@
     .way:hover { background: var(--orange-soft); }
     .way.on { background: var(--orange-soft); color: var(--ink); border-color: var(--orange); }
     .code-in { font-family: ui-monospace, monospace; letter-spacing: 0.3em; text-align: center; }
+    .socials-in { display: flex; flex-direction: column; gap: 8px; }
+    .oauth {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      cursor: pointer; font: inherit; font-weight: 800; font-size: 0.92rem;
+      background: var(--card); border: var(--line); border-radius: 12px;
+      padding: 11px 14px; color: inherit;
+    }
+    .oauth:hover { background: var(--orange-soft); }
+    .oauth:disabled { opacity: 0.5; cursor: default; }
+    .oauth svg { width: 18px; height: 18px; flex: 0 0 auto; }
+    .resume {
+      margin-top: 14px; padding: 12px 14px; background: var(--orange-soft);
+      border: var(--line); border-radius: 12px; font-size: 0.9rem; font-weight: 700;
+    }
+    .resume .actions { margin-top: 10px; }
 
     .split { display: grid; gap: 8px; margin-top: 14px; }
     .split-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.9rem; }
@@ -317,6 +332,17 @@
           </div>
         </label>
         <div class="msg" id="code-msg"></div>
+
+        <!-- Somebody who closed the tab halfway through has already spent
+             their invite code, and there is only one. Losing the rest of what
+             they typed would mean starting a site they cannot start. -->
+        <div class="resume" id="resume" hidden>
+          <div><b id="resume-what"></b> is half set up from last time.</div>
+          <div class="actions">
+            <button class="go" onclick="resumeDraft()">Pick up where I left off</button>
+            <button class="go ghost" onclick="dropDraft()">Start again</button>
+          </div>
+        </div>
       </div>
 
       <!-- ── 1. brand ── -->
@@ -376,6 +402,8 @@
           <div class="or"><span>or</span></div>
           <button class="go ghost" id="signin-open" onclick="openSignin()">I don't have a wallet — make me one</button>
           <div id="signin-flow" hidden>
+            <div class="socials-in" id="oauth-ways"></div>
+            <div class="or"><span>or use a code</span></div>
             <div class="ways">
               <button type="button" class="way on" id="way-email" onclick="setSigninWay('email')">Email</button>
               <button type="button" class="way" id="way-phone" onclick="setSigninWay('phone')">Phone</button>
@@ -559,6 +587,10 @@
       card.classList.toggle('done', false);
     }
     if (name === 'launch') paintReview();
+    // Not on the last step. The site exists by then and launchSite has just
+    // thrown the draft away — saving here wrote it straight back, and offered
+    // them a resume of a name they had already taken.
+    if (name !== 'done') saveDraft();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -594,6 +626,7 @@
         // until the creator has said otherwise.
         if (key === 'name' && !draft.slug) $('f-slug').placeholder = slugify(this.value) || 'yourname';
         paintPreview();
+        touchDraft();
       });
     }
   }
@@ -610,6 +643,7 @@
       if (!el) return;
       const v = el.value.trim();
       if (v) draft.socials[el.dataset.soc] = v; else delete draft.socials[el.dataset.soc];
+      touchDraft();
       paintPreview();
     });
   }
@@ -656,6 +690,7 @@
       const data = await readPicture(file);
       if (data.length > AVATAR_MAX) throw new Error('that picture is too big even once shrunk');
       draft.avatar = data;
+      touchDraft();
       document.getElementById('f-avatar').value = '';
       document.getElementById('f-avatar').placeholder = 'Uploaded ✓';
       note('avatar-msg', 'Picture ready.', 'ok');
@@ -723,6 +758,7 @@
     const id = card.dataset.id;
     const i = draft.picked.indexOf(id);
     if (i >= 0) draft.picked.splice(i, 1); else draft.picked.push(id);
+    touchDraft();
     note('feats-msg', '', '');
     paintFeats();
   }
@@ -735,6 +771,7 @@
     if (!drop) return;
     const i = draft.picked.indexOf(drop.dataset.drop);
     if (i >= 0) draft.picked.splice(i, 1);
+    touchDraft();
     note('feats-msg', '', '');
     paintFeats();
   }
@@ -876,6 +913,10 @@
   // forget a step — enabling Next without painting the split, say.
   function useWallet(address, remember) {
     draft.wallet = address;
+    // Written now, not on a timer. This is the field that decides where their
+    // money goes, and it changes on a click rather than a keystroke — there is
+    // nothing to debounce and everything to lose if a reload beats the timer.
+    saveDraft();
     if (remember) { try { localStorage.setItem(WALLET_KEY, remember); } catch (e) { /* fine */ } }
     $('wallets').innerHTML = '';
     $('signin').hidden = true;
@@ -889,6 +930,7 @@
 
   function pickAnotherWallet() {
     draft.wallet = null;
+    saveDraft();
     $('wallet-have').hidden = true;
     $('wallet-go').disabled = true;
     // Back to the closed state, not to a half-filled form still saying a code
@@ -896,6 +938,100 @@
     // not be the one they now want.
     resetSignin();
     paintWallets(wallets);
+  }
+
+  // ── keeping what they typed ─────────────────────────────────────────────
+  // Signing in with Google or Apple leaves this page entirely and comes back,
+  // and everything typed so far lives in one object in memory. Without this
+  // the redirect would land them on an empty form having already spent their
+  // invite code — and there is only one code each.
+  const DRAFT_KEY = 'launch_draft';
+  const DRAFT_GOOD_FOR = 24 * 60 * 60 * 1000;
+  let saveTimer = null;
+
+  function saveDraft() {
+    const keep = { at: at, draft: draft, saved: Date.now() };
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(keep));
+    } catch (e) {
+      // The picture is the only thing here big enough to fill the quota, and
+      // a draft without it is worth far more than no draft at all.
+      try {
+        const lean = { at: at, draft: Object.assign({}, draft, { avatar: '' }), saved: Date.now() };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(lean));
+      } catch (err) { /* nothing more to try; the wizard still works */ }
+    }
+  }
+
+  // Called from every input, so it is debounced — the picture alone can be
+  // 400KB and writing that on each keystroke would be felt.
+  function touchDraft() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveDraft, 400);
+  }
+
+  function readDraft() {
+    let raw = null;
+    try { raw = localStorage.getItem(DRAFT_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    let keep = null;
+    try { keep = JSON.parse(raw); } catch (e) { clearDraft(); return null; }
+    if (!keep || !keep.draft || !keep.draft.code) { clearDraft(); return null; }
+    // A week-old half-site is not something to drop somebody back into.
+    if (!(Date.now() - (keep.saved || 0) < DRAFT_GOOD_FOR)) { clearDraft(); return null; }
+    return keep;
+  }
+
+  function clearDraft() {
+    clearTimeout(saveTimer);
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* fine */ }
+  }
+
+  // Puts a saved draft back into the page, not just into the object — every
+  // field, the picture, the links and the pages they picked, or they would be
+  // looking at a preview of work they cannot see or edit.
+  function restoreDraft(keep) {
+    Object.assign(draft, keep.draft);
+    $('f-name').value = draft.name || '';
+    $('f-handle').value = draft.handle || '';
+    $('f-tagline').value = draft.tagline || '';
+    $('f-slug').value = draft.slug || '';
+    $('f-domain').value = draft.domain || '';
+    for (const p of SOCIALS) {
+      const el = $('soc-' + p.id);
+      if (el) el.value = (draft.socials && draft.socials[p.id]) || '';
+    }
+    // Checked before, but not now — a name free last week may be taken, and
+    // the step will not let them past until it has asked again.
+    draft.slugOk = false;
+    draft.domainOk = false;
+    paintFeats();   // draws the three slots and the picker together
+    paintPreview();
+    if (draft.wallet) useWallet(draft.wallet, null);
+    else paintWallets(wallets);
+  }
+
+  function offerResume() {
+    const keep = readDraft();
+    if (!keep) return;
+    $('resume-what').textContent = (keep.draft.name || '').trim() || 'A site';
+    $('resume').hidden = false;
+  }
+
+  function resumeDraft() {
+    const keep = readDraft();
+    if (!keep) { $('resume').hidden = true; return; }
+    $('resume').hidden = true;
+    restoreDraft(keep);
+    // Never straight back to the last step: the address checks were thrown
+    // away on restore, so landing on review would show a launch button that
+    // cannot work.
+    toStep(keep.at === 'done' || keep.at === 'launch' ? 'domain' : (keep.at || 'brand'));
+  }
+
+  function dropDraft() {
+    clearDraft();
+    $('resume').hidden = true;
   }
 
   // ── signing in without a wallet ─────────────────────────────────────────
@@ -960,7 +1096,118 @@
     return p;
   }
 
+  // Google and Apple are OAuth: this page is left for the provider's own
+  // sign-in and comes back. Which is why the draft is saved first — see
+  // saveDraft above.
+  const OAUTH_WAYS = [
+    { id: 'google', name: 'Continue with Google', mark:
+      '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v8h12c-.2 2-1.6 5-4 7l6.5 5C42.3 36.5 45 31 45 24z"/>' +
+      '<path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3L32 35.7c-1.8 1.2-4.3 2-8 2-6 0-11.1-3.9-12.9-9.3l-6.8 5.2C8 40.3 15.4 46 24 46z"/>' +
+      '<path fill="#FBBC05" d="M11.1 28.4A13.4 13.4 0 0 1 10.4 24c0-1.5.3-3 .7-4.4l-6.8-5.3A21.9 21.9 0 0 0 2 24c0 3.5.8 6.9 2.3 9.7l6.8-5.3z"/>' +
+      '<path fill="#EA4335" d="M24 10.3c3.3 0 6.2 1.1 8.5 3.3l5.7-5.7C34.8 4.5 29.9 2 24 2 15.4 2 8 7.7 4.3 14.3l6.8 5.3C12.9 14.2 18 10.3 24 10.3z"/></svg>' },
+    { id: 'apple', name: 'Continue with Apple', mark:
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.7c0-2.3 1.9-3.5 2-3.5-1.1-1.6-2.8-1.8-3.4-1.9-1.5-.1-2.8.8-3.5.8-.7 0-1.8-.8-3-.8C6.9 7.4 5 8.8 5 12c0 1.3.3 2.6.8 3.9.7 1.7 1.6 3.4 3 3.4.7 0 1.2-.5 2.3-.5s1.5.5 2.3.5c1.4 0 2.2-1.6 2.9-3.2-1.5-.7-2-2.3-2-3.4zM14.3 5.8c.7-.8 1.1-1.9 1-3-1 0-2.2.7-2.9 1.5-.6.7-1.1 1.8-1 2.9 1.1.1 2.2-.6 2.9-1.4z"/></svg>' }
+  ];
+
+  const OAUTH_RETURN = 'launch_oauth';   // which provider we left for
+
+  function paintOauth() {
+    const box = $('oauth-ways');
+    box.innerHTML = '';
+    for (const w of OAUTH_WAYS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'oauth';
+      b.id = 'oauth-' + w.id;
+      b.innerHTML = w.mark;
+      const label = document.createElement('span');
+      label.textContent = w.name;
+      b.appendChild(label);
+      b.onclick = function () { startOauth(w.id, w.name); };
+      box.appendChild(b);
+    }
+  }
+
+  async function startOauth(provider, label) {
+    const btn = $('oauth-' + provider);
+    btn.disabled = true;
+    note('signin-msg', 'Taking you to ' + label.replace('Continue with ', '') + '…', '');
+    try {
+      // PKCE needs real crypto, which browsers only give a secure context.
+      // Saying so is better than a redirect that comes back empty.
+      if (!(window.crypto && window.crypto.subtle)) {
+        throw new Error('This browser will not allow a secure sign-in here. Use a code instead.');
+      }
+      const p = await privyClient();
+      // Back to this same page. Nothing new to allowlist beyond the page
+      // itself, and no second file that has to stay in step with this one.
+      const back = window.location.origin + window.location.pathname;
+      const out = await p.auth.oauth.generateURL(provider, back);
+      const url = (out && out.url) || out;
+      if (!url || typeof url !== 'string') throw new Error('Sign-in did not come back with anywhere to go.');
+
+      // Saved last, and only once there is really somewhere to go: a flag
+      // written before a failed start would have the page hunting for a
+      // redirect that never happened.
+      saveDraft();
+      try { localStorage.setItem(OAUTH_RETURN, provider); } catch (e) { /* the code route still works */ }
+      window.location.assign(url);
+    } catch (e) {
+      note('signin-msg', signinTrouble(e), 'bad');
+      btn.disabled = false;
+    }
+  }
+
+  // Run once on load. Returning from a provider is the only time the wizard
+  // restores itself without asking — they are mid-flow and there is nothing
+  // to decide.
+  async function finishOauth() {
+    const q = new URLSearchParams(window.location.search);
+    const code = q.get('privy_oauth_code');
+    const state = q.get('privy_oauth_state');
+    let provider = null;
+    try { provider = localStorage.getItem(OAUTH_RETURN); } catch (e) { /* fine */ }
+    if (!code && !state && !provider) return false;
+
+    // The code is one use. Taken out of the URL before anything is done with
+    // it, so a reload cannot spend it twice and a shared link carries nothing.
+    try { window.history.replaceState({}, '', window.location.origin + window.location.pathname); } catch (e) { /* fine */ }
+    try { localStorage.removeItem(OAUTH_RETURN); } catch (e) { /* fine */ }
+
+    const keep = readDraft();
+    if (!keep) {
+      // Their draft expired or was cleared while they were away. Nothing to
+      // come back to, so they start over rather than land in a broken wizard.
+      return false;
+    }
+    restoreDraft(keep);
+    toStep('wallet');
+    openSignin();
+
+    if (!code || !state) {
+      // They cancelled at the provider, or it refused. Everything they typed
+      // is still here and the wallet list is still there.
+      note('signin-msg', 'That sign-in did not finish. Try again, or use a code.', 'bad');
+      return true;
+    }
+
+    note('signin-msg', 'Finishing sign-in…', '');
+    try {
+      const SDK = await loadPrivy();
+      const p = await privyClient();
+      await p.auth.oauth.loginWithCode(code, state, provider || undefined);
+      await adoptPrivyWallet(SDK, p);
+    } catch (e) {
+      note('signin-msg', signinTrouble(e), 'bad');
+    }
+    return true;
+  }
+
   function openSignin() {
+    // The block itself, not just the form inside it. Coming back from a
+    // provider with a wallet already restored had hidden the whole thing,
+    // which left "finishing sign-in" and any failure invisible.
+    $('signin').hidden = false;
     $('signin-open').hidden = true;
     $('signin-flow').hidden = false;
     setSigninWay('email');
@@ -969,6 +1216,56 @@
     // A failure here is not reported yet — it is reported when they press send,
     // which is the first moment it is actually in their way.
     loadPrivy().catch(function () { /* reported on send */ });
+    trimToWhatWorks();
+  }
+
+  // Which ways of signing in are actually switched on lives in Privy's
+  // dashboard, not here. Asking means a creator is never handed a button that
+  // cannot work — and that turning one on takes effect without us deploying.
+  // Asked here because the bundle is already downloading at this point and
+  // they have not chosen anything yet.
+  async function trimToWhatWorks() {
+    let cfg = null;
+    try {
+      const p = await privyClient();
+      cfg = await p.app.getConfig();
+    } catch (e) {
+      // Could not ask. Everything stays offered: a route that might work is
+      // better than hiding sign-in over a failed lookup.
+      return;
+    }
+    if (!cfg) return;
+
+    const on = {
+      email: cfg.email_auth !== false,
+      phone: cfg.sms_auth !== false,
+      google: cfg.google_oauth !== false,
+      apple: cfg.apple_oauth !== false
+    };
+
+    for (const w of OAUTH_WAYS) {
+      const b = $('oauth-' + w.id);
+      if (b) b.hidden = !on[w.id];
+    }
+    const anyOauth = OAUTH_WAYS.some(function (w) { return on[w.id]; });
+    $('oauth-ways').hidden = !anyOauth;
+    // The "or use a code" rule only means anything with something above it.
+    $('signin-flow').querySelector('.or').hidden = !anyOauth;
+
+    $('way-email').hidden = !on.email;
+    $('way-phone').hidden = !on.phone;
+    // One way left is not a choice, so it is not presented as one.
+    $('signin-flow').querySelector('.ways').hidden = !(on.email && on.phone);
+    if (!on[signinWay]) setSigninWay(on.email ? 'email' : 'phone');
+
+    if (!on.email && !on.phone) {
+      $('signin-id-box').hidden = true;
+      $('signin-code-box').hidden = true;
+    }
+    if (!on.email && !on.phone && !anyOauth) {
+      note('signin-msg', 'Making a wallet here is switched off right now. ' +
+        'Use a wallet app instead.', 'bad');
+    }
   }
 
   function setSigninWay(way) {
@@ -1039,22 +1336,29 @@
       if (signinWay === 'email') await p.auth.email.loginWithCode(signinSentTo, code);
       else await p.auth.phone.loginWithCode(signinSentTo, code);
 
-      note('signin-msg', 'Making your wallet…', '');
-      // They may already have a wallet from an earlier visit. Making a second
-      // one would point this site at an address they are not watching, so the
-      // existing one wins.
-      const got = await p.user.get();
-      let account = SDK.getUserEmbeddedSolanaWallet(got && got.user);
-      if (!account) {
-        const made = await p.embeddedWallet.createSolana();
-        account = SDK.getUserEmbeddedSolanaWallet(made && made.user);
-      }
-      if (!account || !account.address) throw new Error('The wallet did not come back. Try again.');
-      useWallet(account.address, null);
+      await adoptPrivyWallet(SDK, p);
     } catch (e) {
       note('signin-msg', signinTrouble(e), 'bad');
     }
     btn.disabled = false;
+  }
+
+  // Everything after a successful sign-in, however they signed in. One place,
+  // so a creator arriving by Google cannot end up on a different wallet from
+  // one arriving by email.
+  async function adoptPrivyWallet(SDK, p) {
+    note('signin-msg', 'Making your wallet…', '');
+    // They may already have a wallet from an earlier visit. Making a second
+    // one would point this site at an address they are not watching, so the
+    // existing one wins.
+    const got = await p.user.get();
+    let account = SDK.getUserEmbeddedSolanaWallet(got && got.user);
+    if (!account) {
+      const made = await p.embeddedWallet.createSolana();
+      account = SDK.getUserEmbeddedSolanaWallet(made && made.user);
+    }
+    if (!account || !account.address) throw new Error('The wallet did not come back. Try again.');
+    useWallet(account.address, null);
   }
 
   // Privy's messages are written for developers. These are the ones a creator
@@ -1067,6 +1371,11 @@
     if (low.indexOf('invalid') >= 0 && low.indexOf('code') >= 0) return 'That code is not right. Check it and try again.';
     if (low.indexOf('expired') >= 0) return 'That code has expired. Send yourself another.';
     if (low.indexOf('too many') >= 0 || low.indexOf('rate') >= 0) return 'Too many tries. Wait a minute and try again.';
+    // Privy's wording for a login method that is off in the dashboard is
+    // "Login with X not allowed", which reads like a refusal of the person
+    // rather than of the setting.
+    const off = raw.match(/Login with ([A-Za-z]+) not allowed/i);
+    if (off) return off[1] + ' sign-in is not switched on yet. Use a code instead.';
     if (low.indexOf('allowed') >= 0 || low.indexOf('origin') >= 0) return 'Sign-in is not set up for this address yet.';
     if (low.indexOf('phone') >= 0 || low.indexOf('email') >= 0) return raw;
     if (low.indexOf('failed to fetch') >= 0 || low.indexOf('network') >= 0) return 'Could not reach sign-in. Check your connection.';
@@ -1094,6 +1403,7 @@
   function bindAddress() {
     $('f-slug').addEventListener('input', function () {
       draft.slug = this.value.trim().toLowerCase();
+      touchDraft();
       draft.slugOk = false;
       $('domain-go').disabled = true;
       paintPreview();
@@ -1104,6 +1414,7 @@
     });
     $('f-domain').addEventListener('input', function () {
       draft.domain = this.value.trim().toLowerCase();
+      touchDraft();
       draft.domainOk = false;
       paintPreview();
       clearTimeout(domainTimer);
@@ -1176,6 +1487,9 @@
       note('launch-msg', (r.body && r.body.error) || 'That did not work.', 'bad');
       return;
     }
+    // The site exists, so the draft is spent along with the invite code.
+    // Leaving it would offer them a resume of a site they already launched.
+    clearDraft();
     const url = 'https://' + r.body.host;
     $('done-url').textContent = r.body.host;
     $('done-url').href = url;
@@ -1219,7 +1533,10 @@
   }
 
   // ── start ──────────────────────────────────────────────────────────────
-  (async function start() {
+  // Held onto, because restoring a draft repaints the pages and the links —
+  // and both are built from what this fetch returns. Restoring before it
+  // lands would put somebody back into a wizard with no pages in it.
+  const ready = (async function start() {
     const r = await api('/api/launch/features');
     FEATURES = (r.body && r.body.features) || [];
     SOCIALS = (r.body && r.body.socials) || [];
@@ -1241,6 +1558,10 @@
   $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkCode(); });
   $('f-file').addEventListener('change', function () { if (this.files[0]) pickPicture(this.files[0]); });
   findWallets();
+  paintOauth();
+  // Returning from Google or Apple restores the wizard on its own. Only when
+  // that is not what this load is does a saved draft get offered as a choice.
+  ready.then(finishOauth).then(function (returning) { if (!returning) offerResume(); });
 </script>
 </body>
 </html>

@@ -124,6 +124,10 @@ window.__privy = { sent: [], created: 0, posted: null, onMessage: [], hasWallet:
   }
   function Privy(opts) {
     window.__privy.appId = opts.appId;
+    // What the dashboard has switched on. The page asks rather than assuming,
+    // so a creator is never handed a button that cannot work.
+    this.app = { getConfig: async () => window.__privyConfig || {
+      email_auth: true, sms_auth: true, google_oauth: true, apple_oauth: true } };
     this.auth = { email: otp('email'), phone: otp('phone') };
     this.user = { get: async () => ({ user: user() }) };
     this.embeddedWallet = {
@@ -138,6 +142,24 @@ window.__privy = { sent: [], created: 0, posted: null, onMessage: [], hasWallet:
     };
     this.initialize = async () => {};
     this.setMessagePoster = (w) => { window.__privy.posted = w ? 'frame' : null; };
+
+    // OAuth leaves this page and comes back, so what the page asked for has
+    // to outlive the navigation to be checked afterwards.
+    this.auth.oauth = {
+      generateURL: async (provider, redirectURI) => {
+        try { sessionStorage.setItem('__oauth_asked', provider + ' ' + redirectURI); } catch (e) {}
+        // A stand-in provider page that redirects straight back, so the round
+        // trip is a real navigation and not a simulated one.
+        const back = encodeURIComponent(redirectURI);
+        return { url: 'https://provider.test/fake-oauth?back=' + back + '&p=' + provider +
+          (window.__oauthWillCancel ? '&cancel=1' : '') };
+      },
+      loginWithCode: async (code, state, provider) => {
+        try { sessionStorage.setItem('__oauth_used', [code, state, provider].join(' ')); } catch (e) {}
+        if (code !== 'good-code') throw new Error('Invalid authorization code');
+        return { user: user() };
+      }
+    };
   }
   window.PrivySDK = {
     Privy: Privy,
@@ -201,6 +223,19 @@ await context.route('**/*', async (route) => {
   const url = route.request().url();
   if (/\/vendor\/privy\.js$/.test(url)) {
     return route.fulfill({ status: 200, contentType: 'text/javascript', body: PRIVY_STUB });
+  }
+  // Google and Apple, stood in for: a page on somebody else's origin that
+  // sends the browser back the way a real provider does. A real navigation
+  // away and back, so the draft really has to survive a page load.
+  if (/\/fake-oauth/.test(url)) {
+    const q = new URL(url).searchParams;
+    const back = q.get('back');
+    const to = q.get('cancel')
+      ? back + '?privy_oauth_error=access_denied'
+      : back + '?privy_oauth_code=good-code&privy_oauth_state=st-42';
+    return route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><meta charset="utf-8"><title>Provider</title>' +
+            '<script>location.replace(' + JSON.stringify(to) + ')</scr' + 'ipt>' });
   }
   if (url.startsWith(SITE)) return route.continue();
   if (route.request().method() === 'OPTIONS') {
@@ -582,7 +617,113 @@ try {
     eq('and no second one is made', await page.evaluate(() => window.__privy.created), 0);
   }
 
-  await page.click('text=Use another wallet');
+  section('what they typed survives losing the page');
+  {
+    // The invite code is already spent by this point and there is only one
+    // each, so a creator who loses the tab here cannot simply start over.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#resume:not([hidden])', { timeout: 10000 });
+    ok('coming back is offered, and says what is waiting',
+      /Ripple/.test(await page.textContent('#resume-what')), await page.textContent('#resume-what'));
+
+    await page.click('text=Pick up where I left off');
+    await page.waitForSelector('#s-wallet:not([hidden])', { timeout: 10000 });
+
+    eq('the name is back', await page.inputValue('#f-name'), 'Ripple');
+    eq('the bio with it', await page.inputValue('#f-tagline'), 'Making waves since 2019');
+    eq('and the links', await page.inputValue('#soc-x'), '@ripple');
+    eq('the pages they picked', await pv.tabs().then((t) => t.join(',')), 'Swap,Store,Bookings');
+    ok('the picture too', /^data:image\/png;base64,/.test(
+      await page.$eval('#pv-avatar', (e) => e.getAttribute('src') || '')));
+    eq('and the wallet their money was going to', (await page.textContent('#wallet-addr')).trim(), ALREADY);
+
+    // An address free an hour ago may be taken now, and the step must ask
+    // again rather than trust what it checked before it was reloaded.
+    await page.click('#wallet-go');
+    await page.waitForSelector('#s-domain:not([hidden])', { timeout: 10000 });
+    eq('a name checked before the reload is not still taken on trust',
+      await page.locator('#domain-go').isDisabled(), true);
+    await page.click('#s-domain .actions .ghost');
+    await page.waitForSelector('#s-wallet:not([hidden])', { timeout: 10000 });
+  }
+
+  section('only what is actually switched on');
+  {
+    // Which ways of signing in work is a setting in Privy's dashboard, not in
+    // this page. Today only email is on, so offering Google, Apple and SMS
+    // would be three buttons that cannot work.
+    await page.click('text=Use another wallet');
+    await page.evaluate(() => {
+      window.__privyConfig = { email_auth: true, sms_auth: false, google_oauth: false, apple_oauth: false };
+    });
+    await page.click('#signin-open');
+    await page.waitForFunction(() => document.getElementById('oauth-ways').hidden, null, { timeout: 15000 });
+
+    ok('a provider that is off is not offered', await page.locator('#oauth-google').isHidden());
+    ok('nor is the other one', await page.locator('#oauth-apple').isHidden());
+    ok('and the rule above them goes with them',
+      await page.locator('#signin-flow .or').isHidden());
+    ok('a phone that is off is not offered either', await page.locator('#way-phone').isHidden());
+    ok('and one way left is not presented as a choice',
+      await page.locator('#signin-flow .ways').isHidden());
+    ok('while the one that works still is', !(await page.locator('#signin-id-box').isHidden()));
+    eq('and it is the one selected', (await page.textContent('#signin-id-label')).trim(), 'Your email');
+
+    // Turning one on in the dashboard takes effect without us deploying, so
+    // the page is asked again rather than reloaded.
+    await page.evaluate(() => { window.__privyConfig = null; return trimToWhatWorks(); });
+    await page.waitForFunction(() => !document.getElementById('oauth-ways').hidden, null, { timeout: 15000 });
+    ok('and switching one on needs no deploy of ours',
+      !(await page.locator('#oauth-google').isHidden()));
+  }
+
+  section('Google and Apple');
+  {
+    const ways = await page.$$eval('.oauth span', (e) => e.map((x) => x.textContent.trim()));
+    eq('both are offered', ways.join(','), 'Continue with Google,Continue with Apple');
+    ok('and a code is still offered beside them',
+      /or use a code/.test(await page.textContent('#signin-flow')));
+
+    // A real navigation away to the provider and back, which is the only way
+    // to know the draft really survives the round trip.
+    await page.click('#oauth-google');
+    await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 25000 });
+
+    eq('the provider was asked for, and told where to send them back',
+      await page.evaluate(() => sessionStorage.getItem('__oauth_asked')),
+      'google ' + SITE + 'launch.html');
+    eq('and the code it returned was handed straight back to Privy',
+      await page.evaluate(() => sessionStorage.getItem('__oauth_used')), 'good-code st-42 google');
+
+    // The code is one use. Left in the URL, a reload would spend it again and
+    // a shared link would carry somebody else's sign-in.
+    ok('nothing of the sign-in is left in the address bar',
+      !/privy_oauth/.test(page.url()), page.url());
+
+    eq('they come back to the step they left', await page.locator('#s-wallet').isHidden(), false);
+    eq('with everything they had typed', await page.inputValue('#f-name'), 'Ripple');
+    eq('and the wallet it made them is where the money goes',
+      (await page.textContent('#wallet-addr')).trim(), EMBEDDED);
+    eq('which lets them go on', await page.locator('#wallet-go').isDisabled(), false);
+  }
+
+  section('a sign-in they backed out of');
+  {
+    await page.click('text=Use another wallet');
+    await page.click('#signin-open');
+    await page.evaluate(() => { window.__oauthWillCancel = true; });
+    await page.click('#oauth-apple');
+    await page.waitForFunction(
+      () => /did not finish/.test(document.getElementById('signin-msg').textContent),
+      null, { timeout: 25000 });
+
+    ok('they are told, rather than dropped somewhere blank',
+      /Try again, or use a code/.test(await page.textContent('#signin-msg')),
+      await page.textContent('#signin-msg'));
+    eq('nothing they typed is lost', await page.inputValue('#f-name'), 'Ripple');
+    ok('and the wallets are still there to pick from', await page.locator('.wallet-pick').count() >= 1);
+  }
+
   await page.locator('.wallet-pick', { hasText: 'Test Wallet' }).click();
   await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 10000 });
   eq('and a real wallet still wins when they have one', (await page.textContent('#wallet-addr')).trim(), WALLET);
@@ -661,6 +802,44 @@ try {
   ok('told what works right now', /pay straight to your wallet/.test(await page.textContent('#done-note')));
   ok('and what is still to come', /goes live with D3/.test(await page.textContent('#done-note')),
     await page.textContent('#done-note'));
+
+  section('the draft is spent with the invite code');
+  {
+    // Their code is used and their site exists. Being offered a resume of it
+    // would walk them into launching a name that is now taken — by them.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelectorAll('#earns .earn').length > 0, null, { timeout: 10000 });
+    ok('launching clears it, so no half-site is offered back',
+      await page.locator('#resume').isHidden());
+
+    // And a draft nobody came back to for a day is not worth dropping
+    // somebody into either — the names in it will have moved on.
+    await page.evaluate(() => {
+      localStorage.setItem('launch_draft', JSON.stringify({
+        at: 'wallet', saved: Date.now() - 25 * 60 * 60 * 1000,
+        draft: { code: 'FOX-ALPHA', name: 'Stale', picked: [], socials: {} }
+      }));
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelectorAll('#earns .earn').length > 0, null, { timeout: 10000 });
+    ok('nor is a day-old one', await page.locator('#resume').isHidden());
+    eq('and it is thrown away rather than left to rot',
+      await page.evaluate(() => localStorage.getItem('launch_draft')), null);
+
+    // Somebody who would rather start over should be able to say so.
+    await page.evaluate(() => {
+      localStorage.setItem('launch_draft', JSON.stringify({
+        at: 'brand', saved: Date.now(),
+        draft: { code: 'FOX-ALPHA', name: 'Second Thoughts', picked: [], socials: {} }
+      }));
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#resume:not([hidden])', { timeout: 10000 });
+    eq('a fresh one is offered by name', (await page.textContent('#resume-what')).trim(), 'Second Thoughts');
+    await page.click('text=Start again');
+    ok('and turning it down puts the offer away', await page.locator('#resume').isHidden());
+    eq('for good', await page.evaluate(() => localStorage.getItem('launch_draft')), null);
+  }
 } catch (e) {
   ok('the run finished without an exception', false, e.message.split('\n')[0]);
   await page.screenshot({ path: path.join(ROOT, 'test/browser/launch-failure.png') }).catch(() => {});
