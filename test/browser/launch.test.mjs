@@ -166,7 +166,11 @@ try {
 
   ok('it says what you get before it asks for anything',
     /Launch your own website/.test(await page.textContent('h1')));
-  ok('and lists what actually earns', (await page.$$eval('#earns .earn b', (e) => e.map((x) => x.textContent))).includes('Swap'));
+  // Every earner, not the first six. The cap quietly dropped whichever were
+  // added last, which is always the newest thing worth showing off.
+  const earns = await page.$$eval('#earns .earn b', (e) => e.map((x) => x.textContent.trim()));
+  ok('and lists what actually earns', earns.includes('Swap'), earns.join(','));
+  eq('all of them, not the first few', earns.length, FEATURES.filter((f) => f.earns).length);
 
   // The preview is there from the first second, before a single keystroke.
   ok('the preview is on screen from the start', await page.locator('.pv-frame').isVisible());

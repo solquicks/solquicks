@@ -503,7 +503,10 @@
 
   // ── the pitch ──────────────────────────────────────────────────────────
   function paintEarns() {
-    $('earns').innerHTML = FEATURES.filter((f) => f.earns).slice(0, 6).map((f) =>
+    // Not sliced. It was capped at six, which quietly dropped whichever
+    // features were added last — Mine Bitcoin, Travel and Games were all
+    // missing from the pitch while being the newest things to show off.
+    $('earns').innerHTML = FEATURES.filter((f) => f.earns).map((f) =>
       '<div class="earn"><b>' + esc(f.name) + '</b><span>' + esc(f.blurb) + '</span></div>').join('');
   }
 
