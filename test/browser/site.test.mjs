@@ -1894,6 +1894,37 @@ try {
       eq(tab + ': and is not read out twice to a screen reader', shown.alt, '');
     }
 
+    // Swap already works, so its marks are a different claim from the
+    // coming-soon ones: one of these is routing swaps today and one is not,
+    // and the row has to say which without anybody reading the small print.
+    await page.evaluate(() => switchTab('swap'));
+    await page.waitForSelector('#panel-swap.active', { timeout: 10000 });
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#panel-swap .run-by-mark img')].every((i) => i.complete),
+      null, { timeout: 15000 }).catch(() => {});
+    {
+      const row = await page.$$eval('#panel-swap .run-by-mark', (els) => els.map((e) => ({
+        name: (e.textContent || '').replace(/soon/i, '').trim(),
+        later: e.classList.contains('later'),
+        tag: (e.querySelector('.run-by-tag') || {}).textContent || null,
+        src: (e.querySelector('img') || {}).getAttribute ? e.querySelector('img').getAttribute('src') : null,
+        loaded: !!(e.querySelector('img') || {}).naturalWidth
+      })));
+      eq('swap: both routers are shown', row.map((m) => m.name).join(','), 'Jupiter,Titan');
+      eq('the one that routes swaps today is shown as live', row[0].later, false);
+      eq('and carries no tag saying otherwise', row[0].tag, null);
+      // Showing a mark at full strength for something not wired up would read
+      // as "this is running", which would be a claim the site cannot keep.
+      eq('the one that does not route yet is marked', row[1].later, true);
+      eq('and says so in words, not just in grey', (row[1].tag || '').trim(), 'Soon');
+      ok('both marks load', row.every((m) => m.loaded), JSON.stringify(row));
+      ok('both from our own repo', row.every((m) => /^img\/partners\//.test(m.src || '')), JSON.stringify(row));
+      // The sentence underneath is what actually explains it, and it stays.
+      const foot = (await page.textContent('#panel-swap .sw-foot')).replace(/\s+/g, ' ');
+      ok('the line underneath still says it in full',
+        /Routed by Jupiter .*Titan routing to come/.test(foot), foot);
+    }
+
     // Driven off the data rather than off the list above, so a mark added
     // later with a typo in its path is caught here instead of by whoever
     // opens the page and sees a broken image next to a partner's name.

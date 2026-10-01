@@ -659,19 +659,24 @@
       text-transform: uppercase; letter-spacing: 0.06em;
       font-size: 0.7rem; color: var(--muted); margin-bottom: 10px;
     }
-    .soon-partner { text-align: center; }
-    .soon-partner + .soon-partner { margin-top: 16px; }
-    .soon-partner-top {
-      display: flex; align-items: center; justify-content: center; gap: 10px;
+    /* inline-flex so the block is only as wide as its widest row, which lets
+       the centred parent centre the group while the marks all start on the
+       same line. */
+    .soon-with-list {
+      display: inline-flex; flex-direction: column; gap: 18px;
+      text-align: left; max-width: 100%;
     }
-    .soon-partner-top b { font-size: 1.05rem; }
+    .soon-partner-top {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .soon-partner-top b { font-size: 1.15rem; }
     /* Same tile as the referral cards use, at the same size. Every mark we
        have been given is a square on a solid field, and this site is light —
        a border and a radius make that read as a logo rather than as a hole in
        the page. */
     .soon-logo {
-      width: 56px; height: 56px; flex: 0 0 auto;
-      border-radius: 14px; border: var(--line);
+      width: 64px; height: 64px; flex: 0 0 auto;
+      border-radius: 16px; border: var(--line);
       object-fit: cover; background: var(--cream); display: block;
     }
     .soon-with b { color: var(--ink); }
@@ -1518,6 +1523,29 @@
     .sw-msg.bad { color: var(--crimson); font-weight: 700; }
     .sw-msg.good { color: var(--green); font-weight: 700; }
     .sw-foot { font-size: 0.74rem; color: var(--muted); text-align: center; margin-top: 14px; line-height: 1.5; }
+    /* The marks on a feature that already works. Smaller than the coming-soon
+       tiles on purpose: this sits under a live swap form, and a row of 64px
+       logos there would compete with the thing people came to use. */
+    .run-by {
+      display: flex; justify-content: center; align-items: center;
+      flex-wrap: wrap; gap: 10px 20px; margin-top: 18px;
+    }
+    .run-by-mark {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.92rem; font-weight: 800; color: var(--ink);
+    }
+    .run-by-mark img {
+      width: 34px; height: 34px; border-radius: 10px; border: var(--line);
+      object-fit: cover; background: var(--cream); display: block;
+    }
+    /* Not wired up yet. Greyed and labelled, because a mark at full strength
+       beside a live one says this is running, and it is not. */
+    .run-by-mark.later { color: var(--muted); }
+    .run-by-mark.later img { filter: grayscale(1); opacity: 0.45; border-color: var(--muted); }
+    .run-by-tag {
+      font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 2px 7px; border-radius: 999px; background: var(--orange-soft); color: var(--ink);
+    }
 
     .sw-usd { font-size: 0.74rem; color: var(--muted); font-weight: 700; margin-top: 2px; min-height: 1em; }
     .sw-pick {
@@ -2878,6 +2906,10 @@
         <button class="sw-go" id="sw-go" onclick="doSwap()" disabled>Enter an amount</button>
         <div class="sw-msg" id="sw-msg"></div>
         <div class="sw-share-row"><button class="sw-sharelink" type="button" onclick="shareSwapLink()">Share this swap</button></div>
+        <div class="run-by">
+          <span class="run-by-mark"><img src="img/partners/jupiter.jpg" alt="" loading="lazy"/>Jupiter</span>
+          <span class="run-by-mark later"><img src="img/partners/titan.jpg" alt="" loading="lazy"/>Titan<span class="run-by-tag">Soon</span></span>
+        </div>
         <p class="sw-foot">Routed by <b>Jupiter</b> across every Solana DEX, with <b>Titan</b>
           routing to come. Non-custodial — the swap happens in your own wallet.</p>
       </div>
@@ -3357,6 +3389,11 @@
         // several of these had real partners going uncredited.
         (with_.length
           ? '<div class="soon-with"><div class="soon-with-head">Powered by</div>' +
+            // The group is centred, the rows inside it are not. Centring each
+            // row on its own put Slabz's mark and Collector Crypt's at
+            // different places on the line, because their names are different
+            // lengths — tidy one at a time, ragged together.
+            '<div class="soon-with-list">' +
             with_.map(function (p) {
               return '<div class="soon-partner">' +
                 '<div class="soon-partner-top">' +
@@ -3371,7 +3408,7 @@
                 (p.what ? '<span>' + escapeHtml(p.what) + '</span>' : '') +
                 '</div>';
             }).join('') +
-            '</div>'
+            '</div></div>'
           : '') +
         '</div>';
     }

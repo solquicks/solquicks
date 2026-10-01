@@ -609,8 +609,8 @@ Where it stands:
 | Travel | Nomadz | **in** | written |
 | Wishlist | sp3nd | **in** | written |
 | Creator Launchpad | D3 and Doma | **in** | not needed — the sentence above them says it |
-| Swap | Jupiter (live), Titan (coming) | needed | — |
-| Store | store.fun (live), Nomu (coming) | needed | — |
+| Swap | Jupiter (live), Titan (coming) | **in** | not needed — the line below says it |
+| Store | store.fun (live), Nomu (coming) | **store.fun still needed** | — |
 | DeFi, Games | nobody named yet | — | — |
 
 Every coming-soon page with a partner now shows their mark, and so does the
@@ -620,10 +620,23 @@ since two names with no description would be a tall thin column on a short
 pitch. That is `.pitch-marks` in `launch.html`, separate from `soonHtml`
 because it is a different page with a different shape.
 
-What is left is **Swap and Store**. Both are live features, both credit their
-partners in prose, and neither has anywhere a logo obviously goes yet — the
-swap panel is a working form, not a pitch. Worth deciding where before asking
-Jupiter, Titan, store.fun or Nomu for anything.
+**Store is the one thing left, and it is waiting on one file.** `nomu.jpg` is
+in the repo; `store.fun`'s mark has not been sent. Building the row with only
+Nomu would be backwards — Nomu is the one still to come and store.fun is the
+one fulfilling orders today — so the row goes in when that file arrives. The
+markup is two lines, copied from the swap card.
+
+On a live feature the marks go in a `.run-by` row above the sentence that was
+already there, at 34px rather than the 64px used on a coming-soon page: this
+sits under a working swap form, and a row of big logos there would compete
+with the thing people came to use.
+
+**A partner that is not wired up yet is greyed out and tagged "Soon"** —
+Titan today, Nomu when Store gets its row. A mark at full strength beside a
+live one reads as "this is running", which would be a claim the site cannot
+keep. Worth telling Titan and Nomu they are being shown this way before anyone
+sees it; being listed as a partner before the integration exists is a thing a
+company may want to agree to first.
 
 What to get from each: the logo file itself, how they want to be named in
 writing, and the link it should point at. Square with a transparent background
