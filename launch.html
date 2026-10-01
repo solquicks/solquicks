@@ -12,7 +12,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <!-- No CDN script on this page: nothing here needs web3.js, and a wallet is
        read through the Wallet Standard the browser already exposes. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.workers.dev;"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.workers.dev https://auth.privy.io; frame-src https://auth.privy.io;"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -168,6 +168,23 @@
     .wallet-pick:hover { background: var(--orange-soft); }
     .wallet-pick img { width: 24px; height: 24px; border-radius: 6px; }
     .addr { font-family: ui-monospace, monospace; font-size: 0.82rem; word-break: break-all; }
+    /* Signing in without a wallet. Deliberately quieter than the wallet
+       buttons: somebody who has a wallet should not be nudged away from it. */
+    .or {
+      display: flex; align-items: center; gap: 10px;
+      margin: 14px 0 12px; font-size: 0.76rem; color: var(--muted);
+      font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .or::before, .or::after { content: ''; flex: 1; height: 2px; background: var(--orange-soft); }
+    .ways { display: flex; gap: 8px; margin-bottom: 12px; }
+    .way {
+      flex: 1; cursor: pointer; font: inherit; font-weight: 700; font-size: 0.86rem;
+      background: var(--cream); border: var(--line); border-radius: 10px;
+      padding: 8px 10px; color: var(--muted);
+    }
+    .way:hover { background: var(--orange-soft); }
+    .way.on { background: var(--orange-soft); color: var(--ink); border-color: var(--orange); }
+    .code-in { font-family: ui-monospace, monospace; letter-spacing: 0.3em; text-align: center; }
 
     .split { display: grid; gap: 8px; margin-top: 14px; }
     .split-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.9rem; }
@@ -350,6 +367,43 @@
         <p class="step-sub">Bookings and your advertising slot pay into this wallet directly. Nothing
            passes through us on the way.</p>
         <div class="wallets" id="wallets"></div>
+
+        <!-- Creators who have never held crypto are most of the people this is
+             for, and "go install a wallet first" is where we would lose them.
+             Privy signs them in and makes them a wallet whose keys are theirs,
+             not ours — this page never sees one. -->
+        <div id="signin" hidden>
+          <div class="or"><span>or</span></div>
+          <button class="go ghost" id="signin-open" onclick="openSignin()">I don't have a wallet — make me one</button>
+          <div id="signin-flow" hidden>
+            <div class="ways">
+              <button type="button" class="way on" id="way-email" onclick="setSigninWay('email')">Email</button>
+              <button type="button" class="way" id="way-phone" onclick="setSigninWay('phone')">Phone</button>
+            </div>
+            <div id="signin-id-box">
+              <label class="fld">
+                <span id="signin-id-label">Your email</span>
+                <input id="signin-id" type="email" autocomplete="email" placeholder="you@example.com"/>
+              </label>
+              <button class="go" id="signin-send" onclick="sendSigninCode()">Send me a code</button>
+            </div>
+            <div id="signin-code-box" hidden>
+              <label class="fld">
+                <span>The code we sent to <b id="signin-sent-to"></b></span>
+                <input id="signin-code" class="code-in" type="text" inputmode="numeric"
+                       autocomplete="one-time-code" maxlength="8" placeholder="000000"/>
+              </label>
+              <div class="actions">
+                <button class="go" id="signin-verify" onclick="verifySigninCode()">Make my wallet</button>
+                <button class="go ghost" onclick="backToIdentity()">Back</button>
+              </div>
+            </div>
+            <div class="msg" id="signin-msg"></div>
+            <div class="feat-blurb">The keys are yours. We never see them, and you can move this
+               wallet into an app like Solflare whenever you want.</div>
+          </div>
+        </div>
+
         <div id="wallet-have" hidden>
           <div class="addr" id="wallet-addr"></div>
           <div class="actions">
@@ -762,10 +816,13 @@
   function paintWallets(found) {
     wallets = found;
     const box = $('wallets');
-    if (draft.wallet) { box.innerHTML = ''; return; }
+    if (draft.wallet) { box.innerHTML = ''; $('signin').hidden = true; return; }
+    // Offered either way. Someone can have a wallet and still want one that
+    // is only for the money this site makes.
+    $('signin').hidden = false;
     if (!found.length) {
       box.innerHTML = '<div class="feat-blurb">No Solana wallet found in this browser. ' +
-        'Install one and reload, and this step will find it.</div>';
+        'Install one and reload to use it here, or make one below.</div>';
       return;
     }
     box.innerHTML = '';
@@ -808,25 +865,212 @@
         if (!key) throw new Error('no account came back');
         address = key.toString();
       }
-      draft.wallet = address;
-      const account = { address: address };
-      try { localStorage.setItem(WALLET_KEY, entry.name); } catch (e) { /* fine */ }
-      $('wallets').innerHTML = '';
-      $('wallet-have').hidden = false;
-      $('wallet-addr').textContent = account.address;
-      $('wallet-go').disabled = false;
-      note('wallet-msg', '', '');
-      paintSplit();
+      useWallet(address, entry.name);
     } catch (e) {
       note('wallet-msg', (e && e.message) || 'That did not connect.', 'bad');
     }
+  }
+
+  // The one place a wallet becomes this site's treasury, whether it came from
+  // an extension or from signing in. Both paths end here so neither can
+  // forget a step — enabling Next without painting the split, say.
+  function useWallet(address, remember) {
+    draft.wallet = address;
+    if (remember) { try { localStorage.setItem(WALLET_KEY, remember); } catch (e) { /* fine */ } }
+    $('wallets').innerHTML = '';
+    $('signin').hidden = true;
+    $('wallet-have').hidden = false;
+    $('wallet-addr').textContent = address;
+    $('wallet-go').disabled = false;
+    note('wallet-msg', '', '');
+    note('signin-msg', '', '');
+    paintSplit();
   }
 
   function pickAnotherWallet() {
     draft.wallet = null;
     $('wallet-have').hidden = true;
     $('wallet-go').disabled = true;
+    // Back to the closed state, not to a half-filled form still saying a code
+    // was sent somewhere. That code is spent, and the address it went to may
+    // not be the one they now want.
+    resetSignin();
     paintWallets(wallets);
+  }
+
+  // ── signing in without a wallet ─────────────────────────────────────────
+  // Privy's App ID is a public identifier and belongs in this page. It is not
+  // a secret: Privy only answers to it from origins allowlisted in their
+  // dashboard, which is what stops somebody else's site using our app. The
+  // app secret is a different value and never comes near the browser.
+  const PRIVY_APP_ID = 'cmumeogp100bs0djspgu988bc';
+
+  let privy = null;           // the client, once the bundle is in
+  let signinWay = 'email';
+  let signinSentTo = '';      // what the code actually went to, not what the box says now
+
+  // 800KB is a lot to hand somebody who already has a wallet, so the bundle is
+  // only fetched once they say they need it. Fetched at most once either way.
+  function loadPrivy() {
+    if (window.PrivySDK) return Promise.resolve(window.PrivySDK);
+    if (!loadPrivy.pending) {
+      loadPrivy.pending = new Promise(function (ok, fail) {
+        const el = document.createElement('script');
+        el.src = 'vendor/privy.js';
+        el.onload = function () {
+          if (window.PrivySDK) ok(window.PrivySDK);
+          else fail(new Error('Sign-in could not load. Reload and try again.'));
+        };
+        el.onerror = function () {
+          // Let a later press try again rather than failing forever.
+          loadPrivy.pending = null;
+          fail(new Error('Sign-in could not load. Reload and try again.'));
+        };
+        document.head.appendChild(el);
+      });
+    }
+    return loadPrivy.pending;
+  }
+
+  async function privyClient() {
+    if (privy) return privy;
+    const SDK = await loadPrivy();
+    const p = new SDK.Privy({ appId: PRIVY_APP_ID, storage: new SDK.LocalStorage() });
+    await p.initialize();
+
+    // The wallet itself lives in a frame on Privy's own origin. That is the
+    // point: the key is generated and used over there, so this page cannot
+    // read it even if something on this page goes wrong. Messages are read
+    // from that one frame and nowhere else — anything else posting to this
+    // window is ignored.
+    const frame = document.createElement('iframe');
+    frame.src = p.embeddedWallet.getURL();
+    frame.title = 'Privy wallet';
+    frame.style.display = 'none';
+    document.body.appendChild(frame);
+    p.setMessagePoster(frame.contentWindow);
+    window.addEventListener('message', function (e) {
+      if (e.source !== frame.contentWindow) return;
+      let data = e.data;
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch (err) { return; } }
+      p.embeddedWallet.onMessage(data);
+    });
+
+    privy = p;
+    return p;
+  }
+
+  function openSignin() {
+    $('signin-open').hidden = true;
+    $('signin-flow').hidden = false;
+    setSigninWay('email');
+    $('signin-id').focus();
+    // Start the download while they are typing, so pressing send is not a wait.
+    // A failure here is not reported yet — it is reported when they press send,
+    // which is the first moment it is actually in their way.
+    loadPrivy().catch(function () { /* reported on send */ });
+  }
+
+  function setSigninWay(way) {
+    signinWay = way;
+    $('way-email').className = 'way' + (way === 'email' ? ' on' : '');
+    $('way-phone').className = 'way' + (way === 'phone' ? ' on' : '');
+    const f = $('signin-id');
+    const email = way === 'email';
+    f.type = email ? 'email' : 'tel';
+    f.autocomplete = email ? 'email' : 'tel';
+    f.placeholder = email ? 'you@example.com' : '+1 555 000 1234';
+    $('signin-id-label').textContent = email ? 'Your email' : 'Your phone number';
+    backToIdentity();
+  }
+
+  function backToIdentity() {
+    $('signin-code-box').hidden = true;
+    $('signin-id-box').hidden = false;
+    note('signin-msg', '', '');
+  }
+
+  function resetSignin() {
+    $('signin-open').hidden = false;
+    $('signin-flow').hidden = true;
+    $('signin-id').value = '';
+    $('signin-code').value = '';
+    signinSentTo = '';
+    backToIdentity();
+  }
+
+  async function sendSigninCode() {
+    const to = $('signin-id').value.trim();
+    if (!to) {
+      note('signin-msg', signinWay === 'email' ? 'Put your email in first.' : 'Put your number in first.', 'bad');
+      return;
+    }
+    const btn = $('signin-send');
+    btn.disabled = true;
+    note('signin-msg', 'Sending you a code…', '');
+    try {
+      const p = await privyClient();
+      if (signinWay === 'email') await p.auth.email.sendCode(to);
+      else await p.auth.phone.sendCode(to);
+      // Remembered separately from the box: if they edit the box after the
+      // code is sent, the code still belongs to the address it went to.
+      signinSentTo = to;
+      $('signin-id-box').hidden = true;
+      $('signin-code-box').hidden = false;
+      $('signin-sent-to').textContent = to;
+      $('signin-code').value = '';
+      $('signin-code').focus();
+      note('signin-msg', '', '');
+    } catch (e) {
+      note('signin-msg', signinTrouble(e), 'bad');
+    }
+    btn.disabled = false;
+  }
+
+  async function verifySigninCode() {
+    const code = $('signin-code').value.trim();
+    if (!code) { note('signin-msg', 'Put the code in first.', 'bad'); return; }
+    const btn = $('signin-verify');
+    btn.disabled = true;
+    note('signin-msg', 'Checking the code…', '');
+    try {
+      const SDK = await loadPrivy();
+      const p = await privyClient();
+      if (signinWay === 'email') await p.auth.email.loginWithCode(signinSentTo, code);
+      else await p.auth.phone.loginWithCode(signinSentTo, code);
+
+      note('signin-msg', 'Making your wallet…', '');
+      // They may already have a wallet from an earlier visit. Making a second
+      // one would point this site at an address they are not watching, so the
+      // existing one wins.
+      const got = await p.user.get();
+      let account = SDK.getUserEmbeddedSolanaWallet(got && got.user);
+      if (!account) {
+        const made = await p.embeddedWallet.createSolana();
+        account = SDK.getUserEmbeddedSolanaWallet(made && made.user);
+      }
+      if (!account || !account.address) throw new Error('The wallet did not come back. Try again.');
+      useWallet(account.address, null);
+    } catch (e) {
+      note('signin-msg', signinTrouble(e), 'bad');
+    }
+    btn.disabled = false;
+  }
+
+  // Privy's messages are written for developers. These are the ones a creator
+  // can actually act on; anything else is passed through rather than hidden,
+  // because a vague "something went wrong" on the step that decides where
+  // their money goes is worse than an awkward sentence.
+  function signinTrouble(e) {
+    const raw = ((e && (e.message || e.error)) || '') + '';
+    const low = raw.toLowerCase();
+    if (low.indexOf('invalid') >= 0 && low.indexOf('code') >= 0) return 'That code is not right. Check it and try again.';
+    if (low.indexOf('expired') >= 0) return 'That code has expired. Send yourself another.';
+    if (low.indexOf('too many') >= 0 || low.indexOf('rate') >= 0) return 'Too many tries. Wait a minute and try again.';
+    if (low.indexOf('allowed') >= 0 || low.indexOf('origin') >= 0) return 'Sign-in is not set up for this address yet.';
+    if (low.indexOf('phone') >= 0 || low.indexOf('email') >= 0) return raw;
+    if (low.indexOf('failed to fetch') >= 0 || low.indexOf('network') >= 0) return 'Could not reach sign-in. Check your connection.';
+    return raw || 'That did not work. Try again.';
   }
 
   function paintSplit() {

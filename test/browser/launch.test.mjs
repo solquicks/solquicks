@@ -17,7 +17,8 @@ const WORKER = 'https://solquicks-points.solquicks-45c.workers.dev';
 const WALLET = '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd';
 
 const TYPES = { '.html': 'text/html', '.png': 'image/png', '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon', '.jpg': 'image/jpeg' };
+  '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon', '.jpg': 'image/jpeg',
+  '.js': 'text/javascript' };
 
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -88,6 +89,68 @@ function answer(p, url, body) {
   return {};
 }
 
+// ── Privy, stood in for ───────────────────────────────────────────────────
+// Only the surface launch.html actually touches. Signing in for real would
+// mean Privy's servers and a code in somebody's inbox; what is worth testing
+// here is our wiring — that the right address ends up as the treasury, that a
+// wallet somebody already has is reused rather than replaced, and that a
+// message from anywhere but the wallet frame is ignored.
+const EMBEDDED = 'HLXnUXrmqjiRDTf4KJd9Bpxxqq87W3cxJBeJBsq4wbnw';
+const ALREADY  = '4Zw1hY1BgvAPuXZ5cCVTqv8PzUzgaLJ8dLNnAZNWNT7V';
+
+const PRIVY_STUB = `
+window.__privy = { sent: [], created: 0, posted: null, onMessage: [], hasWallet: null, code: '424242' };
+(function () {
+  function solWallet(address) {
+    return { type: 'wallet', chain_type: 'solana', wallet_client_type: 'privy', address: address };
+  }
+  function user() {
+    const accounts = [{ type: 'email', address: 'who@ripple.io' }];
+    if (window.__privy.hasWallet) accounts.push(solWallet(window.__privy.hasWallet));
+    return { id: 'did:privy:test', linked_accounts: accounts };
+  }
+  function otp(kind) {
+    return {
+      sendCode: async (to) => {
+        if (!/@|^\\+/.test(to)) throw new Error('Invalid ' + kind);
+        window.__privy.sent.push(kind + ':' + to);
+      },
+      loginWithCode: async (to, code) => {
+        if (window.__privy.sent.indexOf(kind + ':' + to) < 0) throw new Error('no code was sent to ' + to);
+        if (code !== window.__privy.code) throw new Error('Invalid verification code');
+        return { user: user() };
+      }
+    };
+  }
+  function Privy(opts) {
+    window.__privy.appId = opts.appId;
+    this.auth = { email: otp('email'), phone: otp('phone') };
+    this.user = { get: async () => ({ user: user() }) };
+    this.embeddedWallet = {
+      // A real URL on Privy's origin, so the page's frame-src is exercised.
+      getURL: () => 'https://auth.privy.io/apps/' + opts.appId + '/embedded-wallets',
+      onMessage: (d) => window.__privy.onMessage.push(d),
+      createSolana: async () => {
+        window.__privy.created++;
+        window.__privy.hasWallet = '${EMBEDDED}';
+        return { user: user() };
+      }
+    };
+    this.initialize = async () => {};
+    this.setMessagePoster = (w) => { window.__privy.posted = w ? 'frame' : null; };
+  }
+  window.PrivySDK = {
+    Privy: Privy,
+    LocalStorage: function () { this.get = async () => null; this.put = async () => {}; },
+    getUserEmbeddedSolanaWallet: function (u) {
+      const w = ((u && u.linked_accounts) || []).find(
+        (a) => a.type === 'wallet' && a.chain_type === 'solana' && a.wallet_client_type === 'privy');
+      return w ? { address: w.address } : null;
+    }
+  };
+})();
+`;
+
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
 
@@ -136,6 +199,9 @@ page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspBl
 
 await context.route('**/*', async (route) => {
   const url = route.request().url();
+  if (/\/vendor\/privy\.js$/.test(url)) {
+    return route.fulfill({ status: 200, contentType: 'text/javascript', body: PRIVY_STUB });
+  }
   if (url.startsWith(SITE)) return route.continue();
   if (route.request().method() === 'OPTIONS') {
     return route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' } });
@@ -414,8 +480,112 @@ try {
   await page.click('text=Use another wallet');
   ok('there is always a way back to the chooser, with every wallet still on it',
     await page.locator('.wallet-pick').count() === 3);
+
+  section('a wallet for somebody who has never had one');
+  {
+    // Most creators this is for have never held crypto. "Go install a wallet
+    // first" is where they would leave, so there is a way to make one here.
+    ok('the way out is offered beside the wallets', !(await page.locator('#signin').isHidden()));
+    ok('and does not talk down to anyone who already has one',
+      /don't have a wallet/.test(await page.textContent('#signin-open')),
+      await page.textContent('#signin-open'));
+
+    await page.click('#signin-open');
+    await page.waitForSelector('#signin-flow:not([hidden])', { timeout: 10000 });
+
+    // Nothing is asked for until they have chosen how to be reached.
+    await page.click('#signin-send');
+    ok('sending with nothing filled in says so', /Put your email in first/.test(await page.textContent('#signin-msg')),
+      await page.textContent('#signin-msg'));
+
+    await page.click('#way-phone');
+    eq('switching to a phone asks for a phone', (await page.textContent('#signin-id-label')).trim(), 'Your phone number');
+    eq('and the keyboard matches', await page.locator('#signin-id').getAttribute('type'), 'tel');
+    await page.click('#way-email');
+    eq('and back again', (await page.textContent('#signin-id-label')).trim(), 'Your email');
+
+    await page.fill('#signin-id', 'who@ripple.io');
+    await page.click('#signin-send');
+    await page.waitForSelector('#signin-code-box:not([hidden])', { timeout: 10000 });
+    eq('a code is sent to the address they gave',
+      await page.evaluate(() => window.__privy.sent.join(',')), 'email:who@ripple.io');
+    eq('and they are told where to look', (await page.textContent('#signin-sent-to')).trim(), 'who@ripple.io');
+
+    // The App ID is a public identifier; the app secret is a different value
+    // and must never be in a page that anybody can read.
+    eq('the client is started with our app', await page.evaluate(() => window.__privy.appId),
+      'cmumeogp100bs0djspgu988bc');
+    ok('and the key never leaves Privy — signing happens in their frame, not ours',
+      await page.evaluate(() => window.__privy.posted) === 'frame');
+    eq('the frame is on Privy’s origin',
+      await page.$eval('iframe', (f) => new URL(f.src).origin), 'https://auth.privy.io');
+
+    // Anything on the internet can postMessage to this window. If that were
+    // fed to the wallet it would be the whole point of the frame undone.
+    await page.evaluate(() => window.postMessage({ privy: 'not from the frame' }, '*'));
+    await page.waitForTimeout(100);
+    eq('a message from anywhere but that frame is ignored',
+      await page.evaluate(() => window.__privy.onMessage.length), 0);
+
+    await page.fill('#signin-code', '000000');
+    await page.click('#signin-verify');
+    await page.waitForFunction(() => /not right/.test(document.getElementById('signin-msg').textContent),
+      null, { timeout: 10000 });
+    ok('a wrong code is said plainly, not as a stack trace',
+      /That code is not right/.test(await page.textContent('#signin-msg')), await page.textContent('#signin-msg'));
+    eq('and no wallet is made for it', await page.evaluate(() => window.__privy.created), 0);
+    eq('nor is one adopted', await page.locator('#wallet-go').isDisabled(), true);
+
+    // The code belongs to the address it was sent to. The box is out of reach
+    // while a code is outstanding, and the address is read from what was sent
+    // rather than from the field — so neither route can swap it.
+    ok('the address cannot be edited while a code is outstanding',
+      await page.locator('#signin-id-box').isHidden());
+    await page.evaluate(() => { document.getElementById('signin-id').value = 'someone@else.io'; });
+
+    await page.fill('#signin-code', '424242');
+    await page.click('#signin-verify');
+    await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 15000 });
+
+    eq('the right code makes them a wallet', await page.evaluate(() => window.__privy.created), 1);
+    eq('checked against the address it was sent to, not whatever the field says now',
+      await page.evaluate(() => window.__privy.sent.join(',')), 'email:who@ripple.io');
+    eq('and it is the address their money will go to', (await page.textContent('#wallet-addr')).trim(), EMBEDDED);
+    eq('which lets them go on', await page.locator('#wallet-go').isDisabled(), false);
+    ok('the split is shown for them too', /50%/.test(await page.textContent('#split')));
+    ok('and the chooser is out of the way once they have one', await page.locator('#signin').isHidden());
+  }
+
+  section('signing in twice does not move the money');
+  {
+    // A creator who signs in again already has a wallet. Making a second one
+    // would point this site at an address they are not watching.
+    await page.click('text=Use another wallet');
+
+    // Somebody who started signing in, changed their mind and came back was
+    // left looking at a half-filled form still naming an address their code
+    // had already been spent on.
+    ok('coming back puts the sign-in offer back as it was',
+      !(await page.locator('#signin-open').isHidden()) && await page.locator('#signin-flow').isHidden());
+
+    await page.evaluate((a) => { window.__privy.hasWallet = a; window.__privy.sent = []; window.__privy.created = 0; }, ALREADY);
+    await page.click('#signin-open');
+    eq('with nothing left in the box', await page.inputValue('#signin-id'), '');
+    await page.fill('#signin-id', 'who@ripple.io');
+    await page.click('#signin-send');
+    await page.waitForSelector('#signin-code-box:not([hidden])', { timeout: 10000 });
+    await page.fill('#signin-code', '424242');
+    await page.click('#signin-verify');
+    await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 15000 });
+
+    eq('the wallet they already have is used', (await page.textContent('#wallet-addr')).trim(), ALREADY);
+    eq('and no second one is made', await page.evaluate(() => window.__privy.created), 0);
+  }
+
+  await page.click('text=Use another wallet');
   await page.locator('.wallet-pick', { hasText: 'Test Wallet' }).click();
   await page.waitForFunction(() => !document.getElementById('wallet-have').hidden, null, { timeout: 10000 });
+  eq('and a real wallet still wins when they have one', (await page.textContent('#wallet-addr')).trim(), WALLET);
   await page.click('#wallet-go');
   await page.waitForSelector('#s-domain:not([hidden])', { timeout: 10000 });
 
