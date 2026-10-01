@@ -1857,7 +1857,10 @@ try {
 
     // A mark does what a name cannot: it is the difference between a page that
     // claims a partner and one that visibly has one.
-    const marks = [['mine', 'Sat Rush'], ['gacha', 'Slabz'], ['gacha', 'Collector Crypt']];
+    const marks = [
+      ['mine', 'Sat Rush'], ['gacha', 'Slabz'], ['gacha', 'Collector Crypt'],
+      ['travel', 'Nomadz'], ['wishlist', 'sp3nd']
+    ];
     for (const [tab, name] of marks) {
       await page.evaluate((t) => switchTab(t), tab);
       await page.waitForSelector('#panel-' + tab + '.active', { timeout: 10000 });
@@ -1903,12 +1906,21 @@ try {
         fs.existsSync(path.join(ROOT, file)), file);
     }
 
-    // A partner we have no mark for yet is still named — a missing logo must
-    // not take the credit down with it.
-    await page.evaluate(() => switchTab('travel'));
-    eq('travel: Nomadz is credited without a mark we do not have',
-      await page.locator('#panel-travel .soon-partner img').count(), 0);
-    eq('and is still named', (await page.textContent('#panel-travel .soon-partner b')).trim(), 'Nomadz');
+    // A partner named before their mark arrives must still be credited — a
+    // missing logo cannot take the credit down with it. Every partner has one
+    // today, so this asks the function directly rather than quietly losing the
+    // case: the next one named will land here before their logo does.
+    const noMark = await page.evaluate(() => soonHtml('Test', 'what', [{ name: 'Nobody', what: 'a line' }]));
+    ok('a partner with no mark yet is still credited', /Nobody/.test(noMark), noMark);
+    ok('with their line intact', /a line/.test(noMark), noMark);
+    ok('and no broken image where the mark would go', !/<img/.test(noMark), noMark);
+
+    // And the other half of it: a mark with no line is drawn without an empty
+    // space where the words would be. Slabz and Collector Crypt are both this
+    // today, waiting on a sentence from them.
+    const noLine = await page.evaluate(() => soonHtml('Test', 'what', [{ name: 'Nobody', logo: 'img/partners/slabz.jpg' }]));
+    ok('a mark with no line yet still draws', /<img/.test(noLine), noLine);
+    ok('and leaves no empty line behind it', !/<span>/.test(noLine), noLine);
 
     // The two with nobody to name yet must not grow an empty credit box.
     for (const tab of ['defi', 'games']) {

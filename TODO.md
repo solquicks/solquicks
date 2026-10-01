@@ -606,12 +606,17 @@ Where it stands:
 | Mine Bitcoin | Sat Rush | **in** | written |
 | Gacha | Slabz | **in** | **needed** |
 | Gacha | Collector Crypt | **in** | **needed** |
-| Travel | Nomadz | needed | written |
-| Wishlist | sp3nd | needed | written |
+| Travel | Nomadz | **in** | written |
+| Wishlist | sp3nd | **in** | written |
 | Creator Launchpad | D3 / Doma | needed | — |
 | Swap | Jupiter (live), Titan (coming) | needed | — |
 | Store | store.fun (live), Nomu (coming) | needed | — |
 | DeFi, Games | nobody named yet | — | — |
+
+Every coming-soon page that has a partner now shows their mark. What is left
+is the three live features — Swap, Store and the Launchpad — which credit their
+partners in prose rather than through this slot, so they need a decision about
+where a logo would even go before anyone is asked for one.
 
 What to get from each: the logo file itself, how they want to be named in
 writing, and the link it should point at. Square with a transparent background
