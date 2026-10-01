@@ -745,27 +745,37 @@ never reaches the browser.
 
 ## Privy sign-in — what is still on you
 
-Built and tested: email and phone sign-in at wizard step 3, which makes the
-creator a Solana wallet and uses it as their treasury. Two things it needs
-from the Privy dashboard before it works on the real domain:
+Built and tested: email, phone, Google and Apple sign-in at wizard step 3,
+each making the creator a Solana wallet that becomes their treasury, plus the
+wizard surviving the Google/Apple redirect.
 
-1. **Allowlist the origins.** Privy only answers to our App ID from origins you
-   have added. Add `https://solquicks.com` and `https://*.solquicks.com` — the
-   wildcard matters, because every creator site is a subdomain. Without this,
-   sign-in fails with "not set up for this address yet".
-2. **Turn on email and SMS as login methods.** If only one is enabled, the
-   other tab in the wizard will fail when somebody presses send.
+The page asks Privy which methods are switched on and only offers those, so
+nothing below breaks anything — it just means fewer buttons until you do it.
+Read live from your dashboard on 2026-10-01:
 
-Not built yet, and a deliberate choice:
+| setting | now | needed for |
+|---|---|---|
+| `email_auth` | **on** | email codes — working today |
+| `sms_auth` | off | phone codes |
+| `google_oauth` | off | Continue with Google |
+| `apple_oauth` | off | Continue with Apple |
+| `allowed_domains` | **empty** | see below |
 
-- **Google and Apple sign-in.** Both are OAuth redirects, which means leaving
-  the page mid-wizard and coming back. Everything typed so far lives in a
-  plain object in memory, so it would be gone. Doing those two means
-  persisting the draft across the redirect first. Email covers a Gmail address
-  today — they type it and get a code — so this is a nicety, not a blocker.
-- **The app secret.** Nothing server-side uses Privy yet, so there is nothing
-  to set. If that changes it goes in with `npx wrangler secret put
-  PRIVY_APP_SECRET` and never into a file — this repo is public.
+1. **`allowed_domains` is empty.** This is the setting that stops anyone else
+   using our App ID from their own site. Add `solquicks.com` and
+   `*.solquicks.com` — the wildcard matters, every creator site is a
+   subdomain. Do this one first.
+2. **Switch on SMS, Google and Apple** if you want those three. Google and
+   Apple each need their own OAuth credentials configured inside Privy, which
+   is their setup flow, not ours.
+3. **Where Google/Apple send them back**: the wizard uses
+   `https://solquicks.com/launch.html`. Privy only needs the domain
+   allowlisted (step 1), but if the dashboard asks for exact return URLs,
+   that is the one.
+
+Nothing server-side uses Privy, so there is nothing of that kind to set. If
+that changes, it goes in with `npx wrangler secret put PRIVY_APP_SECRET` and
+never into a file — this repo is public.
 
 The bundle is committed at `vendor/privy.js`, pinned to @privy-io/js-sdk-core
 0.77.0. To move versions: edit the pin in `tools/build-privy.sh`, run it, and
