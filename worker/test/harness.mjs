@@ -72,6 +72,8 @@ export const chain = {
   txs: new Map(), byRef: new Map(), n: 0, unexpected: [], lookups: 0, lookupsFor: {}, alerts: [], inScheduled: false,
   rpc: {},        // extra RPC methods a test answers: { method: (params) => result }
   jup: null,      // a test's Jupiter stand-in: (url, init) => body object, or a Response
+  reflect: null,  // a test's Reflect stand-in, same shape
+  reflectCalls: [],
   me: null,        // a test's Magic Eden stand-in: (url) => body
   store: null,     // a test's store.fun stand-in: (url) => body
   rpcCalls: [], jupCalls: [], meCalls: []
@@ -148,6 +150,21 @@ globalThis.fetch = async (url, init) => {
     const out = chain.rdap ? chain.rdap(u) : null;
     if (out instanceof Response) return out;
     return new Response('', { status: 404 });
+  }
+  // Reflect, which builds the deposit and withdrawal transactions. A test sets
+  // chain.reflect to decide what it answers; the calls are recorded so a test
+  // can check what was actually asked for, and with which key.
+  if (u.startsWith('https://prod.api.reflect.money/') || u.startsWith('https://dev.api.reflect.money/')) {
+    const headers = (init && init.headers) || {};
+    chain.reflectCalls.push({
+      url: u, method: (init && init.method) || 'GET',
+      key: headers['X-API-Key'] || null,
+      body: init && init.body ? JSON.parse(init.body) : null
+    });
+    const out = chain.reflect ? chain.reflect(new URL(u), init) : null;
+    if (out instanceof Response) return out;
+    if (out === null || out === undefined) return new Response('', { status: 503 });
+    return new Response(JSON.stringify(out), { status: 200 });
   }
   if (u.startsWith('https://api.telegram.org/')) {
     chain.alerts.push(JSON.parse(init.body).text);

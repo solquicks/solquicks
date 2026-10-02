@@ -388,6 +388,10 @@ const RATE_RULES = [
   { match: ['/api/launch/invite'], name: 'launchinvite', by: 'ip', limit: 8, windowMs: 60000 },
   { match: ['/api/launch/create'], name: 'launchcreate', by: 'ip', limit: 5, windowMs: 3600000 },
   { match: ['/api/launch/features', '/api/site'], name: 'launchread', by: 'ip', limit: 60, windowMs: 60000 },
+  // Reflect. The rate is read on every visit to the tab; building a deposit
+  // transaction is a deliberate act and far rarer.
+  { match: ['/api/reflect/apy', '/api/reflect/quote'], name: 'reflectread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/reflect/deposit', '/api/reflect/withdraw'], name: 'reflectwrite', by: 'ip', limit: 20, windowMs: 60000 },
   // A code is 31^4, and guessing one only ever gives a stranger a referee —
   // there is nothing on the other side of this worth brute-forcing. The limit
   // is here so nobody can hammer it anyway.
@@ -1202,6 +1206,55 @@ async function jupOnce(env, path, init) {
 // that works on the next attempt. Hence the retry, and hence the error the
 // quote route now returns for it.
 const JUP_RETRY_STATUS = [429, 500, 502, 503, 504];
+// ── Reflect ─────────────────────────────────────────────────────────────────
+// USDC+ is index 0. Fixed here rather than taken from the page: the index
+// chooses which product somebody's money goes into, and that is not a decision
+// to accept from a query string.
+const REFLECT_INDEX = 0;
+const REFLECT_BASE = 'https://prod.api.reflect.money';
+// A hard ceiling on a single deposit. Not a protocol rule — a guard against a
+// typo or a bad decimal conversion turning $10 into $10,000,000.
+const REFLECT_MAX = 1000000 * 1000000;   // $1,000,000 in USDC's 6 decimals
+
+/// Amounts are in USDC's smallest unit, so they are whole numbers. A float, a
+/// negative, or something past the ceiling is refused rather than passed on
+/// for somebody else's API to interpret.
+function reflectAmount(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  if (n <= 0 || n > REFLECT_MAX) return null;
+  return n;
+}
+
+async function reflect(env, method, path, body) {
+  const init = { method: method, headers: { Accept: 'application/json' } };
+  // Reads work without it and are simply rate-limited harder; writes need it.
+  if (env.REFLECT_API_KEY) init.headers['X-API-Key'] = env.REFLECT_API_KEY;
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
+  let res;
+  try {
+    res = await fetch(REFLECT_BASE + path, init);
+  } catch (e) {
+    return { ok: false, status: 502, error: 'could not reach the yield provider' };
+  }
+
+  let parsed = null;
+  try { parsed = await res.json(); } catch (e) { /* handled below */ }
+
+  if (!res.ok || !parsed || parsed.success === false) {
+    // Their message where there is one, because "deposit must be positive"
+    // tells somebody what to change and "502" does not.
+    const said = parsed && typeof parsed.message === 'string' ? parsed.message : null;
+    const status = res.status === 429 ? 429 : (res.status >= 400 && res.status < 500 ? res.status : 502);
+    return { ok: false, status: status, error: said || 'the yield provider refused that' };
+  }
+  return { ok: true, body: parsed };
+}
+
 const JUP_ATTEMPTS = 3;
 // Kept small on purpose: this is inside a request somebody is waiting on, and
 // a quote that takes two seconds to arrive is its own kind of broken.
@@ -4261,6 +4314,68 @@ export default {
             socials: cleanSocials(JSON.parse(row.socials || '[]'))
           }
         });
+      }
+
+      // ── Reflect: USDC in, yield-bearing USDC+ back ──────────────────────
+      //
+      // Their REST API builds the transaction and we hand it to the wallet to
+      // sign — the same shape the swap uses with Jupiter. The SDK was not an
+      // option: it will not bundle for a browser, and it arrives with three
+      // lending-protocol SDKs and 27 high-severity advisories.
+      //
+      // The key lives here and only here. Writes need it, and a key in the
+      // page would be readable by anyone who opened the source.
+      if (path === '/api/reflect/apy' && request.method === 'GET') {
+        const r = await reflect(env, 'GET', '/stablecoin/apy');
+        if (!r.ok) return json(request, env, { error: r.error }, r.status);
+        // Only the one product this site offers. Handing back every index
+        // would invite the page to display a rate for something it cannot
+        // actually deposit into.
+        const row = (r.body.data || []).find(function (d) { return d.index === REFLECT_INDEX; });
+        if (!row) return json(request, env, { error: 'no rate published yet' }, 503);
+        return json(request, env, { apy: row.apy, at: row.timestamp });
+      }
+
+      if (path === '/api/reflect/quote' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const side = body.side === 'redeem' ? 'redeem' : 'mint';
+        const amount = reflectAmount(body.amount);
+        if (amount === null) return json(request, env, { error: 'that is not an amount' }, 400);
+
+        const r = await reflect(env, 'POST', '/stablecoin/quote/' + side,
+          { stablecoinIndex: REFLECT_INDEX, depositAmount: amount });
+        if (!r.ok) return json(request, env, { error: r.error }, r.status);
+        return json(request, env, { side: side, inAmount: amount, outAmount: r.body.data });
+      }
+
+      if ((path === '/api/reflect/deposit' || path === '/api/reflect/withdraw') &&
+          request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const wallet = String(body.wallet || '').trim();
+        const amount = reflectAmount(body.amount);
+        if (!isWallet(wallet)) return json(request, env, { error: 'connect a wallet first' }, 400);
+        if (amount === null) return json(request, env, { error: 'that is not an amount' }, 400);
+
+        // The least they will accept. Absent, the protocol decides, and the
+        // person signing has no floor at all.
+        const floor = body.minReceived === undefined || body.minReceived === null
+          ? null : reflectAmount(body.minReceived);
+        if (body.minReceived !== undefined && body.minReceived !== null && floor === null) {
+          return json(request, env, { error: 'that is not an amount' }, 400);
+        }
+
+        const out = { stablecoinIndex: REFLECT_INDEX, depositAmount: amount, signer: wallet };
+        if (floor !== null) out.minimumReceived = floor;
+
+        const r = await reflect(env, 'POST',
+          path.endsWith('deposit') ? '/stablecoin/mint' : '/stablecoin/burn', out);
+        if (!r.ok) return json(request, env, { error: r.error }, r.status);
+
+        const tx = r.body.data && r.body.data.transaction;
+        if (typeof tx !== 'string' || !tx) {
+          return json(request, env, { error: 'no transaction came back' }, 502);
+        }
+        return json(request, env, { transaction: tx, wallet: wallet, amount: amount });
       }
 
       if (path === '/api/launch/features' && request.method === 'GET') {

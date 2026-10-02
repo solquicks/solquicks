@@ -16,3 +16,7 @@ CONSULT_CALENDLY=
 
 # Optional: lamports charged per Ranger staked. Unset means free.
 STAKE_FEE_LAMPORTS=
+
+# Reflect, for the DeFi tab. Reads work without it at a lower rate limit;
+# building a deposit or withdrawal transaction needs it.
+REFLECT_API_KEY=
