@@ -3324,6 +3324,7 @@ export default {
           path === '/api/swap/history' || path === '/api/swap/token' ||
           path === '/api/swap/leaderboard' ||
           path.startsWith('/api/launch/') || path === '/api/site' ||
+          path.startsWith('/api/reflect/') ||
           path === '/api/collectible' || path === '/api/collectible/claim' ||
           path === '/api/nonce' || path === '/api/session' ||
           path === '/api/banner/event' || path === '/api/banner/stats') {

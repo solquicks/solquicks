@@ -219,4 +219,24 @@ section('the key');
   eq('and no empty key is sent in place of one', chain.reflectCalls[0].key, null);
 }
 
+// ── limits ──────────────────────────────────────────────────────────────────
+section('the limits actually apply');
+{
+  // The rate-limit table is only consulted for paths named in the public list.
+  // An entry that is not in both is an entry that never fires, which looks
+  // exactly like a working limit until somebody leans on it.
+  reset(); serving();
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+  const ip = '203.0.113.9';
+  let limited = 0;
+  for (let i = 0; i < 25; i++) {
+    const r = await call(env, 'POST', '/api/reflect/deposit',
+      { body: { wallet: WALLET, amount: 1000000 }, ip: ip });
+    if (r.status === 429) limited++;
+  }
+  ok('building transactions from one address is capped', limited > 0, limited + ' of 25 refused');
+  ok('and the cap is not so tight that an ordinary person meets it',
+    limited < 10, limited + ' of 25 refused');
+}
+
 finish();
