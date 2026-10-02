@@ -150,6 +150,20 @@ CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet, ts);
 CREATE TABLE IF NOT EXISTS swap_weekly_awards (week TEXT NOT NULL, rank INTEGER NOT NULL, wallet TEXT NOT NULL, usd REAL NOT NULL, points INTEGER NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (week, rank));
 CREATE INDEX IF NOT EXISTS idx_swaps_ts ON swaps(ts);
 
+-- ── savings ─────────────────────────────────────────────────────────────────
+-- Deposits into and withdrawals out of Reflect. The signature is the key, so a
+-- page that retries a record cannot write the same one twice. Nothing here is
+-- the source of truth for a balance — that is read from the chain — this is
+-- only so somebody can see what they did and when.
+CREATE TABLE IF NOT EXISTS savings (
+  signature TEXT PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  side TEXT NOT NULL,              -- 'in' or 'out'
+  amount REAL NOT NULL,            -- USDC, as a person reads it
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_savings_wallet ON savings(wallet, ts);
+
 -- ── invites ─────────────────────────────────────────────────────────────────
 -- A wallet shares a code; wallets that arrive through it are tied to it for
 -- good, and every swap they make pays the referrer a share of the fee this site

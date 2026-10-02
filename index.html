@@ -1329,6 +1329,24 @@
     }
     .df-side.on { background: var(--orange-soft); color: var(--ink); border-color: var(--orange); }
     .df-quote { font-size: 0.86rem; font-weight: 700; color: var(--ink-soft); min-height: 1.3em; margin: 10px 0 4px; text-align: center; }
+    .df-receipt {
+      margin-top: 14px; padding: 12px 14px; text-align: center;
+      background: #EAF7EF; border: 2px solid var(--green); border-radius: 12px;
+    }
+    .df-receipt-head { font-weight: 800; color: var(--ink); font-size: 0.92rem; }
+    .df-receipt-link { display: inline-block; margin-top: 5px; font-size: 0.8rem; font-weight: 800; color: var(--orange-deep); }
+    .df-history { margin-top: 16px; }
+    .df-history-title {
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+    }
+    .df-row {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+      padding: 8px 0; border-top: 2px solid var(--orange-soft); font-size: 0.86rem;
+    }
+    .df-row b { font-weight: 800; }
+    .df-row .df-row-when { color: var(--muted); font-weight: 700; font-size: 0.78rem; }
+    .df-row a { color: var(--orange-deep); font-weight: 800; }
     .df-risk {
       margin-top: 16px; padding: 13px 15px; background: var(--cream);
       border: var(--line); border-radius: 12px;
@@ -2856,11 +2874,23 @@
         <button class="sw-go" id="df-go" onclick="doDefi()" disabled>Enter an amount</button>
         <div class="sw-msg" id="df-msg"></div>
 
+        <!-- What just happened, with the signature, because a deposit is a
+             bigger moment than a swap and had nothing to show for it. -->
+        <div class="df-receipt" id="df-receipt" hidden>
+          <div class="df-receipt-head" id="df-receipt-head"></div>
+          <a class="df-receipt-link" id="df-receipt-link" target="_blank" rel="noopener noreferrer">See it on Solscan →</a>
+        </div>
+
         <div class="run-by">
           <span class="run-by-mark">Reflect</span>
         </div>
         <p class="sw-foot">Powered by <b>Reflect</b>. Non-custodial — your USDC moves straight from your
           wallet into the protocol, and we never hold it.</p>
+
+        <div class="df-history" id="df-history" hidden>
+          <div class="df-history-title">Your savings</div>
+          <div id="df-history-rows"></div>
+        </div>
 
         <!-- Not small print. Somebody about to put money somewhere is owed the
              part that is not the headline rate, in the same size as everything
@@ -3464,9 +3494,9 @@
       {
         // Built, so this entry is here only for its place in the menu — the
         // panel below is written out rather than generated.
-        tab: 'defi', name: 'DeFi', icon: '◉', live: true,
+        tab: 'defi', name: 'Savings', icon: '◉', live: true,
         note: 'Earn on the USDC you already hold',
-        lead: 'DeFi',
+        lead: 'Savings',
         what: ''
       },
       {
@@ -3758,7 +3788,7 @@
 
     const TAB_NAMES = {
       swap: 'Swap', store: 'Store', book: 'Book', cleanup: 'Cleanup',
-      gacha: 'Gacha', wishlist: 'Wishlist', defi: 'DeFi', referrals: 'Referrals',
+      gacha: 'Gacha', wishlist: 'Wishlist', defi: 'Savings', referrals: 'Referrals',
       mine: 'Mine Bitcoin', travel: 'Travel', games: 'Games'
     };
     function tabName(tab) {
@@ -4593,7 +4623,7 @@
         // The Swap tab may have been opened before a wallet existed, so its
         // balance line has to be refreshed whenever the connection changes.
         if (typeof refreshSwapBalance === 'function') refreshSwapBalance();
-        // Same for DeFi: connecting is exactly when somebody wants to be shown
+        // Same for Savings: connecting is exactly when somebody wants to be shown
         // what they already have, and disconnecting is when it must stop being
         // shown — a position left on screen after a disconnect is somebody
         // else's number.
@@ -5019,7 +5049,7 @@
       return raw || 'That did not work. Try again.';
     }
 
-    // ── DeFi: USDC in, yield out ────────────────────────────────────────────
+    // ── Savings: USDC in, yield out ─────────────────────────────────────────
     // Every amount here is in USDC's smallest unit — whole millionths — because
     // that is what the protocol counts in and what a transaction carries.
     // Floats only exist in the box somebody types into.
@@ -5087,6 +5117,7 @@
       paintDefiBalance();
       paintDefiPosition();
       paintDefiButton();
+      loadDefiHistory();
     }
 
     function paintDefiBalance() {
@@ -5222,6 +5253,11 @@
       const units = usdcUnits(document.getElementById('df-amount').value);
       defi.quote = null;
       document.getElementById('df-quote').textContent = '';
+      // Last time's receipt belongs to last time. Leaving it up while somebody
+      // types the next amount reads as though this one has already gone
+      // through.
+      const receipt = document.getElementById('df-receipt');
+      if (receipt) receipt.hidden = true;
       clearTimeout(defi.timer);
       paintDefiButton();
       if (units === null) return;
@@ -5284,9 +5320,16 @@
 
         note('df-msg', 'Approve it in your wallet…', '');
         const signature = await sendBuiltTransaction(b.transaction);
-        note('df-msg', (defi.side === 'in' ? 'Deposited. ' : 'Withdrawn. ') + 'It is on chain.', 'good');
+        note('df-msg', '', '');
+        // Cleared first. defiAmountChanged takes last time's receipt down, so
+        // showing this one before clearing the box hid it again immediately.
         document.getElementById('df-amount').value = '';
         defiAmountChanged();
+        showDefiReceipt(defi.side, units, signature);
+        // Written down so they can look back at it. Never awaited and never
+        // allowed to fail the deposit — the money has already moved, and a
+        // failed note about it is not a failed deposit.
+        recordSaving(defi.side, units, signature).catch(function () { /* the chain is the record */ });
         loadDefiRate();
         // The balances have just changed, and the position with them.
         loadDefiBalances();
@@ -5332,6 +5375,68 @@
         return signatureOf(out[0].signature);
       }
       throw new Error('This wallet cannot send transactions.');
+    }
+
+    function showDefiReceipt(side, units, signature) {
+      const box = document.getElementById('df-receipt');
+      if (!box) return;
+      document.getElementById('df-receipt-head').textContent =
+        (side === 'in' ? 'Deposited ' : 'Withdrew ') + usdcText(units) + ' USDC';
+      const link = document.getElementById('df-receipt-link');
+      link.href = 'https://solscan.io/tx/' + encodeURIComponent(signature);
+      box.hidden = false;
+    }
+
+    async function recordSaving(side, units, signature) {
+      await fetch(POINTS_API + '/api/reflect/record', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet: Wallet.pubkey, signature: signature, side: side,
+          amount: units / Math.pow(10, USDC_DECIMALS)
+        })
+      });
+      loadDefiHistory();
+    }
+
+    async function loadDefiHistory() {
+      const box = document.getElementById('df-history');
+      const rows = document.getElementById('df-history-rows');
+      if (!box) return;
+      if (!Wallet.pubkey) { box.hidden = true; rows.textContent = ''; return; }
+      try {
+        const r = await fetch(POINTS_API + '/api/reflect/history?wallet=' + encodeURIComponent(Wallet.pubkey));
+        const b = await r.json();
+        const list = (b && b.rows) || [];
+        if (!list.length) { box.hidden = true; rows.textContent = ''; return; }
+        rows.textContent = '';
+        for (const row of list) {
+          const el = document.createElement('div');
+          el.className = 'df-row';
+          const what = document.createElement('span');
+          // Built as text, never as markup: these come back from a database
+          // and go on the page.
+          what.innerHTML = '';
+          const b1 = document.createElement('b');
+          b1.textContent = (row.side === 'in' ? 'Deposited ' : 'Withdrew ') +
+            Number(row.amount).toLocaleString(undefined,
+              { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC';
+          const when = document.createElement('span');
+          when.className = 'df-row-when';
+          when.textContent = ' · ' + new Date(row.ts).toLocaleDateString();
+          what.append(b1, when);
+          const link = document.createElement('a');
+          link.href = 'https://solscan.io/tx/' + encodeURIComponent(row.signature);
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'View';
+          el.append(what, link);
+          rows.appendChild(el);
+        }
+        box.hidden = false;
+      } catch (e) {
+        // A history that cannot be read is not a history of nothing.
+        box.hidden = true;
+      }
     }
 
     function defiTrouble(e) {

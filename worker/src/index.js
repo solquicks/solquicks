@@ -392,6 +392,7 @@ const RATE_RULES = [
   // transaction is a deliberate act and far rarer.
   { match: ['/api/reflect/apy', '/api/reflect/quote'], name: 'reflectread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/reflect/deposit', '/api/reflect/withdraw'], name: 'reflectwrite', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/reflect/record', '/api/reflect/history'], name: 'reflectlog', by: 'ip', limit: 30, windowMs: 60000 },
   // A code is 31^4, and guessing one only ever gives a stranger a referee —
   // there is nothing on the other side of this worth brute-forcing. The limit
   // is here so nobody can hammer it anyway.
@@ -1750,7 +1751,7 @@ const LAUNCH_FEATURES = [
   { id: 'cleanup',   name: 'Cleanup',   earns: false, live: true,  blurb: 'Your audience reclaims rent from dead token accounts.' },
   { id: 'gacha',     name: 'Gacha',     earns: true,  live: false, blurb: 'Pulls for something from your collection.' },
   { id: 'wishlist',  name: 'Wishlist',  earns: true,  live: false, blurb: 'Your wishlist, paid straight from a wallet.' },
-  { id: 'defi',      name: 'DeFi',      earns: true,  live: false, blurb: 'Lending and earning in the same wallet.' },
+  { id: 'defi',      name: 'Savings',   earns: true,  live: true,  blurb: 'Deposit USDC and earn on it.' },
   { id: 'mine',      name: 'Mine Bitcoin', earns: true, live: false, blurb: 'Your audience deposits USDC and earns Bitcoin, powered by Sat Rush.' },
   { id: 'travel',    name: 'Travel',    earns: true,  live: false, blurb: 'Flights and stays booked from a wallet, powered by Nomadz.' },
   { id: 'games',     name: 'Games',     earns: true,  live: false, blurb: 'Games worth playing, with something real to win.' },
@@ -3328,6 +3329,8 @@ export default {
           path === '/api/swap/history' || path === '/api/swap/token' ||
           path === '/api/swap/leaderboard' ||
           path.startsWith('/api/launch/') || path === '/api/site' ||
+          // Covers record and history too; the prefix is deliberate so a new
+          // Reflect route cannot be added without a limit by forgetting a line.
           path.startsWith('/api/reflect/') ||
           path === '/api/collectible' || path === '/api/collectible/claim' ||
           path === '/api/nonce' || path === '/api/session' ||
@@ -4387,6 +4390,39 @@ export default {
           return json(request, env, { error: 'no transaction came back' }, 502);
         }
         return json(request, env, { transaction: tx, wallet: wallet, amount: amount });
+      }
+
+      // What somebody did, so they can look back at it. Never the source of a
+      // balance — that is read from the chain, where it cannot be wrong.
+      if (path === '/api/reflect/record' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const wallet = String(body.wallet || '').trim();
+        const signature = String(body.signature || '').trim();
+        const side = body.side === 'out' ? 'out' : 'in';
+        const amount = Number(body.amount);
+        if (!isWallet(wallet)) return json(request, env, { error: 'connect a wallet first' }, 400);
+        // A signature is base58 and about this long. Anything else is not one,
+        // and this row is read back to a person as a link to an explorer.
+        if (!/^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature)) {
+          return json(request, env, { error: 'that is not a signature' }, 400);
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return json(request, env, { error: 'that is not an amount' }, 400);
+        }
+        // The signature is the key, so a page that retries cannot write twice.
+        await env.DB.prepare(
+          'INSERT INTO savings (signature, wallet, side, amount, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING'
+        ).bind(signature, wallet, side, amount, Date.now()).run();
+        return json(request, env, { ok: true });
+      }
+
+      if (path === '/api/reflect/history' && request.method === 'GET') {
+        const wallet = String(url.searchParams.get('wallet') || '').trim();
+        if (!isWallet(wallet)) return json(request, env, { rows: [] });
+        const rows = await env.DB.prepare(
+          'SELECT signature, side, amount, ts FROM savings WHERE wallet = ? ORDER BY ts DESC LIMIT 20'
+        ).bind(wallet).all();
+        return json(request, env, { rows: rows.results || [] });
       }
 
       if (path === '/api/launch/features' && request.method === 'GET') {

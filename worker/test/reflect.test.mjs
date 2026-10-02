@@ -8,7 +8,7 @@
 //
 // Run: node test/reflect.test.mjs
 
-import { chain, freshEnv, call, ok, eq, section, finish } from './harness.mjs';
+import { chain, freshEnv, call, ok, eq, section, finish, wallet } from './harness.mjs';
 
 const WALLET = '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd';
 const TX = 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
@@ -217,6 +217,40 @@ section('the key');
   const r = await call(env, 'GET', '/api/reflect/apy');
   eq('the rate still shows without a key', r.status, 200);
   eq('and no empty key is sent in place of one', chain.reflectCalls[0].key, null);
+}
+
+// ── what they did, and when ─────────────────────────────────────────────────
+section('a record of what happened');
+{
+  reset(); serving();
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+  const SIG = '5' + 'x'.repeat(0) + 'J7rA9kqLm2pQwTvZ8nYcHbGdEfMxKs3RtUvWyZaBcDeFgHiJkLmNoPqRsTuVwXyZ12';
+
+  const w = await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
+  eq('a deposit is written down', w.status, 200);
+
+  const h = await call(env, 'GET', '/api/reflect/history?wallet=' + WALLET);
+  eq('and comes back', h.body.rows.length, 1);
+  eq('with the amount', h.body.rows[0].amount, 25);
+  eq('and which way it went', h.body.rows[0].side, 'in');
+
+  // A page that retries a record must not double it. The signature is the key.
+  await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
+  const h2 = await call(env, 'GET', '/api/reflect/history?wallet=' + WALLET);
+  eq('writing the same one twice leaves one row', h2.body.rows.length, 1);
+
+  // This row is read back to somebody as a link to an explorer, so anything
+  // that is not a signature has no business in it.
+  for (const bad of ['', 'not-a-signature', '<script>', 'x'.repeat(200)]) {
+    const r = await call(env, 'POST', '/api/reflect/record',
+      { body: { wallet: WALLET, signature: bad, side: 'in', amount: 25 } });
+    eq('"' + bad.slice(0, 16) + '" is not written down', r.status, 400);
+  }
+
+  const other = await call(env, 'GET', '/api/reflect/history?wallet=' + wallet(2));
+  eq('and one wallet cannot see another\'s', other.body.rows.length, 0);
 }
 
 // ── limits ──────────────────────────────────────────────────────────────────

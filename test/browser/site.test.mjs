@@ -60,7 +60,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
   quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
-  reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
+  reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false, savings: [],
   // what the connected wallet holds, by mint
   tokens: { 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 500,
             'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS': 0 },
@@ -415,6 +415,13 @@ async function standIns(context) {
         net.reflectQuotes.push(b);
         return json(route, { side: b.side, inAmount: b.amount, outAmount: Math.floor(b.amount * 0.999) });
       }
+      if (u.pathname === '/api/reflect/record') {
+        net.savings.unshift(Object.assign({ ts: Date.now() }, JSON.parse(req.postData() || '{}')));
+        return json(route, { ok: true });
+      }
+      if (u.pathname === '/api/reflect/history') {
+        return json(route, { rows: net.savings });
+      }
       if (u.pathname === '/api/reflect/deposit' || u.pathname === '/api/reflect/withdraw') {
         const b = JSON.parse(req.postData() || '{}');
         net.reflectBuilds.push({ path: u.pathname, body: b });
@@ -651,7 +658,9 @@ try {
   const menuTabs = await page.$$eval('.nav-item[data-tab]',
     (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.tab));
   eq('the menu holds what is left', menuTabs.join(','),
-    'links,cleanup,defi,leaderboard,gacha,games,mine,moon,referrals,travel,wishlist');
+    // Sorted by the name on screen, so renaming DeFi to Savings moves it down
+    // past Referrals. That is the rule working, not the order being wrong.
+    'links,cleanup,leaderboard,gacha,games,mine,moon,referrals,defi,travel,wishlist');
 
   // The Launchpad is a page of its own rather than a tab, so it is a link in
   // the same menu and has no panel behind it.
@@ -1792,7 +1801,10 @@ try {
     const signedBefore = await page.evaluate(() => window.__wallet.signAndSend);
 
     await page.click('#df-go');
-    await page.waitForFunction(() => /on chain/.test(document.getElementById('df-msg').textContent),
+    // The message was replaced by a receipt: "it is on chain" told somebody
+    // nothing they could check, and a deposit deserves a signature they can
+    // follow.
+    await page.waitForFunction(() => !document.getElementById('df-receipt').hidden,
       null, { timeout: 20000 });
 
     const built = net.reflectBuilds.at(-1);
@@ -1806,6 +1818,24 @@ try {
       JSON.stringify(built.body));
     eq('and the wallet was actually asked to sign it, once',
       await page.evaluate(() => window.__wallet.signAndSend), signedBefore + 1);
+
+    // A deposit is a bigger moment than a swap and had nothing to show for it.
+    await page.waitForFunction(() => !document.getElementById('df-receipt').hidden,
+      null, { timeout: 15000 });
+    ok('a receipt says what just happened',
+      /Deposited 25\.00 USDC/.test(await page.textContent('#df-receipt-head')),
+      await page.textContent('#df-receipt-head'));
+    const link = await page.locator('#df-receipt-link').getAttribute('href');
+    ok('with a link to the transaction itself', /^https:\/\/solscan\.io\/tx\/\w/.test(link), link);
+
+    // Written down so they can look back, but never the source of a balance —
+    // that is read from the chain, where it cannot be wrong.
+    await page.waitForFunction(() => !document.getElementById('df-history').hidden,
+      null, { timeout: 15000 });
+    eq('and it joins their history', await page.locator('#df-history .df-row').count(), 1);
+    ok('saying what it was', /Deposited 25\.00 USDC/.test(await page.textContent('#df-history .df-row b')));
+    eq('recorded against the wallet that signed it', net.savings[0].wallet, WALLET);
+    eq('in money, not millionths', net.savings[0].amount, 25);
 
     eq('the box is cleared, so a second press cannot repeat it by accident',
       await page.inputValue('#df-amount'), '');
