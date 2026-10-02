@@ -1303,6 +1303,24 @@
       font-size: 2.6rem; line-height: 1.1; color: var(--green);
     }
     .df-rate-note { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+    .df-position {
+      background: var(--cream); border: var(--line); border-radius: 14px;
+      padding: 13px 15px; margin-bottom: 14px;
+    }
+    .df-pos-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.88rem; font-weight: 700; color: var(--ink-soft); }
+    .df-pos-row + .df-pos-row { margin-top: 5px; }
+    .df-pos-row b { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; color: var(--ink); }
+    .df-pos-worth b { color: var(--green); }
+    .df-pos-gain { margin-top: 7px; font-size: 0.8rem; font-weight: 700; color: var(--green); }
+    .df-bal {
+      font-size: 0.78rem; font-weight: 700; color: var(--muted);
+      margin: 6px 2px 0; min-height: 1.1em; text-align: right;
+    }
+    .df-bal button {
+      font: inherit; font-weight: 800; font-size: 0.76rem; cursor: pointer;
+      background: var(--orange-soft); border: 2px solid var(--orange); color: var(--ink);
+      border-radius: 999px; padding: 1px 9px; margin-left: 6px;
+    }
     .df-sides { display: flex; gap: 8px; margin-bottom: 14px; }
     .df-side {
       flex: 1; cursor: pointer; font: inherit; font-weight: 800; font-size: 0.9rem;
@@ -2809,6 +2827,21 @@
           <button type="button" class="df-side" id="df-side-out" onclick="setDefiSide('out')">Withdraw</button>
         </div>
 
+        <!-- What they already have. A tab that cannot tell somebody this is a
+             form rather than a product, and it is the number that decides
+             whether they come back. -->
+        <div class="df-position" id="df-position" hidden>
+          <div class="df-pos-row">
+            <span>You have deposited</span>
+            <b id="df-pos-held">—</b>
+          </div>
+          <div class="df-pos-row df-pos-worth">
+            <span>Worth now</span>
+            <b id="df-pos-worth">—</b>
+          </div>
+          <div class="df-pos-gain" id="df-pos-gain" hidden></div>
+        </div>
+
         <label class="sw-field">
           <span class="sw-label" id="df-amount-label">You deposit</span>
           <div class="sw-row">
@@ -2816,6 +2849,7 @@
             <span class="sw-pick" style="cursor:default">USDC</span>
           </div>
         </label>
+        <div class="df-bal" id="df-bal"></div>
 
         <div class="df-quote" id="df-quote"></div>
 
@@ -3378,6 +3412,7 @@
       // variable rate and a number from an hour ago is not the number.
       if (tab === 'defi' && typeof loadDefiRate === 'function') {
         loadDefiRate();
+        loadDefiBalances();
         const box = document.getElementById('df-amount');
         if (box && !box._bound) {
           box._bound = true;
@@ -4558,6 +4593,11 @@
         // The Swap tab may have been opened before a wallet existed, so its
         // balance line has to be refreshed whenever the connection changes.
         if (typeof refreshSwapBalance === 'function') refreshSwapBalance();
+        // Same for DeFi: connecting is exactly when somebody wants to be shown
+        // what they already have, and disconnecting is when it must stop being
+        // shown — a position left on screen after a disconnect is somebody
+        // else's number.
+        if (typeof loadDefiBalances === 'function') loadDefiBalances();
       }
     };
 
@@ -4985,7 +5025,8 @@
     // Floats only exist in the box somebody types into.
     // USDC_DECIMALS is defined once, in the USDC section further down. Two
     // copies of the same number is how one of them eventually goes stale.
-    const defi = { side: 'in', apy: null, quote: null, timer: null, busy: false };
+    const defi = { side: 'in', apy: null, quote: null, timer: null, busy: false,
+      usdc: null, held: null, sol: null };
 
     /// Text to millionths. Refuses anything that is not a plain number, and
     /// anything with more decimal places than USDC has — "1.0000001" would
@@ -5006,6 +5047,131 @@
     // 24.974234 harder to read than 24.97.
     const usdcText = (units) => (units / Math.pow(10, USDC_DECIMALS))
       .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // USDC+ is the token Reflect gives back. Its mint was read out of a deposit
+    // transaction they built and confirmed on chain: an SPL mint, 6 decimals,
+    // same as USDC. Held here rather than fetched because a mint address does
+    // not change, and a wrong one would show somebody the wrong balance.
+    const USDC_PLUS_MINT = 'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS';
+    // What a deposit and the signature cost in SOL, with room to spare. Below
+    // this a transaction will not land, and finding that out after signing is
+    // the worst place to find it out.
+    const DEFI_SOL_RESERVE = 0.003;
+
+    /// Everything the tab needs to know about this wallet: the USDC they can
+    /// deposit, the USDC+ they already hold, and whether there is enough SOL to
+    /// pay for the transaction at all.
+    async function loadDefiBalances() {
+      const bal = document.getElementById('df-bal');
+      const pos = document.getElementById('df-position');
+      if (!bal) return;
+      if (!Wallet.pubkey) {
+        defi.usdc = null; defi.held = null; defi.sol = null;
+        bal.textContent = '';
+        pos.hidden = true;
+        paintDefiButton();
+        return;
+      }
+      try {
+        const [usdc, held, sol] = await Promise.all([
+          tokenBalance(Wallet.pubkey, USDC_MINT),
+          tokenBalance(Wallet.pubkey, USDC_PLUS_MINT),
+          tokenBalance(Wallet.pubkey, SOL_MINT)
+        ]);
+        defi.usdc = usdc; defi.held = held; defi.sol = sol;
+      } catch (e) {
+        // A balance that could not be read is not a balance of zero. Showing
+        // zero would tell somebody they have nothing when they may have plenty.
+        defi.usdc = null; defi.held = null; defi.sol = null;
+      }
+      paintDefiBalance();
+      paintDefiPosition();
+      paintDefiButton();
+    }
+
+    function paintDefiBalance() {
+      const bal = document.getElementById('df-bal');
+      const have = defi.side === 'in' ? defi.usdc : defi.held;
+      const unit = defi.side === 'in' ? 'USDC' : 'USDC+';
+      if (have === null || have === undefined) { bal.textContent = ''; return; }
+      bal.textContent = 'You have ' + have.toLocaleString(undefined,
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + unit + ' ';
+      if (have > 0) {
+        const max = document.createElement('button');
+        max.type = 'button';
+        max.id = 'df-max';
+        max.textContent = 'Max';
+        max.onclick = function () {
+          // Written out in full rather than rounded for display: rounding here
+          // would ask for more than they hold, or quietly leave some behind.
+          document.getElementById('df-amount').value = String(have);
+          defiAmountChanged();
+        };
+        bal.appendChild(max);
+      }
+    }
+
+    /// What they are holding, and what it is worth today. Worth is asked of
+    /// Reflect rather than assumed equal, because the whole point of the token
+    /// is that it grows apart from what was put in.
+    async function paintDefiPosition() {
+      const pos = document.getElementById('df-position');
+      if (!pos) return;
+      if (!defi.held || defi.held <= 0) { pos.hidden = true; return; }
+      pos.hidden = false;
+      document.getElementById('df-pos-held').textContent =
+        defi.held.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC+';
+
+      const units = Math.round(defi.held * Math.pow(10, USDC_DECIMALS));
+      const worthEl = document.getElementById('df-pos-worth');
+      const gainEl = document.getElementById('df-pos-gain');
+      worthEl.textContent = '…';
+      gainEl.hidden = true;
+      try {
+        const r = await fetch(POINTS_API + '/api/reflect/quote', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ side: 'redeem', amount: units })
+        });
+        const b = await r.json();
+        if (!r.ok || typeof b.outAmount !== 'number') throw new Error('no quote');
+        worthEl.textContent = usdcText(b.outAmount) + ' USDC';
+        const gain = b.outAmount - units;
+        if (gain > 0) {
+          gainEl.hidden = false;
+          gainEl.textContent = '+' + usdcText(gain) + ' USDC earned so far';
+        }
+      } catch (e) {
+        // Better to show nothing than a number that is not the number.
+        worthEl.textContent = '—';
+      }
+    }
+
+    /// The button says what is actually in the way, rather than going dark and
+    /// leaving somebody to work it out.
+    function paintDefiButton() {
+      const go = document.getElementById('df-go');
+      if (!go) return;
+      const units = usdcUnits(document.getElementById('df-amount').value);
+      if (units === null) { go.disabled = true; go.textContent = 'Enter an amount'; return; }
+      if (!Wallet.pubkey) { go.disabled = false; go.textContent = 'Connect a wallet'; return; }
+
+      const have = defi.side === 'in' ? defi.usdc : defi.held;
+      if (have !== null && have !== undefined && units > Math.round(have * Math.pow(10, USDC_DECIMALS))) {
+        go.disabled = true;
+        go.textContent = defi.side === 'in' ? 'More than you have' : 'More than you deposited';
+        return;
+      }
+      // A transaction that cannot pay its own fee fails after it has been
+      // signed, which is the one place a refusal is no use to anybody.
+      if (defi.sol !== null && defi.sol !== undefined && defi.sol < DEFI_SOL_RESERVE) {
+        go.disabled = true;
+        go.textContent = 'Not enough SOL for the fee';
+        return;
+      }
+      if (!defi.quote || defi.quote.in !== units) { go.disabled = true; go.textContent = 'Checking…'; return; }
+      go.disabled = false;
+      go.textContent = defi.side === 'in' ? 'Deposit' : 'Withdraw';
+    }
 
     async function loadDefiRate() {
       const el = document.getElementById('df-apy');
@@ -5048,6 +5214,7 @@
       document.getElementById('df-side-in').className = 'df-side' + (side === 'in' ? ' on' : '');
       document.getElementById('df-side-out').className = 'df-side' + (side === 'out' ? ' on' : '');
       document.getElementById('df-amount-label').textContent = side === 'in' ? 'You deposit' : 'You withdraw';
+      paintDefiBalance();
       defiAmountChanged();
     }
 
@@ -5055,15 +5222,13 @@
       const units = usdcUnits(document.getElementById('df-amount').value);
       defi.quote = null;
       document.getElementById('df-quote').textContent = '';
-      const go = document.getElementById('df-go');
       clearTimeout(defi.timer);
-      if (units === null) {
-        go.disabled = true;
-        go.textContent = 'Enter an amount';
-        return;
-      }
-      go.disabled = true;
-      go.textContent = 'Checking…';
+      paintDefiButton();
+      if (units === null) return;
+      // Nothing to quote if they cannot afford it anyway — and the button is
+      // already saying so.
+      const have = defi.side === 'in' ? defi.usdc : defi.held;
+      if (have !== null && have !== undefined && units > Math.round(have * Math.pow(10, USDC_DECIMALS))) return;
       defi.timer = setTimeout(function () { quoteDefi(units); }, 350);
     }
 
@@ -5082,15 +5247,12 @@
         defi.quote = { in: units, out: b.outAmount };
         document.getElementById('df-quote').textContent =
           (defi.side === 'in' ? 'You receive about ' : 'You get back about ') + usdcText(b.outAmount);
-        const go = document.getElementById('df-go');
-        go.disabled = false;
-        go.textContent = defi.side === 'in' ? 'Deposit' : 'Withdraw';
+        paintDefiButton();
       } catch (e) {
         if (asked !== usdcUnits(document.getElementById('df-amount').value)) return;
         document.getElementById('df-quote').textContent = '';
-        const go = document.getElementById('df-go');
-        go.disabled = true;
-        go.textContent = 'Enter an amount';
+        defi.quote = null;
+        paintDefiButton();
         note('df-msg', (e && e.message) || 'Could not get a quote.', 'bad');
       }
     }
@@ -5126,6 +5288,8 @@
         document.getElementById('df-amount').value = '';
         defiAmountChanged();
         loadDefiRate();
+        // The balances have just changed, and the position with them.
+        loadDefiBalances();
         return signature;
       } catch (e) {
         note('df-msg', defiTrouble(e), 'bad');

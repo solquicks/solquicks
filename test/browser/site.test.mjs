@@ -61,6 +61,9 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
   quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
   reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
+  // what the connected wallet holds, by mint
+  tokens: { 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 500,
+            'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS': 0 },
   // a real-shaped versioned transaction, so the page has to deserialize it
   reflectTx: null,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
@@ -336,7 +339,27 @@ function rpcAnswer(method, params) {
     };
     case 'getBalance': return { context: ctx, value: net.lamports };
     case 'getParsedTokenAccountsByOwner':
-    case 'getTokenAccountsByOwner': return { context: ctx, value: [] };
+    case 'getTokenAccountsByOwner': {
+      // net.tokens says what this wallet holds, by mint, so the DeFi tab has a
+      // USDC balance to check a deposit against and a USDC+ balance to show as
+      // a position. Everything else holds nothing, as before.
+      const mint = params && params[1] && params[1].mint;
+      const amount = (net.tokens && net.tokens[mint]) || 0;
+      if (!amount) return { context: ctx, value: [] };
+      // The full account shape: web3.js validates it and refuses anything
+      // missing executable, owner, lamports or rentEpoch.
+      return { context: ctx, value: [{
+        pubkey: 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp',
+        account: {
+          executable: false, lamports: 2039280, rentEpoch: 0, space: 165,
+          owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+          data: { program: 'spl-token', space: 165, parsed: { type: 'account', info: {
+            mint: mint, owner: params[0], state: 'initialized',
+            tokenAmount: { uiAmount: amount, uiAmountString: String(amount),
+              amount: String(Math.round(amount * 1e6)), decimals: 6 } } } }
+        }
+      }] };
+    }
     case 'getLatestBlockhash': return { context: ctx, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1e12 } };
     case 'getSignatureStatuses': return { context: ctx, value: [{ slot: 1, confirmations: null, err: null, confirmationStatus: 'confirmed' }] };
     case 'getBlockHeight': return 1;
@@ -1651,12 +1674,100 @@ try {
     ok('and shown in money: two decimal places, no more', /\d+\.\d{2}(\D|$)/.test(shown) && !/\.\d{3}/.test(shown), shown);
     eq('and for the side they are on', net.reflectQuotes.at(-1).side, 'mint');
 
+    // Withdrawing is bounded by what they are holding, so there has to be some
+    // to withdraw before a quote is worth asking for at all.
+    net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 100;
+    await page.evaluate(() => loadDefiBalances());
     await page.click('#df-side-out');
+    await page.fill('#df-amount', '25');
     await page.waitForFunction(() => /get back about/.test(document.getElementById('df-quote').textContent),
       null, { timeout: 15000 });
     eq('switching to withdraw asks the other way', net.reflectQuotes.at(-1).side, 'redeem');
     eq('and the label follows', (await page.textContent('#df-amount-label')).trim(), 'You withdraw');
     await page.click('#df-side-in');
+    net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 0;
+    await page.evaluate(() => loadDefiBalances());
+  }
+
+  section('DeFi: knowing what you have before you commit to anything');
+  {
+    await page.evaluate(() => loadDefiBalances());
+    await page.waitForFunction(() => /You have/.test(document.getElementById('df-bal').textContent),
+      null, { timeout: 15000 });
+    ok('the tab says what they hold', /You have 500\.00 USDC/.test(await page.textContent('#df-bal')),
+      await page.textContent('#df-bal'));
+
+    // Typing a number you cannot cover is a deposit that fails after the wallet
+    // has already been opened, which is the one place a refusal helps nobody.
+    await page.fill('#df-amount', '501');
+    await page.waitForFunction(() => /More than you have/.test(document.getElementById('df-go').textContent),
+      null, { timeout: 15000 });
+    eq('more than they hold is refused before the wallet opens',
+      await page.locator('#df-go').isDisabled(), true);
+    ok('and the button says which problem it is',
+      /More than you have/.test(await page.textContent('#df-go')));
+    eq('nothing was quoted for an amount they cannot afford',
+      net.reflectQuotes.filter((q) => q.amount === 501000000).length, 0);
+
+    // Max has to be the whole balance, to the last millionth. Rounding it for
+    // display would either ask for more than they hold or quietly leave some.
+    await page.click('#df-max');
+    await page.waitForFunction(() => document.getElementById('df-amount').value !== '501',
+      null, { timeout: 10000 });
+    eq('Max fills in the whole balance', await page.inputValue('#df-amount'), '500');
+
+    // A transaction that cannot pay its own fee fails after signing.
+    const solWas = net.lamports;
+    net.lamports = 1000000;    // 0.001 SOL, under the reserve
+    await page.evaluate(() => loadDefiBalances());
+    await page.fill('#df-amount', '25');
+    await page.waitForFunction(() => /Not enough SOL/.test(document.getElementById('df-go').textContent),
+      null, { timeout: 15000 });
+    eq('a wallet that cannot pay the network fee is stopped first',
+      await page.locator('#df-go').isDisabled(), true);
+    net.lamports = solWas;
+    await page.evaluate(() => loadDefiBalances());
+
+    // Withdraw is bounded by what they are holding, not by their USDC.
+    net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 30;
+    await page.evaluate(() => loadDefiBalances());
+    await page.click('#df-side-out');
+    await page.waitForFunction(() => /USDC\+/.test(document.getElementById('df-bal').textContent),
+      null, { timeout: 15000 });
+    ok('withdrawing counts what they deposited, not what they hold in USDC',
+      /You have 30\.00 USDC\+/.test(await page.textContent('#df-bal')), await page.textContent('#df-bal'));
+    await page.fill('#df-amount', '31');
+    await page.waitForFunction(() => /More than you deposited/.test(document.getElementById('df-go').textContent),
+      null, { timeout: 15000 });
+    ok('and refuses more than that', await page.locator('#df-go').isDisabled());
+    await page.click('#df-side-in');
+  }
+
+  section('DeFi: what you already have');
+  {
+    // A tab that cannot tell somebody what they are holding is a form, not a
+    // product — and the worth is asked for rather than assumed equal, because
+    // growing apart from what was put in is the entire point of the token.
+    net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 100;
+    await page.evaluate(() => loadDefiBalances());
+    await page.waitForFunction(() => !document.getElementById('df-position').hidden,
+      null, { timeout: 15000 });
+    ok('what they are holding is shown', /100\.00 USDC\+/.test(await page.textContent('#df-pos-held')),
+      await page.textContent('#df-pos-held'));
+    await page.waitForFunction(() => /USDC/.test(document.getElementById('df-pos-worth').textContent),
+      null, { timeout: 15000 });
+    ok('with what it is worth today, asked for rather than assumed',
+      /\d+\.\d{2} USDC/.test(await page.textContent('#df-pos-worth')), await page.textContent('#df-pos-worth'));
+    eq('which means a redeem quote for exactly what they hold',
+      net.reflectQuotes.at(-1).amount, 100000000);
+
+    // Nothing to show is better than a position belonging to nobody.
+    net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 0;
+    await page.evaluate(() => loadDefiBalances());
+    await page.waitForFunction(() => document.getElementById('df-position').hidden,
+      null, { timeout: 15000 });
+    ok('and nothing is shown when they hold nothing',
+      await page.locator('#df-position').isHidden());
   }
 
   section('DeFi: depositing');
