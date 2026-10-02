@@ -870,3 +870,114 @@ never into a file — this repo is public.
 The bundle is committed at `vendor/privy.js`, pinned to @privy-io/js-sdk-core
 0.77.0. To move versions: edit the pin in `tools/build-privy.sh`, run it, and
 run the wizard tests.
+
+---
+
+## DeFi — the plan from here (written 2026-10-02)
+
+Shipped today: the tab quotes, builds deposits and withdrawals against Reflect's
+live API, and refuses amounts that are not amounts. What it does not yet do is
+tell anybody what they already have, what it is earning, or make solquicks a
+penny.
+
+### How this actually makes money
+
+Not a deposit fee. Reflect's own words, from their Create page:
+
+> "You set how the interest splits between you and your holders. Your share
+> accrues continuously and you claim it whenever you like."
+
+and their worked example:
+
+> "if your collateral earns 5% and you keep a fifth of the interest, holders see
+> 4% and your share works out at $100,000 a year for every $10M outstanding"
+
+So the model is a **cut of the yield, set once in basis points, on everything
+deposited — forever, not per transaction.** That is the important difference
+from the swap: the swap earns 20 bps each time somebody trades and then stops.
+This earns every day on money that is already sitting there. $1M deposited at a
+20% cut of a 5% rate is $10,000 a year that arrives whether anybody comes back
+to the site or not.
+
+Three things follow from that, and they change what is worth building:
+
+1. **Deposits held matter more than deposits made.** Everything in the plan
+   below that keeps somebody from withdrawing — seeing their balance grow,
+   trusting the number — is revenue work, not polish.
+2. **It needs a branded token** (`proxy.ts` / the `/integration/*` endpoints).
+   The plain `/stablecoin/*` path this tab uses today pays nothing. The token is
+   what carries the fee split.
+3. **Every creator site can have its own.** A creator launches theirs, sets
+   their own split, and the Launchpad takes its platform cut of that. That is
+   the same shape as the booking treasury already built — and it is the reason
+   to do this properly rather than as one tab on one site.
+
+**What a user is not told clearly enough yet:** the fee comes out of their
+yield. 5% becomes 4%. That belongs on the page before anyone deposits, in the
+same breath as the rate, not in a footnote.
+
+### What is missing to be worth using
+
+**The position.** A tab that cannot tell somebody what they already have is a
+form, not a product. Balance, what it was worth when they put it in, what it is
+worth now, and the difference. This is the single biggest gap.
+
+**Their USDC balance, and a Max button.** Today somebody can type more than they
+hold and find out when their wallet refuses. The swap already reads balances;
+the same code serves here.
+
+**Enough SOL for the fee.** The swap refuses to leave a wallet under 0.005 SOL.
+This does not check at all.
+
+**A receipt.** After a deposit, the signature, the amount, and a link to the
+explorer. The swap has this; a deposit is a bigger moment and has nothing.
+
+**The rate, and its history.** Reflect publishes no rate today — their APY
+endpoint answers 404. When they do, a number alone is weaker than a line showing
+it has been steady.
+
+**Nothing to claim, and that is worth saying.** USDC+ is yield-bearing: the
+yield accrues in what the token is worth, so there is no claim button and no
+compound button for a depositor — it compounds by itself. Building either would
+be inventing a step that does not exist. The page should say so plainly, because
+people arrive expecting one. The claiming that does exist is solquicks claiming
+its fee share, which is an admin screen, not a user one.
+
+### Shipping order
+
+Each step is worth shipping on its own, and each one earlier is worth more than
+the one after it.
+
+**1. Balance, Max, and enough SOL for the fee.** Removes the three ways a
+deposit can fail after somebody has decided to make one. Half a day, no new
+dependencies, reuses what the swap already does.
+
+**2. The position panel.** What you have in, what it is worth now, what that
+difference is. Read from the chain — the USDC+ balance and its exchange rate —
+not stored here. Nothing to keep in sync and nothing to get wrong.
+
+**3. A receipt, and history.** Both already exist for swaps; this is mostly
+pointing them at a second kind of event.
+
+**4. The branded token.** The first step that earns anything. Initialize an
+integration with a fee split, move the tab from `/stablecoin/*` to
+`/integration/*`, and say on the page what the split is. Do not skip the
+saying.
+
+**5. The fee claim, for solquicks.** An admin screen. Nothing until there is
+something to claim, so it waits on step 4 having real deposits behind it.
+
+**6. The rate and its history**, once Reflect publishes one.
+
+**7. Per-creator tokens on the Launchpad.** The template play, and the largest
+piece. Not before the hackathon.
+
+### Two things that are not ours to fix
+
+**Reflect is in closed beta.** Integrator users must be whitelisted
+(`/integration/whitelist-integration-users`). Real users cannot deposit until
+that is done, whatever this site builds. This is the one blocker worth chasing
+them about now rather than later.
+
+**No rate is published.** Depositing works; the headline number does not exist
+yet. Not worth waiting on, but the tab reads thinner because of it.
