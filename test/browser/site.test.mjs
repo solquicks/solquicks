@@ -1661,11 +1661,21 @@ try {
     // the page with no panel showing at all — a refresh on Savings went blank.
     for (const h of ['#savings', '#defi']) {
       const fresh = await context.newPage();
+      // Collected per page, because this one throws where the shared page does
+      // not: the tab hook runs while the script is still being read, and the
+      // things it reaches for are declared further down it.
+      const thrown = [];
+      fresh.on('pageerror', (e) => thrown.push(e.message));
       await fresh.goto(SITE + h, { waitUntil: 'domcontentloaded' });
       await fresh.waitForFunction(() => document.querySelectorAll('.panel.active').length > 0,
         null, { timeout: 20000 }).catch(() => {});
+      await fresh.waitForTimeout(1200);
       const shown = await fresh.$$eval('.panel.active', (e) => e.map((x) => x.id));
       eq('loading ' + h + ' straight into the browser lands on Savings', shown.join(','), 'panel-defi');
+      ok('and nothing throws on the way, so the wallet comes up with it',
+        thrown.length === 0, thrown.join(' | '));
+      eq('with the wallet code actually initialised',
+        await fresh.evaluate(() => typeof Wallet !== 'undefined' && typeof Wallet.discover === 'function'), true);
       await fresh.close();
     }
 

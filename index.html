@@ -3466,24 +3466,34 @@
       // The rate is re-read on every open rather than once on load: it is a
       // variable rate and a number from an hour ago is not the number.
       if (tab === 'defi' && typeof loadDefiRate === 'function') {
-        loadDefiRate();
-        loadDefiBalances();
-        // What a position is worth changes while somebody is looking at it, so
-        // it is asked again every half minute rather than being frozen at the
-        // moment the tab opened. Only while the tab is open — there is no
-        // reason to poll a page nobody is on.
-        clearInterval(defi.tick);
-        defi.tick = setInterval(function () {
-          if (!document.getElementById('panel-defi').classList.contains('active')) {
-            clearInterval(defi.tick); defi.tick = null; return;
+        // Deferred by a tick. Landing on #savings runs this while the script is
+        // still being read, and `defi` and `Wallet` are declared further down —
+        // so touching them threw "cannot access before initialization" and the
+        // wallet never came up at all on this tab. A function is hoisted and
+        // looks ready; a const is not. Waiting one turn is enough.
+        setTimeout(function () {
+          loadDefiRate();
+          loadDefiBalances();
+          // What a position is worth changes while somebody is looking at it,
+          // so it is asked again every half minute rather than frozen at the
+          // moment the tab opened — and only while the tab is open, because
+          // there is no reason to poll a page nobody is on.
+          clearInterval(defi.tick);
+          defi.tick = setInterval(function () {
+            const panel = document.getElementById('panel-defi');
+            if (!panel || !panel.classList.contains('active')) {
+              clearInterval(defi.tick);
+              defi.tick = null;
+              return;
+            }
+            if (defi.held > 0) paintDefiPosition();
+          }, 30000);
+          const box = document.getElementById('df-amount');
+          if (box && !box._bound) {
+            box._bound = true;
+            box.addEventListener('input', defiAmountChanged);
           }
-          if (defi.held > 0) paintDefiPosition();
-        }, 30000);
-        const box = document.getElementById('df-amount');
-        if (box && !box._bound) {
-          box._bound = true;
-          box.addEventListener('input', defiAmountChanged);
-        }
+        }, 0);
       }
       if (tab === 'moon') {
         if (typeof loadCollection === 'function') loadCollection();
