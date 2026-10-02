@@ -662,9 +662,11 @@ try {
     // past Referrals. That is the rule working, not the order being wrong.
     'links,cleanup,leaderboard,gacha,games,mine,moon,referrals,defi,travel,wishlist');
 
-  // The Launchpad is a page of its own rather than a tab, so it is a link in
-  // the same menu and has no panel behind it.
-  const lp = page.locator('#nav-launchpad');
+  // The Launchpad is reached from the badge in the corner, which is on every
+  // page of every site built from this template. It was in this menu as well;
+  // two routes to one page made the menu longer without making it easier.
+  eq('the Launchpad is not also in the menu', await page.locator('#nav-launchpad').count(), 0);
+  ok('because the badge is the way to it', await page.locator('#powered').count() === 1);
   // Named for what it is rather than for one part of it. The tab id stays
   // `leaderboard` so a shared #leaderboard link still works.
   eq('the points page is named Fox Points',
@@ -681,10 +683,9 @@ try {
     return ok;
   }));
 
-  eq('the Launchpad sits in the menu as a link out', await lp.getAttribute('href'), 'launch.html');
-  eq('and does not stand out as the one underlined thing in it',
-    await lp.evaluate((e) => getComputedStyle(e).textDecorationLine), 'none');
-  eq('named like everything else', (await lp.locator('.nav-item-name').textContent()).trim(), 'Creator Launchpad');
+  // Those three checks were about the Launchpad behaving like the other menu
+  // items. It is not in the menu any more, so what matters instead is that the
+  // badge still goes there — checked where the badge itself is checked.
   eq('and still in alphabetical order', await page.$$eval('.nav-item',
     (els) => els.filter((e) => !e.hidden).map((e) => (e.querySelector('.nav-item-name') || e).textContent.trim()))
     .then((n) => n.slice(1).join(',')),
