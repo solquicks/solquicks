@@ -1096,6 +1096,19 @@ is what makes them good savings and poor generators of trading fees.
 So "creators keep 100%" is an acquisition decision, made knowingly, and not a
 belief that trading will replace the yield.
 
+### Adding a table means migrating production, every time
+
+`schema.sql` is the source and production D1 is migrated by hand, so the two
+drift silently. A new table lands in the file, passes every test against an
+in-memory copy, deploys green, and then answers 500 the first time anybody
+touches it. That is exactly how the savings tables went out on 2026-10-02 —
+found because `/api/reflect/history` returned "server error" in production and
+nowhere else.
+
+`node worker/test/schema-live.mjs` now compares every `CREATE TABLE` in
+schema.sql against the live database and names what is missing. **Run it after
+any deploy that added one.** It reads table names and nothing else.
+
 ### Blocked 2026-10-02: Reflect has not shipped the integration endpoints
 
 Steps 4 and 5 cannot start. The entire `/integration/*` namespace answers 404 on
