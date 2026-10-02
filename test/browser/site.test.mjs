@@ -1655,6 +1655,20 @@ try {
     await page.waitForSelector('#panel-defi.active', { timeout: 10000 });
     eq('opening it puts #savings in the address bar', await page.evaluate(() => location.hash), '#savings');
 
+    // Loading the page ON a hash is a different path from changing the hash
+    // once it is open, and only the second one was covered. The first went
+    // looking for a panel named after the hash, found nothing, threw, and left
+    // the page with no panel showing at all — a refresh on Savings went blank.
+    for (const h of ['#savings', '#defi']) {
+      const fresh = await context.newPage();
+      await fresh.goto(SITE + h, { waitUntil: 'domcontentloaded' });
+      await fresh.waitForFunction(() => document.querySelectorAll('.panel.active').length > 0,
+        null, { timeout: 20000 }).catch(() => {});
+      const shown = await fresh.$$eval('.panel.active', (e) => e.map((x) => x.id));
+      eq('loading ' + h + ' straight into the browser lands on Savings', shown.join(','), 'panel-defi');
+      await fresh.close();
+    }
+
     // Renaming the tab id would break every #defi link already shared, so the
     // id stays and the two hashes both resolve here.
     await page.evaluate(() => { location.hash = ''; switchTab('links', tabButton('links')); });

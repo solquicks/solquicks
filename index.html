@@ -3883,7 +3883,11 @@
       const name = location.hash.replace('#', '');
       if (!name) return;
       const btn = tabButton(name);
-      if (btn) switchTab(name, btn);
+      // The tab, not the hash. They differ for Savings, whose panel is still
+      // panel-defi — and switchTab given "savings" went looking for a panel
+      // that does not exist, threw, and left the page with no panel showing at
+      // all. Which is what landing on the page and refreshing it did.
+      if (btn) switchTab(btn.dataset.tab || tabForHash(name), btn);
     })();
 
     // an Enter press in the lookup box should search
