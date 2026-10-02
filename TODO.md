@@ -1076,3 +1076,57 @@ what your site makes", those two need an answer before a creator reads it.
    once this one exists.
 
 Nothing above needs a creator to launch anything.
+
+### Decided 2026-10-02: creators keep all of their own savings revenue
+
+solquicks.com is a site like any other, so its own deposits pay solquicks in
+full and a creator's deposits pay that creator in full. On top of that solquicks
+keeps the 20 bps on every swap across every creator site, which it already does
+— `REFERRAL_ACCOUNT` is one hardcoded account and the swap build path has no
+site awareness at all.
+
+The reasoning that was checked rather than assumed: **trading fees on the
+savings token will not be a revenue line.** On $10M deposited at 5%, a fifth of
+the interest is $100,000 a year. Generous turnover of 10% traded at 20 bps is
+$2,000 a year. Fifty to one, and worse than it looks, because depositing and
+withdrawing are mint and burn rather than swaps and carry no fee at all, and a
+swap routed anywhere but this site pays nothing. Savings tokens are held. That
+is what makes them good savings and poor generators of trading fees.
+
+So "creators keep 100%" is an acquisition decision, made knowingly, and not a
+belief that trading will replace the yield.
+
+### Blocked 2026-10-02: Reflect has not shipped the integration endpoints
+
+Steps 4 and 5 cannot start. The entire `/integration/*` namespace answers 404 on
+both prod and dev, while `/stablecoin/*` answers 200 beside it:
+
+| path | prod | dev |
+|---|---|---|
+| `/stablecoin/quote/mint` | 200 | — |
+| `/stablecoin/mint` | 200 | — |
+| `/integration/initialize` | 404 | 404 |
+| `/integration/quote/flow/mint` | 404 | — |
+| `/integration/mint` | 404 | — |
+| `/integration/redeem` | 404 | — |
+| `/integration/whitelist-users` | 404 | — |
+
+Documented, not deployed. No API key changes this — the routes are not there to
+authenticate against. Savings therefore earns nothing for anyone until Reflect
+ships them, and that is their side, not ours.
+
+**What to send them:**
+
+> We have the savings flow live on solquicks.com against your `/stablecoin/*`
+> endpoints — quotes, mint and burn all working, no key needed. We want to move
+> to a branded stablecoin so the yield split works, and eventually to run one
+> for each creator site built on our template.
+>
+> Every `/integration/*` route we have tried returns 404 on both prod and dev,
+> including `/integration/initialize`, `/integration/quote/flow/mint` and
+> `/integration/whitelist-users`, while `/stablecoin/*` answers normally. Are
+> those endpoints live yet, and what do we need from you to use them —
+> whitelisting, an API key, something else?
+>
+> We would also like our users whitelisted for the closed beta so they can
+> deposit.
