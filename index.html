@@ -1293,6 +1293,30 @@
     .wm-close:hover { background: var(--orange-soft); }
 
     .wm-list { display: flex; flex-direction: column; gap: 9px; }
+    .df-rate { text-align: center; padding: 6px 0 18px; }
+    .df-rate-label {
+      font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .df-rate-value {
+      font-family: 'Baloo 2', sans-serif; font-weight: 800;
+      font-size: 2.6rem; line-height: 1.1; color: var(--green);
+    }
+    .df-rate-note { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+    .df-sides { display: flex; gap: 8px; margin-bottom: 14px; }
+    .df-side {
+      flex: 1; cursor: pointer; font: inherit; font-weight: 800; font-size: 0.9rem;
+      background: var(--cream); border: var(--line); border-radius: 12px;
+      padding: 9px 12px; color: var(--muted);
+    }
+    .df-side.on { background: var(--orange-soft); color: var(--ink); border-color: var(--orange); }
+    .df-quote { font-size: 0.86rem; font-weight: 700; color: var(--ink-soft); min-height: 1.3em; margin: 10px 0 4px; text-align: center; }
+    .df-risk {
+      margin-top: 16px; padding: 13px 15px; background: var(--cream);
+      border: var(--line); border-radius: 12px;
+      font-size: 0.82rem; line-height: 1.55; color: var(--ink-soft);
+    }
+    .df-risk b { display: block; color: var(--ink); margin-bottom: 4px; }
     .wm-or {
       display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
       font-size: 0.72rem; font-weight: 800; color: var(--muted);
@@ -2766,6 +2790,58 @@
     </div>
 
     <!-- CLEANUP PANEL -->
+    <!-- DEFI PANEL -->
+    <div id="panel-defi" class="panel">
+      <div class="bk-intro">
+        <div class="bk-lead">Earn on your USDC</div>
+        <p class="bk-sub">Deposit USDC and it earns, in the same wallet you swap with. Withdraw whenever you want.</p>
+      </div>
+
+      <div class="sw-card">
+        <div class="df-rate">
+          <div class="df-rate-label">Earning now</div>
+          <div class="df-rate-value" id="df-apy">—</div>
+          <div class="df-rate-note" id="df-apy-note">Checking the current rate…</div>
+        </div>
+
+        <div class="df-sides">
+          <button type="button" class="df-side on" id="df-side-in" onclick="setDefiSide('in')">Deposit</button>
+          <button type="button" class="df-side" id="df-side-out" onclick="setDefiSide('out')">Withdraw</button>
+        </div>
+
+        <label class="sw-field">
+          <span class="sw-label" id="df-amount-label">You deposit</span>
+          <div class="sw-row">
+            <input type="text" inputmode="decimal" id="df-amount" placeholder="0.00" autocomplete="off" spellcheck="false"/>
+            <span class="sw-pick" style="cursor:default">USDC</span>
+          </div>
+        </label>
+
+        <div class="df-quote" id="df-quote"></div>
+
+        <button class="sw-go" id="df-go" onclick="doDefi()" disabled>Enter an amount</button>
+        <div class="sw-msg" id="df-msg"></div>
+
+        <div class="run-by">
+          <span class="run-by-mark">Reflect</span>
+        </div>
+        <p class="sw-foot">Powered by <b>Reflect</b>. Non-custodial — your USDC moves straight from your
+          wallet into the protocol, and we never hold it.</p>
+
+        <!-- Not small print. Somebody about to put money somewhere is owed the
+             part that is not the headline rate, in the same size as everything
+             else on the card. -->
+        <div class="df-risk">
+          <b>Worth knowing before you deposit.</b>
+          The yield comes from lending your USDC to borrowers who put up more collateral than
+          they take out. That is not risk-free: there is no insurance pool, and getting out
+          depends on there being liquidity to get out into, which can tighten when markets are
+          rough. Reflect has been audited by Offside Labs and Adevar Labs and publishes both
+          reports. Only deposit what you could stand to be without.
+        </div>
+      </div>
+    </div>
+
     <div id="panel-cleanup" class="panel">
       <div class="bk-intro">
         <div class="bk-lead">Wallet Cleanup</div>
@@ -3298,6 +3374,16 @@
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
       if (tab === 'store' && typeof loadStore === 'function') { loadStore(); loadCollectible(); }
       if (tab === 'referrals' && typeof loadReferrals === 'function') loadReferrals();
+      // The rate is re-read on every open rather than once on load: it is a
+      // variable rate and a number from an hour ago is not the number.
+      if (tab === 'defi' && typeof loadDefiRate === 'function') {
+        loadDefiRate();
+        const box = document.getElementById('df-amount');
+        if (box && !box._bound) {
+          box._bound = true;
+          box.addEventListener('input', defiAmountChanged);
+        }
+      }
       if (tab === 'moon') {
         if (typeof loadCollection === 'function') loadCollection();
         if (typeof loadAnalytics === 'function') {
@@ -3341,12 +3427,12 @@
 
     const SOON_TABS = [
       {
-        tab: 'defi', name: 'DeFi', icon: '◉',
-        note: 'Put what you already hold to work',
+        // Built, so this entry is here only for its place in the menu — the
+        // panel below is written out rather than generated.
+        tab: 'defi', name: 'DeFi', icon: '◉', live: true,
+        note: 'Earn on the USDC you already hold',
         lead: 'DeFi',
-        what: 'Lending, earning and the rest, wired into the same wallet you swap ' +
-          'with, so what you are already holding is not just sitting there. Which ' +
-          'protocols go in is still being decided.'
+        what: ''
       },
       {
         tab: 'mine', name: 'Mine Bitcoin', icon: '₿',
@@ -3472,6 +3558,9 @@
       const after = document.getElementById('panel-referrals');
       for (const page of SOON_TABS) {
         if (page.inMenu !== false) buildMenuItem(menu, page);
+        // A tab that has been built keeps its menu entry and brings its own
+        // panel. Generating a "coming soon" one over the top would bury it.
+        if (page.live) continue;
         const panel = document.createElement('div');
         panel.id = 'panel-' + page.tab;
         panel.className = 'panel';
@@ -4888,6 +4977,190 @@
       if (low.indexOf('recovery') >= 0) return 'This sign-in needs a recovery step we have not built yet. Use a wallet app for now.';
       if (low.indexOf('failed to fetch') >= 0 || low.indexOf('network') >= 0) return 'Could not reach sign-in. Check your connection.';
       return raw || 'That did not work. Try again.';
+    }
+
+    // ── DeFi: USDC in, yield out ────────────────────────────────────────────
+    // Every amount here is in USDC's smallest unit — whole millionths — because
+    // that is what the protocol counts in and what a transaction carries.
+    // Floats only exist in the box somebody types into.
+    // USDC_DECIMALS is defined once, in the USDC section further down. Two
+    // copies of the same number is how one of them eventually goes stale.
+    const defi = { side: 'in', apy: null, quote: null, timer: null, busy: false };
+
+    /// Text to millionths. Refuses anything that is not a plain number, and
+    /// anything with more decimal places than USDC has — "1.0000001" would
+    /// otherwise round into an amount nobody typed.
+    function usdcUnits(text) {
+      const t = String(text || '').trim().replace(/,/g, '');
+      if (!/^\d*\.?\d*$/.test(t) || t === '' || t === '.') return null;
+      const [whole, frac = ''] = t.split('.');
+      if (frac.length > USDC_DECIMALS) return null;
+      const units = Number(whole || '0') * Math.pow(10, USDC_DECIMALS) +
+        Number((frac + '000000').slice(0, USDC_DECIMALS) || '0');
+      if (!Number.isSafeInteger(units) || units <= 0) return null;
+      return units;
+    }
+
+    const usdcText = (units) => (units / Math.pow(10, USDC_DECIMALS))
+      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+
+    async function loadDefiRate() {
+      const el = document.getElementById('df-apy');
+      const note = document.getElementById('df-apy-note');
+      if (!el) return;
+      try {
+        const r = await fetch(POINTS_API + '/api/reflect/apy');
+        const b = await r.json();
+        if (!r.ok || typeof b.apy !== 'number') throw new Error(b.error || 'no rate');
+        defi.apy = b.apy;
+        el.textContent = b.apy.toFixed(2) + '%';
+        // A rate with no date behind it is a claim rather than a number.
+        note.textContent = b.at
+          ? 'Variable rate, published ' + new Date(b.at).toLocaleDateString()
+          : 'Variable rate';
+      } catch (e) {
+        // Better to say the rate is unknown than to leave a dash that reads as
+        // zero, and far better than showing a number that is not current.
+        el.textContent = '—';
+        note.textContent = 'Could not reach the rate just now. Depositing still works.';
+      }
+    }
+
+    function setDefiSide(side) {
+      defi.side = side;
+      document.getElementById('df-side-in').className = 'df-side' + (side === 'in' ? ' on' : '');
+      document.getElementById('df-side-out').className = 'df-side' + (side === 'out' ? ' on' : '');
+      document.getElementById('df-amount-label').textContent = side === 'in' ? 'You deposit' : 'You withdraw';
+      defiAmountChanged();
+    }
+
+    function defiAmountChanged() {
+      const units = usdcUnits(document.getElementById('df-amount').value);
+      defi.quote = null;
+      document.getElementById('df-quote').textContent = '';
+      const go = document.getElementById('df-go');
+      clearTimeout(defi.timer);
+      if (units === null) {
+        go.disabled = true;
+        go.textContent = 'Enter an amount';
+        return;
+      }
+      go.disabled = true;
+      go.textContent = 'Checking…';
+      defi.timer = setTimeout(function () { quoteDefi(units); }, 350);
+    }
+
+    async function quoteDefi(units) {
+      const asked = units;
+      try {
+        const r = await fetch(POINTS_API + '/api/reflect/quote', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ side: defi.side === 'in' ? 'mint' : 'redeem', amount: units })
+        });
+        const b = await r.json();
+        // They kept typing while this was in the air; this answer is for an
+        // amount they are no longer asking about.
+        if (asked !== usdcUnits(document.getElementById('df-amount').value)) return;
+        if (!r.ok || typeof b.outAmount !== 'number') throw new Error(b.error || 'no quote');
+        defi.quote = { in: units, out: b.outAmount };
+        document.getElementById('df-quote').textContent =
+          (defi.side === 'in' ? 'You receive about ' : 'You get back about ') + usdcText(b.outAmount);
+        const go = document.getElementById('df-go');
+        go.disabled = false;
+        go.textContent = defi.side === 'in' ? 'Deposit' : 'Withdraw';
+      } catch (e) {
+        if (asked !== usdcUnits(document.getElementById('df-amount').value)) return;
+        document.getElementById('df-quote').textContent = '';
+        const go = document.getElementById('df-go');
+        go.disabled = true;
+        go.textContent = 'Enter an amount';
+        note('df-msg', (e && e.message) || 'Could not get a quote.', 'bad');
+      }
+    }
+
+    async function doDefi() {
+      if (defi.busy) return;
+      const units = usdcUnits(document.getElementById('df-amount').value);
+      if (units === null) return;
+      if (!Wallet.pubkey) { connectWallet(); return; }
+
+      const go = document.getElementById('df-go');
+      defi.busy = true;
+      go.disabled = true;
+      note('df-msg', 'Building your transaction…', '');
+      try {
+        // The quote is what they were shown, so it is the floor they get. A
+        // deposit sent with no floor accepts whatever comes back.
+        const floor = defi.quote && defi.quote.in === units
+          ? Math.floor(defi.quote.out * 0.99)   // 1% of room, so a moving rate does not simply fail
+          : null;
+        const body = { wallet: Wallet.pubkey, amount: units };
+        if (floor !== null) body.minReceived = floor;
+
+        const r = await fetch(POINTS_API + (defi.side === 'in' ? '/api/reflect/deposit' : '/api/reflect/withdraw'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const b = await r.json();
+        if (!r.ok || !b.transaction) throw new Error(b.error || 'could not build that');
+
+        note('df-msg', 'Approve it in your wallet…', '');
+        const signature = await sendBuiltTransaction(b.transaction);
+        note('df-msg', (defi.side === 'in' ? 'Deposited. ' : 'Withdrawn. ') + 'It is on chain.', 'good');
+        document.getElementById('df-amount').value = '';
+        defiAmountChanged();
+        loadDefiRate();
+        return signature;
+      } catch (e) {
+        note('df-msg', defiTrouble(e), 'bad');
+      } finally {
+        defi.busy = false;
+        go.disabled = false;
+      }
+    }
+
+    /// Signs and sends a transaction somebody else built, with whatever wallet
+    /// is connected — extension or signed-in. The swap has its own version of
+    /// this because it appends instructions of its own first; this one sends
+    /// what it was given, unchanged.
+    async function sendBuiltTransaction(base64) {
+      const provider = Wallet.active;
+      if (!provider) throw new Error('Connect a wallet first.');
+      const { VersionedTransaction } = w3();
+      const bytes = Uint8Array.from(atob(base64), function (c) { return c.charCodeAt(0); });
+      const tx = VersionedTransaction.deserialize(bytes);
+      const connection = rpc();
+
+      if (provider.kind === 'privy') {
+        const out = await Privy.provider.request({
+          method: 'signAndSendTransaction', params: { transaction: tx, connection: connection } });
+        return signatureOf(out.signature);
+      }
+      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+        const res = await provider.w.signAndSendTransaction(tx);
+        return signatureOf(res.signature || res);
+      }
+      if (provider.kind === 'injected' && provider.w.signTransaction) {
+        const signed = await provider.w.signTransaction(tx);
+        return await connection.sendRawTransaction(signed.serialize(), { maxRetries: 3 });
+      }
+      if (provider.kind === 'standard') {
+        const feat = provider.w.features['solana:signAndSendTransaction'];
+        if (!feat) throw new Error('This wallet cannot send transactions.');
+        const out = await feat.signAndSendTransaction({
+          account: walletAccount(provider), chain: 'solana:mainnet', transaction: tx.serialize() });
+        return signatureOf(out[0].signature);
+      }
+      throw new Error('This wallet cannot send transactions.');
+    }
+
+    function defiTrouble(e) {
+      const raw = ((e && e.message) || '') + '';
+      const low = raw.toLowerCase();
+      if (low.indexOf('user rejected') >= 0 || low.indexOf('rejected the request') >= 0) {
+        return 'You turned that down — nothing was sent.';
+      }
+      if (low.indexOf('insufficient') >= 0) return 'Not enough USDC in that wallet.';
+      return raw || 'That did not work.';
     }
 
     function walletChipClick() {

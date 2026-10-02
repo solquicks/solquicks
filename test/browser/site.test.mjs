@@ -60,6 +60,9 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
   quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
+  reflectQuotes: [], reflectBuilds: [], reflectDown: false,
+  // a real-shaped versioned transaction, so the page has to deserialize it
+  reflectTx: null,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
 
 // a wallet with some dead token accounts holding rent, and one holding a token
@@ -351,8 +354,8 @@ function rpcAnswer(method, params) {
   }
 }
 
-const json = (route, body) => route.fulfill({
-  status: 200, contentType: 'application/json',
+const json = (route, body, status = 200) => route.fulfill({
+  status, contentType: 'application/json',
   headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' },
   body: JSON.stringify(body)
 });
@@ -379,6 +382,20 @@ async function standIns(context) {
       // Fox Points proves a wallet by having it sign a nonce. Stubbing both
       // ends is what lets the signature the page actually sends be inspected,
       // rather than a signature the test made for itself.
+      if (u.pathname === '/api/reflect/apy') {
+        return net.reflectDown ? json(route, { error: 'no rate published yet' }, 503)
+          : json(route, { apy: 5.25, at: '2026-10-02T10:30:00Z' });
+      }
+      if (u.pathname === '/api/reflect/quote') {
+        const b = JSON.parse(req.postData() || '{}');
+        net.reflectQuotes.push(b);
+        return json(route, { side: b.side, inAmount: b.amount, outAmount: Math.floor(b.amount * 0.999) });
+      }
+      if (u.pathname === '/api/reflect/deposit' || u.pathname === '/api/reflect/withdraw') {
+        const b = JSON.parse(req.postData() || '{}');
+        net.reflectBuilds.push({ path: u.pathname, body: b });
+        return json(route, { transaction: net.reflectTx, wallet: b.wallet, amount: b.amount });
+      }
       if (u.pathname === '/api/nonce') {
         return json(route, { nonce: 'n-1', message: 'prove it' });
       }
@@ -1593,6 +1610,115 @@ try {
       null, { timeout: 15000 });
   }
 
+  section('DeFi: what the amount box does with what people type');
+  {
+    await page.evaluate(() => switchTab('defi'));
+    await page.waitForSelector('#panel-defi.active', { timeout: 10000 });
+    await page.waitForFunction(() => document.getElementById('df-apy').textContent !== '—',
+      null, { timeout: 15000 }).catch(() => {});
+    eq('the rate people are shown is the rate that came back',
+      (await page.textContent('#df-apy')).trim(), '5.25%');
+    ok('with when it was published, so it reads as a number and not a claim',
+      /published/i.test(await page.textContent('#df-apy-note')), await page.textContent('#df-apy-note'));
+
+    // USDC is counted in whole millionths. Everything typed has to become one
+    // of those exactly, because this is the number that ends up in a
+    // transaction somebody signs.
+    const cases = [
+      ['1', 1000000], ['1.5', 1500000], ['0.000001', 1], ['1,234.5', 1234500000],
+      ['', null], ['.', null], ['0', null], ['-1', null], ['abc', null],
+      ['1.0000001', null],   // finer than USDC goes — rounding it would move money nobody typed
+      ['1e6', null]          // reads as a million to a person and as notation to Number()
+    ];
+    for (const [typed, want] of cases) {
+      const got = await page.evaluate((t) => usdcUnits(t), typed);
+      eq('"' + typed + '" is ' + (want === null ? 'refused' : want + ' millionths'), got, want);
+    }
+
+    // What it asks for has to match what was typed, or the quote belongs to a
+    // different amount than the one on screen.
+    net.reflectQuotes.length = 0;
+    await page.fill('#df-amount', '25');
+    await page.waitForFunction(() => /receive about/.test(document.getElementById('df-quote').textContent),
+      null, { timeout: 15000 });
+    eq('a quote is asked for in millionths', net.reflectQuotes.at(-1).amount, 25000000);
+    eq('and for the side they are on', net.reflectQuotes.at(-1).side, 'mint');
+
+    await page.click('#df-side-out');
+    await page.waitForFunction(() => /get back about/.test(document.getElementById('df-quote').textContent),
+      null, { timeout: 15000 });
+    eq('switching to withdraw asks the other way', net.reflectQuotes.at(-1).side, 'redeem');
+    eq('and the label follows', (await page.textContent('#df-amount-label')).trim(), 'You withdraw');
+    await page.click('#df-side-in');
+  }
+
+  section('DeFi: depositing');
+  {
+    net.reflectBuilds.length = 0;
+    net.reflectTx = await page.evaluate((w) => {
+      const { PublicKey, TransactionMessage, VersionedTransaction } = solanaWeb3;
+      const msg = new TransactionMessage({
+        payerKey: new PublicKey(w), recentBlockhash: '11111111111111111111111111111111',
+        instructions: [systemTransferIx(w, 'AcNQzKfefKjSCEDBbMXxEQrJgW29UVbQhjmm88k84Mqp', 1000)]
+      }).compileToV0Message();
+      let bin = ''; for (const b of new VersionedTransaction(msg).serialize()) bin += String.fromCharCode(b);
+      return btoa(bin);
+    }, WALLET);
+
+    await page.fill('#df-amount', '25');
+    await page.waitForFunction(() => document.getElementById('df-go').disabled === false,
+      null, { timeout: 15000 });
+    eq('the button says what pressing it does', (await page.textContent('#df-go')).trim(), 'Deposit');
+    // Counted from here, because the wallet has signed for other things
+    // earlier in this run.
+    const signedBefore = await page.evaluate(() => window.__wallet.signAndSend);
+
+    await page.click('#df-go');
+    await page.waitForFunction(() => /on chain/.test(document.getElementById('df-msg').textContent),
+      null, { timeout: 20000 });
+
+    const built = net.reflectBuilds.at(-1);
+    eq('it is built as a deposit', built.path, '/api/reflect/deposit');
+    eq('for the amount typed', built.body.amount, 25000000);
+    eq('and for the wallet connected', built.body.wallet, WALLET);
+    // Without a floor the protocol decides what they get back and the person
+    // signing has nothing holding it. The quote they were shown is that floor.
+    ok('with a floor taken from the quote they were shown',
+      built.body.minReceived > 0 && built.body.minReceived <= Math.floor(25000000 * 0.999),
+      JSON.stringify(built.body));
+    eq('and the wallet was actually asked to sign it, once',
+      await page.evaluate(() => window.__wallet.signAndSend), signedBefore + 1);
+
+    eq('the box is cleared, so a second press cannot repeat it by accident',
+      await page.inputValue('#df-amount'), '');
+    eq('and the button goes back to waiting for an amount',
+      (await page.textContent('#df-go')).trim(), 'Enter an amount');
+  }
+
+  section('DeFi: what it says before anyone deposits');
+  {
+    // Somebody about to put money somewhere is owed the part that is not the
+    // headline rate, in the same size as the rest of the card.
+    const risk = (await page.textContent('.df-risk')).replace(/\s+/g, ' ');
+    ok('it says where the yield comes from', /lending your USDC/i.test(risk), risk);
+    ok('that there is no insurance pool', /no insurance pool/i.test(risk), risk);
+    ok('that getting out depends on liquidity', /liquidity/i.test(risk), risk);
+    ok('and who audited it', /Offside Labs|Adevar/i.test(risk), risk);
+    ok('the page says we never hold the money',
+      /never hold it/i.test(await page.textContent('#panel-defi .sw-foot')));
+    ok('and names who powers it', /Reflect/.test(await page.textContent('#panel-defi .sw-foot')));
+
+    // A rate that cannot be read must not be shown as zero.
+    net.reflectDown = true;
+    await page.evaluate(() => loadDefiRate());
+    await page.waitForFunction(() => /Could not reach/.test(document.getElementById('df-apy-note').textContent),
+      null, { timeout: 15000 });
+    eq('an unreadable rate shows nothing rather than a zero',
+      (await page.textContent('#df-apy')).trim(), '—');
+    ok('and says so', /Could not reach the rate/.test(await page.textContent('#df-apy-note')));
+    net.reflectDown = false;
+  }
+
   section('the connect sheet lists each wallet once');
   {
     // Nearly every wallet sets window.solana as well as registering under its
@@ -2025,7 +2151,6 @@ try {
     // considered, not like one that failed to load — and it has to say what it
     // will be, or the tab is just a dead end with a nice border.
     for (const [tab, lead, mustSay] of [
-      ['defi', 'DeFi', /same wallet you swap with/],
       ['wishlist', 'Wishlist', /without a card/],
       ['mine', 'Mine Bitcoin', /no rig, no electricity bill/],
       ['travel', 'Travel', /Flights and stays/],
@@ -2207,7 +2332,7 @@ try {
     ok('and leaves no empty line behind it', !/<span>/.test(noLine), noLine);
 
     // The two with nobody to name yet must not grow an empty credit box.
-    for (const tab of ['defi', 'games']) {
+    for (const tab of ['games']) {
       await page.evaluate((t) => switchTab(t), tab);
       eq(tab + ': has no partner line, having no partner', await page.locator('#panel-' + tab + ' .soon-with').count(), 0);
     }
