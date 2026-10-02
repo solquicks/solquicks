@@ -981,3 +981,98 @@ them about now rather than later.
 
 **No rate is published.** Depositing works; the headline number does not exist
 yet. Not worth waiting on, but the tab reads thinner because of it.
+
+---
+
+## The business model, feature by feature (planned 2026-10-02)
+
+Written because Savings forced the question: does every creator launch their own
+stablecoin? The answer is no, and the reasoning below applies to more than
+Savings.
+
+### One stablecoin, not one per creator
+
+A creator came to make a website. Issuing a stablecoin is a different kind of
+commitment: they sign an initialization, pay rent for the accounts, and become
+the authority for something other people hold. Most will not want that, and the
+ones who would are not the ones to design for.
+
+Three more reasons it should be one:
+
+**Liquidity only counts if it is in one place.** Reflect's pitch is that the
+token is swappable the moment it exists, through Titan and Jupiter. That is
+worth something with depth behind it. One token across a hundred creator sites
+has a hundred times the depth of a hundred tokens, each of which nobody has
+heard of and none of which can be sold without moving the price.
+
+**The attribution is already built.** `treasuryFor(slug)` and the `site_slug`
+column already route booking and advertising money per creator. The same
+machinery says which deposits came through which site. Nothing new is needed to
+know whose money earned what.
+
+**One split to reason about.** A per-creator fee means a hundred sets of
+economics and a hundred ways for one to be wrong.
+
+**The cost of choosing this, said plainly:** solquicks receives the yield cut and
+owes the creators their share. That is a liability, not only revenue. It needs a
+ledger of which deposits belong to which site, a balance each creator can see,
+and a way to pay it. The Ranger referral design already works this way —
+balances accrue, and are claimed and paid by hand — so the shape is familiar.
+
+One thing in Reflect's favour here: the fee "accrues continuously and you claim
+it whenever you like". It sits with them until claimed, so the rule is simple —
+**do not claim what has not been reconciled.** Money that has not arrived cannot
+be spent by accident.
+
+### How Savings would split
+
+Reflect pays a cut of the interest, set once in basis points. Say the collateral
+earns 5% and the cut is a fifth:
+
+- holders see **4%** — this must be the number on the page, not the 5%
+- **1%** of everything deposited comes to solquicks, continuously
+
+Of that 1%, the creator whose site brought the deposit takes the larger share
+and solquicks keeps a platform slice — the same shape as the 1% platform fee the
+Launchpad already charges on bookings. The exact split is a decision, not a
+constraint: anywhere from "creator takes most" to an even split works
+mechanically.
+
+What is **not** a decision: a page that says 5% while paying 4% is a page that
+lies. The split belongs next to the rate.
+
+### Where every feature earns today
+
+| Feature | Who pays | What it earns | Creator's share |
+|---|---|---|---|
+| Swap | the person swapping | 20 bps, 10 for Rangers, 15 for collectible holders | not split yet |
+| Book The Fox | the customer | paid to the creator's wallet on chain | 99%, platform takes 1% |
+| Advertising slot | the advertiser | same | 99%, platform takes 1% |
+| Store | the buyer | fulfilled by store.fun | — |
+| Launchpad | the creator | 1% of what their site makes | — |
+| Referrals | the platforms | referral credit, outbound links | not split yet |
+| **Savings** | nobody — it comes out of yield | **a cut of the interest, continuously** | **to be decided** |
+
+Savings is the only one that earns on money that is sitting still. Every other
+line needs somebody to do something. That is the argument for building it
+properly: it is the only revenue that compounds without traffic.
+
+**Two gaps worth naming:** the swap and the referrals both earn on creator sites
+today and neither splits anything back. If the pitch to a creator is "you keep
+what your site makes", those two need an answer before a creator reads it.
+
+### Order, and what blocks what
+
+1. **Decide the Savings split** — a number, and whether the creator's share is
+   fixed or set per site.
+2. **Initialize one integration**, with that split. May be gated by Reflect's
+   closed beta; unknown until tried.
+3. **Move Savings onto the integration endpoints.** Today it uses the plain
+   stablecoin path, which pays nothing.
+4. **Attribute deposits by site**, reusing `site_slug`.
+5. **A creator balance**, shown on their dashboard, accruing.
+6. **A payout path**, by hand first, the way invite earnings already work.
+7. **Then** the swap and referral splits, which are the same ledger problem
+   once this one exists.
+
+Nothing above needs a creator to launch anything.
