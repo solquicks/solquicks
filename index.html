@@ -4216,14 +4216,37 @@
           { name: 'Solflare', p: window.solflare },
           { name: 'Backpack', p: window.backpack },
           { name: 'Glow', p: window.glow },
-          { name: 'Solana Wallet', p: window.solana }
+          { name: 'Jupiter', p: window.jupiter }
         ];
         injected.forEach(function(entry) {
           if (entry.p && typeof entry.p.connect === 'function' && !seen[entry.name]) {
             seen[entry.name] = true;
-            found.push({ kind: 'injected', name: entry.name, icon: null, w: entry.p });
+            found.push({ kind: 'injected', name: entry.name, icon: entry.p.icon || null, w: entry.p });
           }
         });
+
+        // window.solana last, and almost never a wallet of its own. Most
+        // wallets set it as well as registering under their own name, so it
+        // was being listed a second time as "Solana Wallet" with a purse for
+        // a logo — the same wallet, twice, once anonymously.
+        //
+        // Matched on the object rather than the name: the duplicate carried a
+        // different name, which is exactly why a name-based check let it
+        // through.
+        const generic = window.solana;
+        if (generic && typeof generic.connect === 'function' &&
+            !found.some(function(f) { return f.w === generic; })) {
+          const named = generic.name ||
+            (generic.isJupiter && 'Jupiter') || (generic.isBackpack && 'Backpack') ||
+            (generic.isGlow && 'Glow') || (generic.isSolflare && 'Solflare') || null;
+          // No name and no icon leaves nothing to show but a blank row beside
+          // real wallets, which is worse than one fewer option.
+          if (named || generic.icon) {
+            found.push({ kind: 'injected', name: named || 'Browser wallet',
+              icon: generic.icon || null, w: generic });
+          }
+        }
+
         this.list = found;
         return found;
       },

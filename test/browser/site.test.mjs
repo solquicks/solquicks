@@ -449,6 +449,18 @@ function testWallet(address) {
     }
   };
   window.addEventListener('wallet-standard:app-ready', (e) => e.detail.register(wallet));
+
+  // Real wallets set window.solana as well as registering under their own
+  // name. That is what was producing a second, anonymous "Solana Wallet" row
+  // with a purse for a logo — the same wallet listed twice.
+  window.solana = {
+    isTestWallet: true,
+    connect: async () => ({ publicKey: { toString: () => address } }),
+    // deliberately the same object the registry was handed, which is how a
+    // real wallet behaves and what a name-based check cannot see
+    __standard: wallet
+  };
+  Object.defineProperty(window.solana, 'name', { value: undefined });
 }
 
 // every SOL transfer in a transaction: [from, to, lamports]
@@ -1405,6 +1417,39 @@ try {
       null, { timeout: 10000 });
     ok('and an empty board invites the first one', true);
     await page.evaluate(() => { net_players(2); });
+  }
+
+  section('the connect sheet lists each wallet once');
+  {
+    // Nearly every wallet sets window.solana as well as registering under its
+    // own name. Matching the two by name let the same wallet through twice —
+    // the second time as "Solana Wallet", a thing nobody has installed, with a
+    // purse emoji where its logo should be. Someone picking that row is
+    // choosing blind between two identical options.
+    const offered = await page.evaluate(() => Wallet.discover().map((w) => w.name));
+    eq('the wallet that registered is listed', offered.filter((n) => n === 'Test Wallet').length, 1);
+    ok('and not a second time under a name nobody installed',
+      !offered.some((n) => /^Solana Wallet$/i.test(n)), offered.join(','));
+    ok('nor as anything anonymous', !offered.some((n) => !n || !n.trim()), offered.join(','));
+
+    // The same three lines of wallet discovery exist on the main site, the
+    // Launchpad and the fee page. The first was fixed on its own and the other
+    // two kept the bug, so this checks the one that is easiest to forget.
+    const fees2 = await context.newPage();
+    await fees2.goto(SITE + 'fees.html', { waitUntil: 'domcontentloaded' });
+    await fees2.waitForFunction(() => typeof wallets === "function", null, { timeout: 20000 }).catch(() => {});
+    const feeOffered = await fees2.evaluate(() => {
+      try { return wallets().map((w) => w.name); } catch (e) { return null; }
+    });
+    if (feeOffered === null) {
+      ok('the fee page could be asked what it offers', false, 'wallets() not reachable');
+    } else {
+      ok('the fee page lists it once too',
+        feeOffered.filter((n) => n === 'Test Wallet').length === 1, feeOffered.join(','));
+      ok('and not under a name nobody installed',
+        !feeOffered.some((n) => /^Solana Wallet$/i.test(n)), feeOffered.join(','));
+    }
+    await fees2.close();
   }
 
   section('wallet cleanup: what burning an NFT actually gives back');

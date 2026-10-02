@@ -174,8 +174,20 @@
     } catch (e) {}
     const seen = {}; found.forEach((f) => { seen[f.name] = true; });
     [{ name: 'Solflare', p: window.solflare }, { name: 'Backpack', p: window.backpack },
-     { name: 'Glow', p: window.glow }, { name: 'Solana Wallet', p: window.solana }]
+     { name: 'Glow', p: window.glow }, { name: 'Jupiter', p: window.jupiter }]
       .forEach((e) => { if (e.p && typeof e.p.connect === 'function' && !seen[e.name]) found.push({ kind: 'injected', name: e.name, w: e.p }); });
+
+    /// window.solana last, and matched on the object rather than the name.
+    /// Most wallets set it as well as registering properly, so a name-based
+    /// check listed the same wallet twice — the second time as "Solana
+    /// Wallet", which is not a wallet anybody has installed.
+    const generic = window.solana;
+    if (generic && typeof generic.connect === 'function' && !found.some((f) => f.w === generic)) {
+      const named = generic.name || (generic.isJupiter && 'Jupiter') ||
+        (generic.isBackpack && 'Backpack') || (generic.isGlow && 'Glow') ||
+        (generic.isSolflare && 'Solflare') || null;
+      if (named) found.push({ kind: 'injected', name: named, w: generic });
+    }
     return found;
   }
 
