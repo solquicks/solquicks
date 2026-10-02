@@ -1260,6 +1260,50 @@ async function reflect(env, method, path, body) {
   return { ok: true, body: parsed };
 }
 
+/// One USDC+, in USDC. Above 1 by however much has accrued, which is what makes
+/// it worth recording: Reflect publishes no rate, but this is the rate.
+async function readSavingsRate(env) {
+  const r = await reflect(env, 'POST', '/stablecoin/quote/redeem',
+    { stablecoinIndex: REFLECT_INDEX, depositAmount: 1000000 });
+  if (!r.ok || typeof r.body.data !== 'number') return null;
+  const rate = r.body.data / 1000000;
+  // A rate below par or wildly above it is not a rate, it is a bad read, and
+  // one of those averaged into the series would show somebody a number that
+  // never happened.
+  if (!(rate >= 1 && rate < 2)) return null;
+  return rate;
+}
+
+async function recordSavingsRate(env) {
+  const rate = await readSavingsRate(env);
+  if (rate === null) return;
+  await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?) ON CONFLICT DO NOTHING')
+    .bind(Date.now(), rate).run();
+  // A month is plenty to derive a rate from and keeps the table small.
+  await env.DB.prepare('DELETE FROM savings_rate WHERE ts < ?').bind(Date.now() - 31 * 86400000).run();
+}
+
+/// What the rate has actually done, annualised. Needs two readings far enough
+/// apart to mean anything — over a few hours the difference is mostly noise,
+/// and a number built from noise is worse than no number.
+const SAVINGS_MIN_SPAN_MS = 6 * 3600000;
+async function derivedSavingsApy(env) {
+  const rows = await env.DB.prepare(
+    'SELECT ts, rate FROM savings_rate ORDER BY ts ASC').all();
+  const list = rows.results || [];
+  if (list.length < 2) return null;
+  const first = list[0], last = list[list.length - 1];
+  const span = last.ts - first.ts;
+  if (span < SAVINGS_MIN_SPAN_MS) return null;
+  if (!(first.rate > 0) || !(last.rate > first.rate)) return null;
+  const growth = last.rate / first.rate;
+  const apy = (Math.pow(growth, (365 * 86400000) / span) - 1) * 100;
+  // Compounding a few hours of movement out to a year can produce something
+  // absurd. Anything past this is a sign the window is too short, not a rate.
+  if (!Number.isFinite(apy) || apy <= 0 || apy > 100) return null;
+  return { apy: Math.round(apy * 100) / 100, from: first.ts, to: last.ts, readings: list.length };
+}
+
 const JUP_ATTEMPTS = 3;
 // Kept small on purpose: this is inside a request somebody is waiting on, and
 // a quote that takes two seconds to arrive is its own kind of broken.
@@ -3254,6 +3298,12 @@ export default {
     ctx.waitUntil(reconcilePayments(env).catch(function (e) {
       return logError(env, 'reconcilePayments', e && e.message);
     }));
+    // One reading of the savings rate, every half hour. Cheap, and it is the
+    // only way this site gets a yield number at all while Reflect publishes
+    // none of its own.
+    ctx.waitUntil(recordSavingsRate(env).catch(function (e) {
+      return logError(env, 'savingsRate', e && e.message);
+    }));
 
     const h = await healthCheck(env);
     let previous = null;
@@ -4335,9 +4385,16 @@ export default {
       // page would be readable by anyone who opened the source.
       if (path === '/api/reflect/apy' && request.method === 'GET') {
         const r = await reflect(env, 'GET', '/stablecoin/apy');
-        // Their 404 means nobody has published a rate, not that anything is
-        // broken. Depositing still works, so the page is told which it is.
         if (!r.ok) {
+          // Theirs is absent. Ours is derived from what the token has actually
+          // redeemed for over time, which is the same thing measured directly
+          // rather than taken on trust — so it is said to be ours.
+          const own = await derivedSavingsApy(env).catch(function () { return null; });
+          if (own) {
+            return json(request, env,
+              { apy: own.apy, at: new Date(own.to).toISOString(), measured: true,
+                since: own.from, readings: own.readings });
+          }
           return json(request, env,
             { error: r.error, published: r.status === 404 ? false : undefined },
             r.status === 404 ? 503 : r.status);

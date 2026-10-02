@@ -8,7 +8,7 @@
 //
 // Run: node test/reflect.test.mjs
 
-import { chain, freshEnv, call, ok, eq, section, finish, wallet } from './harness.mjs';
+import { chain, freshEnv, call, ok, eq, section, finish, wallet, runScheduled } from './harness.mjs';
 
 const WALLET = '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd';
 const TX = 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
@@ -251,6 +251,72 @@ section('a record of what happened');
 
   const other = await call(env, 'GET', '/api/reflect/history?wallet=' + wallet(2));
   eq('and one wallet cannot see another\'s', other.body.rows.length, 0);
+}
+
+// ── a rate of our own ───────────────────────────────────────────────────────
+section('the rate, measured rather than borrowed');
+{
+  // Reflect publishes no APY — their endpoint answers 404 — but what a token
+  // redeems for is the yield, so recording that over time is the yield over
+  // time. Measured directly beats taken on trust.
+  reset();
+  chain.reflect = (url) => url.pathname === '/stablecoin/quote/redeem'
+    ? { success: true, data: 1008428 }
+    : new Response(JSON.stringify({ error: 'No stablecoin yield data found' }), { status: 404 });
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+
+  // One reading is not a rate.
+  const DAY = 86400000;
+  await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
+    .bind(Date.now() - 30 * DAY, 1.0).run();
+  let r = await call(env, 'GET', '/api/reflect/apy');
+  eq('one reading gives no rate', r.status, 503);
+
+  // Two, a month apart, with the token up 1% — about 12.7% a year compounded.
+  await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
+    .bind(Date.now(), 1.01).run();
+  r = await call(env, 'GET', '/api/reflect/apy');
+  eq('two far enough apart give one', r.status, 200);
+  ok('that is roughly right', r.body.apy > 12 && r.body.apy < 13, String(r.body.apy));
+  eq('and it is said to be measured, not published', r.body.measured, true);
+  ok('with how long it is based on', r.body.since > 0 && r.body.readings === 2, JSON.stringify(r.body));
+}
+
+{
+  // Compounding a few hours out to a year produces something absurd. A number
+  // built from noise is worse than no number at all, especially this one.
+  reset();
+  chain.reflect = () => new Response(JSON.stringify({ error: 'none' }), { status: 404 });
+  const env = freshEnv();
+  await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
+    .bind(Date.now() - 600000, 1.0).run();
+  await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
+    .bind(Date.now(), 1.004).run();
+  const r = await call(env, 'GET', '/api/reflect/apy');
+  eq('ten minutes of movement is not an annual rate', r.status, 503);
+}
+
+{
+  // A rate below par, or far above it, is a bad read rather than a rate, and
+  // one of those in the series would show somebody a number that never
+  // happened. Exercised through the half-hourly job, which is the only thing
+  // that writes to this table.
+  for (const bad of [0.5, 2.5, 0]) {
+    reset();
+    chain.reflect = () => ({ success: true, data: Math.round(bad * 1000000) });
+    const env = freshEnv();
+    await runScheduled(env);
+    const n = (await env.DB.prepare('SELECT COUNT(*) AS n FROM savings_rate').first()).n;
+    eq('a reading of ' + bad + ' is not written down', n, 0);
+  }
+
+  // And a sane one is.
+  reset();
+  chain.reflect = () => ({ success: true, data: 1008428 });
+  const env = freshEnv();
+  await runScheduled(env);
+  const row = await env.DB.prepare('SELECT rate FROM savings_rate').first();
+  eq('while a real one is', row && Math.round(row.rate * 1e6), 1008428);
 }
 
 // ── limits ──────────────────────────────────────────────────────────────────

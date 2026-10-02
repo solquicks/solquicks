@@ -60,7 +60,8 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
   quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
-  reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false, savings: [],
+  reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
+  reflectMeasured: false, savings: [],
   // what the connected wallet holds, by mint
   tokens: { 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 500,
             'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS': 0 },
@@ -407,6 +408,10 @@ async function standIns(context) {
       // rather than a signature the test made for itself.
       if (u.pathname === '/api/reflect/apy') {
         if (net.reflectUnpublished) return json(route, { error: 'no rate published yet', published: false }, 503);
+        if (net.reflectMeasured) {
+          return json(route, { apy: 7.4, at: new Date().toISOString(), measured: true,
+            since: Date.now() - 3 * 86400000, readings: 144 });
+        }
         return net.reflectDown ? json(route, { error: 'could not reach' }, 502)
           : json(route, { apy: 5.25, at: '2026-10-02T10:30:00Z' });
       }
@@ -1908,6 +1913,20 @@ try {
     ok('and says depositing still works, because it does',
       /still work/.test(await page.textContent('#df-apy-note')));
     net.reflectUnpublished = false;
+
+    // Reflect publishes no rate, so this site watches what the token actually
+    // redeems for and works one out. That is a different claim from theirs and
+    // has to read as one — somebody comparing two sites deserves to know which
+    // kind of number they are looking at.
+    net.reflectMeasured = true;
+    await page.evaluate(() => loadDefiRate());
+    await page.waitForFunction(() => /%/.test(document.getElementById('df-apy').textContent),
+      null, { timeout: 15000 });
+    eq('a measured rate is shown as the headline', (await page.textContent('#df-apy')).trim(), '7.40%');
+    const note = await page.textContent('#df-apy-note');
+    ok('and says it was measured here, not published by them', /Measured here/.test(note), note);
+    ok('with how long it is based on, so it can be judged', /3 days/.test(note), note);
+    net.reflectMeasured = false;
   }
 
   section('the connect sheet lists each wallet once');

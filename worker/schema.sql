@@ -164,6 +164,12 @@ CREATE TABLE IF NOT EXISTS savings (
 );
 CREATE INDEX IF NOT EXISTS idx_savings_wallet ON savings(wallet, ts);
 
+-- The USDC+ exchange rate, recorded every half hour. Reflect publishes no APY
+-- of its own — their endpoint answers 404 — but the rate a token redeems at is
+-- the yield, so the rate over time is the yield over time. Two readings far
+-- enough apart give a real number rather than a borrowed one.
+CREATE TABLE IF NOT EXISTS savings_rate (ts INTEGER PRIMARY KEY, rate REAL NOT NULL);
+
 -- ── invites ─────────────────────────────────────────────────────────────────
 -- A wallet shares a code; wallets that arrive through it are tied to it for
 -- good, and every swap they make pays the referrer a share of the fee this site

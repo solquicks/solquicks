@@ -3468,6 +3468,17 @@
       if (tab === 'defi' && typeof loadDefiRate === 'function') {
         loadDefiRate();
         loadDefiBalances();
+        // What a position is worth changes while somebody is looking at it, so
+        // it is asked again every half minute rather than being frozen at the
+        // moment the tab opened. Only while the tab is open — there is no
+        // reason to poll a page nobody is on.
+        clearInterval(defi.tick);
+        defi.tick = setInterval(function () {
+          if (!document.getElementById('panel-defi').classList.contains('active')) {
+            clearInterval(defi.tick); defi.tick = null; return;
+          }
+          if (defi.held > 0) paintDefiPosition();
+        }, 30000);
         const box = document.getElementById('df-amount');
         if (box && !box._bound) {
           box._bound = true;
@@ -5081,7 +5092,7 @@
     // USDC_DECIMALS is defined once, in the USDC section further down. Two
     // copies of the same number is how one of them eventually goes stale.
     const defi = { side: 'in', apy: null, quote: null, timer: null, busy: false,
-      usdc: null, held: null, sol: null };
+      usdc: null, held: null, sol: null, tick: null };
 
     /// Text to millionths. Refuses anything that is not a plain number, and
     /// anything with more decimal places than USDC has — "1.0000001" would
@@ -5243,6 +5254,13 @@
       go.textContent = defi.side === 'in' ? 'Deposit' : 'Withdraw';
     }
 
+    const sinceText = function (ts) {
+      const days = Math.floor((Date.now() - ts) / 86400000);
+      if (days >= 2) return days + ' days';
+      const hours = Math.max(1, Math.round((Date.now() - ts) / 3600000));
+      return hours + (hours === 1 ? ' hour' : ' hours');
+    };
+
     async function loadDefiRate() {
       const el = document.getElementById('df-apy');
       const note = document.getElementById('df-apy-note');
@@ -5259,10 +5277,12 @@
         el.hidden = false;
         document.getElementById('df-apy-label').hidden = false;
         el.textContent = b.apy.toFixed(2) + '%';
-        // A rate with no date behind it is a claim rather than a number.
-        note.textContent = b.at
-          ? 'Variable rate, published ' + new Date(b.at).toLocaleDateString()
-          : 'Variable rate';
+        // Where the number came from, because they are not the same claim. One
+        // is Reflect publishing a rate; the other is this site having watched
+        // what the token actually redeemed for and worked it out.
+        note.textContent = b.measured
+          ? 'Measured here from what the token has actually paid, over the last ' + sinceText(b.since)
+          : (b.at ? 'Variable rate, published ' + new Date(b.at).toLocaleDateString() : 'Variable rate');
       } catch (e) {
         // No number at all rather than a dash. A dash in the size this is set
         // in reads as a stray mark, and "Earning now" over nothing reads worse
