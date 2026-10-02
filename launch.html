@@ -1402,6 +1402,13 @@
     if (off) return off[1] + ' sign-in is not switched on yet. Use a code instead.';
     if (low.indexOf('allowed') >= 0 || low.indexOf('origin') >= 0) return 'Sign-in is not set up for this address yet.';
     if (low.indexOf('phone') >= 0 || low.indexOf('email') >= 0) return raw;
+    // The wallet is set to user-owned recovery, which can ask for a passcode
+    // before it will hand one over. Worth naming, because a creator who sees
+    // this has done nothing wrong and the fix is a setting, not a retry.
+    if (low.indexOf('recovery') >= 0) {
+      return 'This sign-in needs a recovery step we have not built yet. ' +
+        'Use a wallet app for now, and tell us you saw this.';
+    }
     if (low.indexOf('failed to fetch') >= 0 || low.indexOf('network') >= 0) return 'Could not reach sign-in. Check your connection.';
     return raw || 'That did not work. Try again.';
   }
