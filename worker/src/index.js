@@ -1247,8 +1247,12 @@ async function reflect(env, method, path, body) {
 
   if (!res.ok || !parsed || parsed.success === false) {
     // Their message where there is one, because "deposit must be positive"
-    // tells somebody what to change and "502" does not.
-    const said = parsed && typeof parsed.message === 'string' ? parsed.message : null;
+    // tells somebody what to change and "502" does not. Two shapes, because
+    // their docs describe { success, message } and their API also answers
+    // { error, statusCode } — reading only the documented one turned a clear
+    // "no yield data found" into a blank refusal.
+    const said = parsed && typeof parsed.message === 'string' ? parsed.message
+      : (parsed && typeof parsed.error === 'string' ? parsed.error : null);
     const status = res.status === 429 ? 429 : (res.status >= 400 && res.status < 500 ? res.status : 502);
     return { ok: false, status: status, error: said || 'the yield provider refused that' };
   }
@@ -4328,12 +4332,18 @@ export default {
       // page would be readable by anyone who opened the source.
       if (path === '/api/reflect/apy' && request.method === 'GET') {
         const r = await reflect(env, 'GET', '/stablecoin/apy');
-        if (!r.ok) return json(request, env, { error: r.error }, r.status);
+        // Their 404 means nobody has published a rate, not that anything is
+        // broken. Depositing still works, so the page is told which it is.
+        if (!r.ok) {
+          return json(request, env,
+            { error: r.error, published: r.status === 404 ? false : undefined },
+            r.status === 404 ? 503 : r.status);
+        }
         // Only the one product this site offers. Handing back every index
         // would invite the page to display a rate for something it cannot
         // actually deposit into.
         const row = (r.body.data || []).find(function (d) { return d.index === REFLECT_INDEX; });
-        if (!row) return json(request, env, { error: 'no rate published yet' }, 503);
+        if (!row) return json(request, env, { error: 'no rate published yet', published: false }, 503);
         return json(request, env, { apy: row.apy, at: row.timestamp });
       }
 

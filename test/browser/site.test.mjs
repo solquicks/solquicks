@@ -60,7 +60,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
   quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
-  reflectQuotes: [], reflectBuilds: [], reflectDown: false,
+  reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
   // a real-shaped versioned transaction, so the page has to deserialize it
   reflectTx: null,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
@@ -383,7 +383,8 @@ async function standIns(context) {
       // ends is what lets the signature the page actually sends be inspected,
       // rather than a signature the test made for itself.
       if (u.pathname === '/api/reflect/apy') {
-        return net.reflectDown ? json(route, { error: 'no rate published yet' }, 503)
+        if (net.reflectUnpublished) return json(route, { error: 'no rate published yet', published: false }, 503);
+        return net.reflectDown ? json(route, { error: 'could not reach' }, 502)
           : json(route, { apy: 5.25, at: '2026-10-02T10:30:00Z' });
       }
       if (u.pathname === '/api/reflect/quote') {
@@ -1717,6 +1718,19 @@ try {
       (await page.textContent('#df-apy')).trim(), '—');
     ok('and says so', /Could not reach the rate/.test(await page.textContent('#df-apy-note')));
     net.reflectDown = false;
+
+    // Nobody has published a rate is not the same as we could not go and look,
+    // and somebody deciding whether to deposit is owed the difference. Today
+    // their API really does answer 404 here, so this is the live case.
+    net.reflectUnpublished = true;
+    await page.evaluate(() => loadDefiRate());
+    await page.waitForFunction(() => /No rate published/.test(document.getElementById('df-apy-note').textContent),
+      null, { timeout: 15000 });
+    ok('an unpublished rate says so, rather than blaming the connection',
+      /No rate published yet/.test(await page.textContent('#df-apy-note')));
+    ok('and says depositing still works, because it does',
+      /still work/.test(await page.textContent('#df-apy-note')));
+    net.reflectUnpublished = false;
   }
 
   section('the connect sheet lists each wallet once');

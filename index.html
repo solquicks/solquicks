@@ -5011,7 +5011,11 @@
       try {
         const r = await fetch(POINTS_API + '/api/reflect/apy');
         const b = await r.json();
-        if (!r.ok || typeof b.apy !== 'number') throw new Error(b.error || 'no rate');
+        if (!r.ok || typeof b.apy !== 'number') {
+          const err = new Error(b.error || 'no rate');
+          err.notPublished = b.published === false;
+          throw err;
+        }
         defi.apy = b.apy;
         el.textContent = b.apy.toFixed(2) + '%';
         // A rate with no date behind it is a claim rather than a number.
@@ -5022,7 +5026,12 @@
         // Better to say the rate is unknown than to leave a dash that reads as
         // zero, and far better than showing a number that is not current.
         el.textContent = '—';
-        note.textContent = 'Could not reach the rate just now. Depositing still works.';
+        // Two different things, and a person deciding whether to deposit is
+        // owed the difference: nobody has published a rate yet, or we could
+        // not go and look. Depositing works either way.
+        note.textContent = e && e.notPublished
+          ? 'No rate published yet. Depositing and withdrawing still work.'
+          : 'Could not reach the rate just now. Depositing still works.';
       }
     }
 
