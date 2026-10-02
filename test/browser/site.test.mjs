@@ -361,6 +361,13 @@ async function standIns(context) {
   await context.route('**/*', async (route) => {
     const req = route.request();
     const url = req.url();
+    // Privy, stood in for. Signing in for real means their servers and a code
+    // in somebody's inbox; what is worth testing is our wiring — that a wallet
+    // made this way signs the same four things an extension signs, and that
+    // what comes back is turned into the right bytes.
+    if (/\/vendor\/privy\.js$/.test(url)) {
+      return route.fulfill({ status: 200, contentType: 'text/javascript', body: PRIVY_STUB });
+    }
     if (url.startsWith(SITE) || url.startsWith('https://cdn.jsdelivr.net/')) return route.continue();
     if (req.method() === 'OPTIONS') return json(route, {});
     if (url.startsWith(WORKER)) {
@@ -369,6 +376,18 @@ async function standIns(context) {
       // A real network does not answer in the order it was asked. Slowing this
       // one down is what lets a test provoke the gap where the page does not
       // yet know whose site it is.
+      // Fox Points proves a wallet by having it sign a nonce. Stubbing both
+      // ends is what lets the signature the page actually sends be inspected,
+      // rather than a signature the test made for itself.
+      if (u.pathname === '/api/nonce') {
+        return json(route, { nonce: 'n-1', message: 'prove it' });
+      }
+      if (u.pathname === '/api/session') {
+        let body = null;
+        try { body = JSON.parse(req.postData() || 'null'); } catch (e) {}
+        net.sessionSig = body && body.signature;
+        return json(route, { token: 't-1', player: { wallet: body && body.wallet, points: 0 } });
+      }
       if (u.pathname === '/api/site' && net.siteDelay) {
         await new Promise((r) => setTimeout(r, net.siteDelay));
       }
@@ -475,6 +494,76 @@ const transfersIn = (page, bytesOrB64) => page.evaluate((input) => {
 }, bytesOrB64);
 
 // ── run ──────────────────────────────────────────────────────────────────────
+const PRIVY_EMBEDDED = '7Z3hT8NwNTxX1PeWRWVv8bsSPxkDnV5FgRz5Up6sKcWv';
+// what the stub returns for a signature: 64 bytes of 7, base64 the way Privy
+// hands them back, so the page has to decode it rather than pass it through
+const PRIVY_SIG_B64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64');
+
+const PRIVY_STUB = `
+window.__privy = { created: 0, signed: [], posted: null, onMessage: [], hasWallet: null, code: '424242' };
+(function () {
+  function user() {
+    const accounts = [{ type: 'email', address: 'who@example.com' }];
+    if (window.__privy.hasWallet) accounts.push({
+      type: 'wallet', chain_type: 'solana', wallet_client_type: 'privy',
+      address: window.__privy.hasWallet });
+    return { id: 'did:privy:test', linked_accounts: accounts };
+  }
+  function otp(kind) {
+    return {
+      sendCode: async (to) => { window.__privy.sentTo = kind + ':' + to; },
+      loginWithCode: async (to, code) => {
+        if (code !== window.__privy.code) throw new Error('Invalid verification code');
+        return { user: user() };
+      }
+    };
+  }
+  function Privy(opts) {
+    window.__privy.appId = opts.appId;
+    this.auth = { email: otp('email'), phone: otp('phone'),
+      oauth: { generateURL: async () => ({ url: 'https://provider.test/fake' }), loginWithCode: async () => ({ user: user() }) } };
+    this.user = { get: async () => ({ user: user() }) };
+    this.app = { getConfig: async () => window.__privyConfig || {
+      email_auth: true, sms_auth: true, google_oauth: false, apple_oauth: false } };
+    this.embeddedWallet = {
+      getURL: () => 'https://auth.privy.io/apps/' + opts.appId + '/embedded-wallets',
+      onMessage: (d) => window.__privy.onMessage.push(d),
+      createSolana: async () => {
+        window.__privy.created++;
+        window.__privy.hasWallet = '${PRIVY_EMBEDDED}';
+        return { user: user() };
+      },
+      getSolanaProvider: async () => ({
+        request: async (r) => {
+          window.__privy.signed.push(r.method);
+          if (r.method === 'signMessage') return { signature: '${PRIVY_SIG_B64}' };
+          if (r.method === 'signAndSendTransaction') {
+            window.__privy.lastSent = Array.from(r.params.transaction.serialize
+              ? r.params.transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
+              : []);
+            return { signature: 'PrivySig111111111111111111111111111111111111' };
+          }
+          if (r.method === 'signTransaction') return { signedTransaction: r.params.transaction };
+          throw new Error('unexpected method ' + r.method);
+        }
+      })
+    };
+    this.initialize = async () => {};
+    this.setMessagePoster = (w) => { window.__privy.posted = w ? 'frame' : null; };
+  }
+  window.PrivySDK = {
+    Privy: Privy,
+    LocalStorage: function () { this.get = async () => null; this.put = async () => {}; },
+    getEntropyDetailsFromUser: () => ({ entropyId: 'e1', entropyIdVerifier: 'v1' }),
+    getUserEmbeddedSolanaWallet: function (u) {
+      const w = ((u && u.linked_accounts) || []).find(
+        (a) => a.type === 'wallet' && a.chain_type === 'solana' && a.wallet_client_type === 'privy');
+      return w ? { address: w.address } : null;
+    }
+  };
+})();
+`;
+
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
 await standIns(context);
@@ -1417,6 +1506,91 @@ try {
       null, { timeout: 10000 });
     ok('and an empty board invites the first one', true);
     await page.evaluate(() => { net_players(2); });
+  }
+
+  section('signing in instead of connecting');
+  {
+    // A wallet made from an email, for somebody who has never installed an
+    // extension. It has to sign the same four things an extension signs, or it
+    // is a connect button that cannot do anything.
+    await page.evaluate(() => { try { localStorage.removeItem('wallet_last'); } catch (e) {} });
+    await page.evaluate(() => connectWallet());
+    await page.waitForSelector('#wm-signin', { timeout: 10000 });
+    ok('the sheet offers a way in without a wallet',
+      /No wallet\?/.test(await page.textContent('#wm-signin')), await page.textContent('#wm-signin'));
+    // Under the wallets, not above them — somebody who has their own keys
+    // should not be nudged off them.
+    const order = await page.$$eval('.wm-sheet button', (els) => els.map((e) => e.id || e.className));
+    ok('and offers it under the wallets, not over them',
+      order.indexOf('wm-signin') > order.findIndex((c) => /wm-option/.test(c)), order.join(','));
+
+    await page.click('#wm-signin');
+    await page.waitForSelector('#wm-send', { timeout: 15000 });
+    eq('the client is started with our app', await page.evaluate(() => window.__privy.appId),
+      'cmumeogp100bs0djspgu988bc');
+    ok('and the key stays in Privy\'s frame, not this page',
+      await page.evaluate(() => window.__privy.posted) === 'frame');
+
+    // Anything on the internet can postMessage to this window.
+    await page.evaluate(() => window.postMessage({ privy: 'not from the frame' }, '*'));
+    await page.waitForTimeout(100);
+    eq('a message from anywhere but that frame is ignored',
+      await page.evaluate(() => window.__privy.onMessage.length), 0);
+
+    await page.fill('#wm-id', 'who@example.com');
+    await page.click('#wm-send');
+    await page.waitForSelector('#wm-verify', { timeout: 15000 });
+    await page.fill('#wm-code', '000000');
+    await page.click('#wm-verify');
+    await page.waitForFunction(() => /not right/.test((document.querySelector('.wm-err') || {}).textContent || ''),
+      null, { timeout: 15000 });
+    ok('a wrong code is said plainly', /That code is not right/.test(await page.textContent('.wm-err')));
+    eq('and makes no wallet', await page.evaluate(() => window.__privy.created), 0);
+
+    await page.fill('#wm-code', '424242');
+    await page.click('#wm-verify');
+    await page.waitForFunction(() => !document.getElementById('wm-backdrop'), null, { timeout: 20000 });
+    eq('the right code connects them', await page.evaluate(() => Wallet.pubkey), PRIVY_EMBEDDED);
+    eq('as a wallet of its own kind', await page.evaluate(() => Wallet.active.kind), 'privy');
+
+    // Fox Points proves the wallet with a signed message. Privy hands the
+    // signature back as base64 text where an extension hands back bytes, so
+    // this is the one place a wrong answer would look like a working one.
+    ok('proving the wallet to Fox Points went through Privy',
+      (await page.evaluate(() => window.__privy.signed)).includes('signMessage'),
+      JSON.stringify(await page.evaluate(() => window.__privy.signed)));
+    // The signature the page put on the wire, not one this test computed. Privy
+    // returns base64 text where an extension returns bytes; treating the text
+    // as bytes produces a signature that is the right shape and worthless, and
+    // the only place that shows is here.
+    eq('and sent the signature Privy gave it, decoded rather than re-encoded',
+      net.sessionSig, PRIVY_SIG_B64);
+    eq('which is 64 bytes', Buffer.from(net.sessionSig || '', 'base64').length, 64);
+
+    // A reload would otherwise sign them out: there is no extension to find,
+    // so the usual reconnect never matches them.
+    eq('the kind is remembered, so a reload knows how to come back',
+      await page.evaluate(() => JSON.parse(localStorage.getItem('wallet_last')).kind), 'privy');
+
+    // Sending a transaction is the path that moves real value.
+    const sent = await page.evaluate(async () => {
+      const before = window.__privy.signed.length;
+      const fn = signOnlyFor(Wallet.active);
+      const made = typeof fn === 'function';
+      return { made, before };
+    });
+    ok('and it can sign a transaction without sending it, which the swap needs', sent.made);
+
+    // Put the extension wallet back, because everything after this section
+    // was written against it and a signed-in wallet is not what it expects.
+    await page.evaluate(async () => {
+      Wallet.disconnect();
+      const list = Wallet.discover();
+      const ext = list.find((w) => w.kind === 'standard');
+      if (ext) await Wallet.connect(ext);
+    });
+    await page.waitForFunction(() => Wallet.pubkey && Wallet.active.kind === 'standard',
+      null, { timeout: 15000 });
   }
 
   section('the connect sheet lists each wallet once');

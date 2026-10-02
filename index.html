@@ -13,7 +13,7 @@
   <meta property="og:image:height" content="630"/>
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com;"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com https://auth.privy.io; frame-src https://auth.privy.io;"/>
   <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
   <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png"/>
@@ -1293,6 +1293,33 @@
     .wm-close:hover { background: var(--orange-soft); }
 
     .wm-list { display: flex; flex-direction: column; gap: 9px; }
+    .wm-or {
+      display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
+      font-size: 0.72rem; font-weight: 800; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .wm-or::before, .wm-or::after { content: ''; flex: 1; height: 2px; background: var(--orange-soft); }
+    .wm-signin-box { display: flex; flex-direction: column; gap: 9px; }
+    .wm-form { display: flex; flex-direction: column; gap: 9px; }
+    .wm-ways { display: flex; gap: 8px; }
+    .wm-ways button {
+      flex: 1; cursor: pointer; font: inherit; font-weight: 800; font-size: 0.84rem;
+      background: var(--cream); border: var(--line); border-radius: 10px;
+      padding: 8px 10px; color: var(--muted);
+    }
+    .wm-ways button.on { background: var(--orange-soft); color: var(--ink); border-color: var(--orange); }
+    .wm-input {
+      font: inherit; font-size: 0.95rem; padding: 11px 13px;
+      border: var(--line); border-radius: 12px; background: var(--card); color: var(--ink);
+    }
+    .wm-code { font-family: ui-monospace, monospace; letter-spacing: 0.3em; text-align: center; }
+    .wm-go-btn {
+      cursor: pointer; font: inherit; font-weight: 800; font-size: 0.95rem;
+      background: var(--orange); color: #fff; border: var(--line);
+      border-radius: 12px; padding: 11px 14px;
+    }
+    .wm-go-btn:hover { background: var(--orange-deep); }
+    .wm-go-btn:disabled { opacity: 0.6; cursor: wait; }
 
     .wm-option {
       display: flex;
@@ -4090,7 +4117,13 @@
 
         const encoded = new TextEncoder().encode(n.message);
         let sigBytes;
-        if (provider.kind === 'standard') {
+        if (provider.kind === 'privy') {
+          // Privy takes the message as text and hands back a base64 string,
+          // where the wallet-standard path deals in bytes both ways.
+          const out = await Privy.provider.request({
+            method: 'signMessage', params: { message: n.message } });
+          sigBytes = Uint8Array.from(atob(out.signature), function (ch) { return ch.charCodeAt(0); });
+        } else if (provider.kind === 'standard') {
           const feat = provider.w.features['solana:signMessage'];
           if (!feat) throw new Error('this wallet cannot sign messages');
           const out = await feat.signMessage({ account: walletAccount(provider, wallet), message: encoded });
@@ -4185,6 +4218,126 @@
       renderStaking();
     }
 
+    // ── signing in instead of connecting ───────────────────────────────────
+    // A wallet made from an email, a phone number or a Google account, for
+    // anyone who has never installed an extension. It signs like any other
+    // wallet here — the four signing paths below each have a branch for it —
+    // but the key lives in a frame on Privy's origin and never in this page.
+    //
+    // The App ID is a public identifier. Privy only answers to it from the
+    // origins allowlisted in their dashboard, which is what stops somebody
+    // else's site using it.
+    const PRIVY_APP_ID = 'cmumeogp100bs0djspgu988bc';
+
+    const Privy = {
+      sdk: null, client: null, provider: null, account: null, pending: null,
+      way: 'email', sentTo: '',
+
+      // 800KB is not something to put on every visitor, so it is only fetched
+      // once somebody says they have no wallet.
+      load() {
+        if (window.PrivySDK) return Promise.resolve(window.PrivySDK);
+        if (!this.pending) {
+          const self = this;
+          this.pending = new Promise(function (ok, fail) {
+            const el = document.createElement('script');
+            el.src = 'vendor/privy.js';
+            el.onload = function () {
+              if (window.PrivySDK) ok(window.PrivySDK);
+              else fail(new Error('Sign-in could not load. Reload and try again.'));
+            };
+            el.onerror = function () {
+              self.pending = null;   // let a later press try again
+              fail(new Error('Sign-in could not load. Reload and try again.'));
+            };
+            document.head.appendChild(el);
+          });
+        }
+        return this.pending;
+      },
+
+      async start() {
+        if (this.client) return this.client;
+        const SDK = await this.load();
+        const c = new SDK.Privy({ appId: PRIVY_APP_ID, storage: new SDK.LocalStorage() });
+        await c.initialize();
+
+        // The key is generated and used inside this frame, on Privy's origin.
+        // Messages are read from that one frame and nowhere else — anything
+        // else posting to this window is ignored, which is the whole point of
+        // putting it in a frame at all.
+        const frame = document.createElement('iframe');
+        frame.src = c.embeddedWallet.getURL();
+        frame.title = 'Privy wallet';
+        frame.style.display = 'none';
+        document.body.appendChild(frame);
+        c.setMessagePoster(frame.contentWindow);
+        window.addEventListener('message', function (e) {
+          if (e.source !== frame.contentWindow) return;
+          let data = e.data;
+          if (typeof data === 'string') { try { data = JSON.parse(data); } catch (err) { return; } }
+          c.embeddedWallet.onMessage(data);
+        });
+
+        this.sdk = SDK;
+        this.client = c;
+        return c;
+      },
+
+      /// What the dashboard has switched on. Asked rather than assumed, so a
+      /// method that is off is never offered as a button that cannot work.
+      async methods() {
+        try {
+          const c = await this.start();
+          const a = await c.app.getConfig();
+          return { email: a.email_auth !== false, phone: a.sms_auth !== false,
+                   google: a.google_oauth !== false, apple: a.apple_oauth !== false };
+        } catch (e) {
+          return { email: true, phone: false, google: false, apple: false };
+        }
+      },
+
+      async sendCode(way, to) {
+        const c = await this.start();
+        if (way === 'email') await c.auth.email.sendCode(to);
+        else await c.auth.phone.sendCode(to);
+        this.way = way;
+        this.sentTo = to;
+      },
+
+      async verify(code) {
+        const c = await this.start();
+        if (this.way === 'email') await c.auth.email.loginWithCode(this.sentTo, code);
+        else await c.auth.phone.loginWithCode(this.sentTo, code);
+        return this.adopt();
+      },
+
+      /// Everything after a successful sign-in, however they signed in, so a
+      /// creator arriving by Google cannot end up on a different wallet from
+      /// one arriving by email.
+      async adopt() {
+        const SDK = await this.load();
+        const c = await this.start();
+        const got = await c.user.get();
+        let account = SDK.getUserEmbeddedSolanaWallet(got && got.user);
+        if (!account) {
+          const made = await c.embeddedWallet.createSolana();
+          account = SDK.getUserEmbeddedSolanaWallet(made && made.user);
+        }
+        if (!account || !account.address) throw new Error('The wallet did not come back. Try again.');
+
+        // The provider is what actually signs. It needs the entropy details
+        // that tie this user to this wallet; without them it cannot open the
+        // key in the frame.
+        const user = (await c.user.get()).user;
+        const ent = SDK.getEntropyDetailsFromUser(user);
+        this.provider = await c.embeddedWallet.getSolanaProvider(
+          account, ent.entropyId, ent.entropyIdVerifier);
+        this.account = account;
+        return account.address;
+      }
+    };
+
     const Wallet = {
       list: [],
       active: null,
@@ -4255,7 +4408,12 @@
         const target = choice || this.list[0];
         if (!target) throw new Error('no-wallet');
         let key = null;
-        if (target.kind === 'standard') {
+        if (target.kind === 'privy') {
+          // Already signed in by the time the sheet hands this over — the
+          // address came back with the wallet, so there is nothing to approve.
+          key = target.address;
+          if (!key) throw new Error('no-account');
+        } else if (target.kind === 'standard') {
           const res = await target.w.features['standard:connect'].connect();
           const acct = (res && res.accounts && res.accounts[0]) || target.w.accounts[0];
           if (!acct) throw new Error('no-account');
@@ -4317,7 +4475,10 @@
     /// Which wallet app and address were connected, so a reload reconnects that
     /// one. Older visits stored just the address as a plain string.
     function rememberWallet(target, address) {
-      try { localStorage.setItem('wallet_last', JSON.stringify({ name: target.name, address: address })); } catch (e) {}
+      try {
+        localStorage.setItem('wallet_last', JSON.stringify({
+          name: target.name, address: address, kind: target.kind }));
+      } catch (e) {}
     }
     function rememberedWallet() {
       try {
@@ -4487,11 +4648,246 @@
         sheet.appendChild(list);
       }
 
+      // The way in for anybody without an extension. Offered under the wallets
+      // rather than above them, because someone who has a wallet should not be
+      // nudged away from it — their own keys beat ours every time.
+      const or = document.createElement('div');
+      or.className = 'wm-or';
+      or.innerHTML = '<span>or</span>';
+      sheet.appendChild(or);
+
+      const signinBtn = document.createElement('button');
+      signinBtn.className = 'wm-option wm-signin';
+      signinBtn.type = 'button';
+      signinBtn.id = 'wm-signin';
+      const sIcon = document.createElement('div');
+      sIcon.className = 'wm-icon';
+      sIcon.textContent = '✉';
+      const sName = document.createElement('div');
+      sName.className = 'wm-name';
+      sName.textContent = 'No wallet? Sign in instead';
+      const sGo = document.createElement('div');
+      sGo.className = 'wm-go';
+      sGo.textContent = '→';
+      signinBtn.append(sIcon, sName, sGo);
+      signinBtn.onclick = function () { showSigninSheet(sheet); };
+      sheet.appendChild(signinBtn);
+
       backdrop.appendChild(sheet);
       document.body.appendChild(backdrop);
       document.addEventListener('keydown', wmEscHandler);
       const first = sheet.querySelector('.wm-option') || close;
       if (first) first.focus();
+    }
+
+    /// Swaps the connect sheet for the sign-in form. Replaces the sheet's body
+    /// rather than opening a second dialog, so there is only ever one thing on
+    /// screen and Escape still closes the lot.
+    async function showSigninSheet(sheet) {
+      const body = [...sheet.children].filter(function (el) { return !el.classList.contains('wm-head'); });
+      body.forEach(function (el) { el.remove(); });
+
+      const sub = document.createElement('div');
+      sub.className = 'wm-sub';
+      sub.textContent = 'We make you a Solana wallet. The keys are yours — we never see them.';
+      sheet.appendChild(sub);
+
+      const box = document.createElement('div');
+      box.className = 'wm-signin-box';
+      sheet.appendChild(box);
+
+      const err = document.createElement('div');
+      err.className = 'wm-err';
+      err.hidden = true;
+      sheet.appendChild(err);
+      const fail = function (e) {
+        err.hidden = false;
+        err.textContent = signinTrouble(e);
+      };
+      const busy = function (text) { err.hidden = false; err.textContent = text; };
+
+      box.textContent = 'Loading…';
+      const on = await Privy.methods();
+      box.textContent = '';
+
+      // Only what the dashboard has switched on, so nobody is handed a button
+      // that cannot work.
+      const providers = [['google', 'Continue with Google'], ['apple', 'Continue with Apple']];
+      for (const [id, label] of providers) {
+        if (!on[id]) continue;
+        const b = document.createElement('button');
+        b.className = 'wm-option';
+        b.type = 'button';
+        b.id = 'wm-oauth-' + id;
+        b.innerHTML = '<div class="wm-icon">◎</div>';
+        const n = document.createElement('div');
+        n.className = 'wm-name';
+        n.textContent = label;
+        b.appendChild(n);
+        b.onclick = async function () {
+          busy('Taking you to ' + label.replace('Continue with ', '') + '…');
+          try {
+            const c = await Privy.start();
+            const back = window.location.origin + window.location.pathname;
+            const out = await c.auth.oauth.generateURL(id, back);
+            const url = (out && out.url) || out;
+            if (!url) throw new Error('Sign-in did not come back with anywhere to go.');
+            try { localStorage.setItem('wm_oauth', id); } catch (e) {}
+            window.location.assign(url);
+          } catch (e) { fail(e); }
+        };
+        box.appendChild(b);
+      }
+
+      if (!on.email && !on.phone) {
+        if (!box.children.length) fail(new Error('Making a wallet here is switched off right now.'));
+        return;
+      }
+
+      const form = document.createElement('div');
+      form.className = 'wm-form';
+      const ways = document.createElement('div');
+      ways.className = 'wm-ways';
+      // One way left is not a choice, so it is not presented as one.
+      ways.hidden = !(on.email && on.phone);
+      const field = document.createElement('input');
+      field.className = 'wm-input';
+      field.id = 'wm-id';
+      const send = document.createElement('button');
+      send.className = 'wm-go-btn';
+      send.type = 'button';
+      send.id = 'wm-send';
+      send.textContent = 'Send me a code';
+
+      let way = on.email ? 'email' : 'phone';
+      const setWay = function (w) {
+        way = w;
+        [...ways.children].forEach(function (b) { b.className = 'wm-way' + (b.dataset.way === w ? ' on' : ''); });
+        field.type = w === 'email' ? 'email' : 'tel';
+        field.placeholder = w === 'email' ? 'you@example.com' : '+1 555 000 1234';
+        // "US and Canada only" is a limit of the SMS provider that Privy's
+        // config does not expose, so it is said here or not at all.
+        field.setAttribute('aria-label', w === 'email' ? 'Your email' : 'Your phone number (US and Canada)');
+      };
+      for (const [w, label] of [['email', 'Email'], ['phone', 'Phone (US/CA)']]) {
+        if (!on[w]) continue;
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.way = w; b.textContent = label;
+        b.onclick = function () { setWay(w); };
+        ways.appendChild(b);
+      }
+      setWay(way);
+
+      send.onclick = async function () {
+        const to = field.value.trim();
+        if (!to) { fail(new Error(way === 'email' ? 'Put your email in first.' : 'Put your number in first.')); return; }
+        send.disabled = true;
+        busy('Sending you a code…');
+        try {
+          await Privy.sendCode(way, to);
+          err.hidden = true;
+          codeStep(to);
+        } catch (e) { fail(e); send.disabled = false; }
+      };
+
+      form.append(ways, field, send);
+      box.appendChild(form);
+
+      function codeStep(to) {
+        form.remove();
+        const c = document.createElement('div');
+        c.className = 'wm-form';
+        const lbl = document.createElement('div');
+        lbl.className = 'wm-sub';
+        lbl.textContent = 'Enter the code we sent to ' + to;
+        const input = document.createElement('input');
+        input.className = 'wm-input wm-code';
+        input.id = 'wm-code';
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.autocomplete = 'one-time-code';
+        input.maxLength = 8;
+        input.placeholder = '000000';
+        const go = document.createElement('button');
+        go.className = 'wm-go-btn';
+        go.type = 'button';
+        go.id = 'wm-verify';
+        go.textContent = 'Make my wallet';
+        go.onclick = async function () {
+          const code = input.value.trim();
+          if (!code) { fail(new Error('Put the code in first.')); return; }
+          go.disabled = true;
+          busy('Checking the code, then making your wallet…');
+          try {
+            const address = await Privy.verify(code);
+            await finishPrivyConnect(address, to);
+          } catch (e) { fail(e); go.disabled = false; }
+        };
+        c.append(lbl, input, go);
+        box.appendChild(c);
+        input.focus();
+      }
+    }
+
+    /// The last step, shared by the code route and the OAuth return: adopt the
+    /// wallet, prove it to Fox Points, and close the sheet. One place, so the
+    /// two routes cannot end up in different states.
+    async function finishPrivyConnect(address, label) {
+      const target = { kind: 'privy', name: 'Email sign-in', address: address };
+      await Wallet.connect(target);
+      try {
+        await FoxPoints.signIn(target, address);
+      } catch (e) {
+        console.warn('sign-in skipped:', e && e.message);
+      }
+      closeWalletModal();
+      renderStaking();
+      renderLeaderboard();
+      refreshRangers();
+    }
+
+    /// Coming back from Google or Apple. Runs once on load, and only when this
+    /// page is actually a redirect landing — the one-use code is taken out of
+    /// the URL before anything is done with it, so a reload cannot spend it
+    /// twice and a copied link carries nobody's sign-in.
+    async function finishWalletOauth() {
+      const q = new URLSearchParams(window.location.search);
+      const code = q.get('privy_oauth_code');
+      const state = q.get('privy_oauth_state');
+      let provider = null;
+      try { provider = localStorage.getItem('wm_oauth'); } catch (e) {}
+      if (!code && !state && !provider) return false;
+
+      try { window.history.replaceState({}, '', window.location.origin + window.location.pathname); } catch (e) {}
+      try { localStorage.removeItem('wm_oauth'); } catch (e) {}
+      if (!code || !state) return false;
+
+      try {
+        const c = await Privy.start();
+        await c.auth.oauth.loginWithCode(code, state, provider || undefined);
+        const address = await Privy.adopt();
+        await finishPrivyConnect(address, provider);
+      } catch (e) {
+        console.warn('oauth sign-in failed:', e && e.message);
+      }
+      return true;
+    }
+
+    /// Privy's messages are written for developers. These are the ones somebody
+    /// can act on; anything else is passed through rather than hidden, because
+    /// a vague failure on the step that connects their wallet is worse than an
+    /// awkward sentence.
+    function signinTrouble(e) {
+      const raw = ((e && (e.message || e.error)) || '') + '';
+      const low = raw.toLowerCase();
+      const off = raw.match(/Login with ([A-Za-z]+) not allowed/i);
+      if (off) return off[1] + ' sign-in is not switched on yet. Use a code instead.';
+      if (low.indexOf('invalid') >= 0 && low.indexOf('code') >= 0) return 'That code is not right. Check it and try again.';
+      if (low.indexOf('expired') >= 0) return 'That code has expired. Send yourself another.';
+      if (low.indexOf('too many') >= 0 || low.indexOf('rate') >= 0) return 'Too many tries. Wait a minute and try again.';
+      if (low.indexOf('recovery') >= 0) return 'This sign-in needs a recovery step we have not built yet. Use a wallet app for now.';
+      if (low.indexOf('failed to fetch') >= 0 || low.indexOf('network') >= 0) return 'Could not reach sign-in. Check your connection.';
+      return raw || 'That did not work. Try again.';
     }
 
     function walletChipClick() {
@@ -4504,6 +4900,9 @@
 
     // silent reconnect if the wallet is already authorized
     (async function() {
+      // Coming back from Google or Apple takes precedence: this load is the
+      // tail of a sign-in that is already half done.
+      try { if (await finishWalletOauth()) return; } catch (e) { /* falls through to the usual path */ }
       Wallet.discover();
       setTimeout(async function() {
         Wallet.discover();
@@ -4518,6 +4917,28 @@
             return (w.w.accounts || []).some(function (a) { return a.address === prior.address; });
           } catch (e) { return false; }
         };
+        // Somebody who signed in rather than connecting has no extension to
+        // find, so none of the above would ever match them and every reload
+        // would sign them out. Privy keeps the session; this just picks it up.
+        if (prior.kind === 'privy') {
+          try {
+            const address = await Privy.adopt();
+            if (address === prior.address) {
+              Wallet.active = { kind: 'privy', name: prior.name || 'Email sign-in', address: address };
+              Wallet.pubkey = address;
+            } else {
+              // Signed in as somebody else since. Not our call to guess which
+              // they meant, so they start again rather than being silently
+              // pointed at a different wallet.
+              try { localStorage.removeItem('wallet_last'); } catch (e) {}
+            }
+          } catch (e) { /* session gone or expired — they sign in again */ }
+          const s1 = FoxPoints.loadToken();
+          if (s1 && s1.wallet && s1.wallet !== Wallet.pubkey) FoxPoints.clearToken();
+          Wallet.render();
+          return;
+        }
+
         const candidates = Wallet.list.filter(offers);
         const pick = candidates.find(function (w) { return w.name === prior.name; }) || candidates[0];
         if (pick) {
@@ -4753,7 +5174,11 @@
       tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
 
       let signature;
-      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+      if (provider.kind === 'privy') {
+        const out = await Privy.provider.request({
+          method: 'signAndSendTransaction', params: { transaction: tx, connection: connection } });
+        signature = signatureOf(out.signature);
+      } else if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
         signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
@@ -7049,7 +7474,11 @@
       const connection = rpc();
 
       let signature;
-      if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
+      if (provider.kind === 'privy') {
+        const out = await Privy.provider.request({
+          method: 'signAndSendTransaction', params: { transaction: tx, connection: connection } });
+        signature = signatureOf(out.signature);
+      } else if (provider.kind === 'injected' && provider.w.signAndSendTransaction) {
         const res = await provider.w.signAndSendTransaction(tx);
         signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
@@ -7098,6 +7527,13 @@
     ];
 
     function signOnlyFor(provider) {
+      if (provider.kind === 'privy') {
+        return async function (tx) {
+          const out = await Privy.provider.request({
+            method: 'signTransaction', params: { transaction: tx } });
+          return out.signedTransaction.serialize();
+        };
+      }
       if (provider.kind === 'injected' && provider.w.signTransaction) {
         return async function (tx) { return (await provider.w.signTransaction(tx)).serialize(); };
       }
