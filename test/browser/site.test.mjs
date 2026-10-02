@@ -1719,6 +1719,33 @@ try {
     eq('nothing was quoted for an amount they cannot afford',
       net.reflectQuotes.filter((q) => q.amount === 501000000).length, 0);
 
+    // Somebody opening a savings account is choosing an amount rather than
+    // calculating one, so the round numbers are there to be pressed.
+    const chips = await page.$$eval('#df-chips button', (b) => b.map((x) => x.textContent.trim()));
+    eq('round amounts are offered, and Max with them', chips.join(','), '25,100,500,Max');
+    await page.click('#df-chips button:nth-child(2)');
+    await page.waitForFunction(() => document.getElementById('df-amount').value === '100',
+      null, { timeout: 10000 });
+    eq('pressing one fills it in', await page.inputValue('#df-amount'), '100');
+
+    // A chip somebody cannot cover is worse than one that is not there.
+    net.tokens['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] = 60;
+    await page.evaluate(() => loadDefiBalances());
+    await page.waitForFunction(() => document.querySelectorAll('#df-chips button').length === 2,
+      null, { timeout: 10000 });
+    eq('and only the ones they can afford are shown',
+      await page.$$eval('#df-chips button', (b) => b.map((x) => x.textContent.trim())).then((c) => c.join(',')),
+      '25,Max');
+    net.tokens['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] = 500;
+    await page.evaluate(() => loadDefiBalances());
+    await page.waitForFunction(() => document.querySelectorAll('#df-chips button').length === 4,
+      null, { timeout: 10000 });
+
+    // The amount is what somebody came to type, so it is the biggest thing on
+    // the card. It was a bare input in a class that did not exist.
+    const size = await page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('df-amount')).fontSize));
+    ok('and the box they type it into is sized like it matters', size >= 28, size + 'px');
+
     // Max has to be the whole balance, to the last millionth. Rounding it for
     // display would either ask for more than they hold or quietly leave some.
     await page.click('#df-max');

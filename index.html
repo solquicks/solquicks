@@ -1312,15 +1312,33 @@
     .df-pos-row b { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; color: var(--ink); }
     .df-pos-worth b { color: var(--green); }
     .df-pos-gain { margin-top: 7px; font-size: 0.8rem; font-weight: 700; color: var(--green); }
-    .df-bal {
-      font-size: 0.78rem; font-weight: 700; color: var(--muted);
-      margin: 6px 2px 0; min-height: 1.1em; text-align: right;
+    .df-leg {
+      background: var(--cream); border: 2px solid #E7DFD2; border-radius: 16px;
+      padding: 14px 16px; transition: border-color 0.15s ease;
     }
-    .df-bal button {
-      font: inherit; font-weight: 800; font-size: 0.76rem; cursor: pointer;
-      background: var(--orange-soft); border: 2px solid var(--orange); color: var(--ink);
-      border-radius: 999px; padding: 1px 9px; margin-left: 6px;
+    .df-leg:focus-within { border-color: var(--orange); }
+    .df-leg-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .df-leg-row { display: flex; align-items: center; gap: 10px; }
+    .df-amount {
+      flex: 1; min-width: 0; background: none; border: none; outline: none; padding: 0;
+      font-family: 'Baloo 2', sans-serif; font-size: 2.1rem; font-weight: 800;
+      color: var(--ink); width: 100%;
     }
+    .df-amount::placeholder { color: #C9C0D6; }
+    .df-unit {
+      flex: 0 0 auto; font-weight: 800; font-size: 0.95rem; color: var(--ink);
+      background: var(--card); border: 2px solid #E7DFD2; border-radius: 999px; padding: 7px 14px;
+    }
+    .df-bal { font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+    /* Round numbers, because somebody opening a savings account is choosing an
+       amount rather than calculating one. */
+    .df-chips { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+    .df-chips button {
+      flex: 1; min-width: 60px; font: inherit; font-weight: 800; font-size: 0.82rem; cursor: pointer;
+      background: var(--card); border: var(--line); border-radius: 999px;
+      padding: 7px 10px; color: var(--ink-soft);
+    }
+    .df-chips button:hover { background: var(--orange-soft); color: var(--ink); }
     .df-sides { display: flex; gap: 8px; margin-bottom: 14px; }
     .df-side {
       flex: 1; cursor: pointer; font: inherit; font-weight: 800; font-size: 0.9rem;
@@ -2859,14 +2877,22 @@
           <div class="df-pos-gain" id="df-pos-gain" hidden></div>
         </div>
 
-        <label class="sw-field">
-          <span class="sw-label" id="df-amount-label">You deposit</span>
-          <div class="sw-row">
-            <input type="text" inputmode="decimal" id="df-amount" placeholder="0.00" autocomplete="off" spellcheck="false"/>
-            <span class="sw-pick" style="cursor:default">USDC</span>
+        <!-- The amount is the thing somebody came here to type, so it is the
+             biggest thing on the card. It was a bare input in a class that did
+             not exist, which is why it looked like a form rather than an
+             account. -->
+        <div class="df-leg" id="df-leg">
+          <div class="df-leg-top">
+            <span class="sw-label" id="df-amount-label">You deposit</span>
+            <span class="df-bal" id="df-bal"></span>
           </div>
-        </label>
-        <div class="df-bal" id="df-bal"></div>
+          <div class="df-leg-row">
+            <input class="df-amount" type="text" inputmode="decimal" id="df-amount"
+                   placeholder="0.00" autocomplete="off" spellcheck="false"/>
+            <span class="df-unit" id="df-unit">USDC</span>
+          </div>
+        </div>
+        <div class="df-chips" id="df-chips"></div>
 
         <div class="df-quote" id="df-quote"></div>
 
@@ -5121,24 +5147,38 @@
 
     function paintDefiBalance() {
       const bal = document.getElementById('df-bal');
+      const chips = document.getElementById('df-chips');
       const have = defi.side === 'in' ? defi.usdc : defi.held;
       const unit = defi.side === 'in' ? 'USDC' : 'USDC+';
+      document.getElementById('df-unit').textContent = unit;
+      chips.textContent = '';
       if (have === null || have === undefined) { bal.textContent = ''; return; }
       bal.textContent = 'You have ' + have.toLocaleString(undefined,
-        { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + unit + ' ';
-      if (have > 0) {
-        const max = document.createElement('button');
-        max.type = 'button';
-        max.id = 'df-max';
-        max.textContent = 'Max';
-        max.onclick = function () {
-          // Written out in full rather than rounded for display: rounding here
-          // would ask for more than they hold, or quietly leave some behind.
-          document.getElementById('df-amount').value = String(have);
-          defiAmountChanged();
-        };
-        bal.appendChild(max);
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + unit;
+      if (!(have > 0)) return;
+
+      const put = function (value) {
+        // Written out in full rather than rounded for display: rounding here
+        // would ask for more than they hold, or quietly leave some behind.
+        document.getElementById('df-amount').value = String(value);
+        defiAmountChanged();
+      };
+      // Only amounts they can actually cover. A chip that cannot be pressed is
+      // worse than one that is not there.
+      for (const round of [25, 100, 500]) {
+        if (round > have) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = round.toLocaleString();
+        b.onclick = function () { put(round); };
+        chips.appendChild(b);
       }
+      const max = document.createElement('button');
+      max.type = 'button';
+      max.id = 'df-max';
+      max.textContent = 'Max';
+      max.onclick = function () { put(have); };
+      chips.appendChild(max);
     }
 
     /// What they are holding, and what it is worth today. Worth is asked of
