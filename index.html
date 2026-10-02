@@ -3497,14 +3497,27 @@
       }
       // Remember the tab so a refresh lands where you were, and so a tab can
       // be linked to directly.
-      try { history.replaceState(null, '', tab === 'links' ? location.pathname : '#' + tab); } catch (e) {}
+      try {
+        history.replaceState(null, '', tab === 'links' ? location.pathname : '#' + hashFor(tab));
+      } catch (e) {}
     }
 
     /// Any control for a tab, in the menu or in the bar. Looking only inside
     /// the menu would have broken every #swap, #store and #book link the
     /// moment those three moved out of it.
+    /// The address bar should say what the page says. The tab is still called
+    /// `defi` inside — renaming the id would break every #defi link anybody has
+    /// already shared — so the name and the id are allowed to differ, and both
+    /// hashes resolve to the same tab.
+    const TAB_HASHES = { defi: 'savings' };
+    const hashFor = (tab) => TAB_HASHES[tab] || tab;
+    const tabForHash = function (name) {
+      for (const tab in TAB_HASHES) if (TAB_HASHES[tab] === name) return tab;
+      return name;
+    };
+
     function tabButton(name) {
-      return document.querySelector('[data-tab="' + name + '"]');
+      return document.querySelector('[data-tab="' + tabForHash(name) + '"]');
     }
 
     // ── pages that are not open yet ──────────────────────────────────────
@@ -4622,7 +4635,13 @@
         return key;
       },
 
-      disconnect() {
+      /// `forget` is the difference between somebody pressing Disconnect and a
+      /// wallet going quiet on its own. Pressing it means forget this wallet.
+      /// A wallet locking, switching account or reloading its extension means
+      /// nothing of the sort — and wiping the remembered wallet there is why a
+      /// hard refresh could not reconnect: there was nothing left to reconnect
+      /// to.
+      disconnect(forget = true) {
         try {
           if (this.active && this.active.kind === 'injected' && this.active.w.disconnect) this.active.w.disconnect();
           if (this.active && this.active.kind === 'standard' && this.active.w.features['standard:disconnect'])
@@ -4632,7 +4651,7 @@
         this.pubkey = null;
         rangerCount = null;
         FoxPoints.clearToken();
-        try { localStorage.removeItem('wallet_last'); } catch (e) {}
+        if (forget) { try { localStorage.removeItem('wallet_last'); } catch (e) {} }
         this.render();
         renderStaking();
         renderLeaderboard();
@@ -4719,7 +4738,10 @@
       if (addresses.indexOf(Wallet.pubkey) >= 0) return;
       // the Fox Points sign-in was proven for the previous account, not this one
       FoxPoints.clearToken();
-      if (!addresses.length) { Wallet.disconnect(); return; }
+      // No accounts means locked, or no longer authorised — not "forget this
+      // wallet". The session goes, the memory of which wallet it was stays, so
+      // a reload picks it straight back up.
+      if (!addresses.length) { Wallet.disconnect(false); return; }
       Wallet.pubkey = addresses[0];
       rememberWallet(target, addresses[0]);
       Wallet.render();

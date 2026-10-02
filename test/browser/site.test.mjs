@@ -1649,6 +1649,62 @@ try {
       null, { timeout: 15000 });
   }
 
+  section('Savings: the address bar says what the page says');
+  {
+    await page.evaluate(() => switchTab('defi', tabButton('defi')));
+    await page.waitForSelector('#panel-defi.active', { timeout: 10000 });
+    eq('opening it puts #savings in the address bar', await page.evaluate(() => location.hash), '#savings');
+
+    // Renaming the tab id would break every #defi link already shared, so the
+    // id stays and the two hashes both resolve here.
+    await page.evaluate(() => { location.hash = ''; switchTab('links', tabButton('links')); });
+    await page.evaluate(() => { location.hash = '#defi'; });
+    await page.waitForFunction(() => document.getElementById('panel-defi').classList.contains('active'),
+      null, { timeout: 10000 });
+    ok('and an older #defi link still lands here', true);
+
+    await page.evaluate(() => { location.hash = ''; switchTab('links', tabButton('links')); });
+    await page.evaluate(() => { location.hash = '#savings'; });
+    await page.waitForFunction(() => document.getElementById('panel-defi').classList.contains('active'),
+      null, { timeout: 10000 });
+    ok('as does a #savings one', true);
+    await page.evaluate(() => { location.hash = ''; });
+  }
+
+  section('the wallet is not forgotten just because it went quiet');
+  {
+    // A wallet locking, switching account, or its extension reloading all
+    // report no accounts. Treating that as "forget this wallet" wiped the only
+    // record of which wallet to reconnect — so a hard refresh came back to
+    // nothing, which is exactly what it felt like.
+    const before = await page.evaluate(() => localStorage.getItem('wallet_last'));
+    ok('a wallet is remembered while connected', !!before, String(before));
+
+    // Through the path that actually happens — the wallet reporting that it
+    // has no accounts — rather than by calling disconnect with the right
+    // argument, which would only prove the argument exists.
+    await page.evaluate(() => walletAccountsChanged(Wallet.active, []));
+    eq('a wallet going quiet ends the session', await page.evaluate(() => Wallet.pubkey), null);
+    eq('but is still remembered, so a reload can pick it up',
+      await page.evaluate(() => localStorage.getItem('wallet_last')), before);
+
+    // Pressing Disconnect is a different thing and still means forget it.
+    await page.evaluate(async () => {
+      const ext = Wallet.discover().find((w) => w.kind === 'standard');
+      if (ext) await Wallet.connect(ext);
+    });
+    await page.waitForFunction(() => !!Wallet.pubkey, null, { timeout: 10000 });
+    await page.evaluate(() => Wallet.disconnect());
+    eq('asking to disconnect forgets it',
+      await page.evaluate(() => localStorage.getItem('wallet_last')), null);
+
+    await page.evaluate(async () => {
+      const ext = Wallet.discover().find((w) => w.kind === 'standard');
+      if (ext) await Wallet.connect(ext);
+    });
+    await page.waitForFunction(() => !!Wallet.pubkey, null, { timeout: 10000 });
+  }
+
   section('DeFi: what the amount box does with what people type');
   {
     await page.evaluate(() => switchTab('defi'));
