@@ -2799,8 +2799,8 @@
 
       <div class="sw-card">
         <div class="df-rate">
-          <div class="df-rate-label">Earning now</div>
-          <div class="df-rate-value" id="df-apy">—</div>
+          <div class="df-rate-label" id="df-apy-label">Earning now</div>
+          <div class="df-rate-value" id="df-apy" hidden></div>
           <div class="df-rate-note" id="df-apy-note">Checking the current rate…</div>
         </div>
 
@@ -5001,8 +5001,11 @@
       return units;
     }
 
+    // Two places, because this is money being read by a person. The exact
+    // figure is what gets signed; six decimals on screen is noise that makes
+    // 24.974234 harder to read than 24.97.
     const usdcText = (units) => (units / Math.pow(10, USDC_DECIMALS))
-      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     async function loadDefiRate() {
       const el = document.getElementById('df-apy');
@@ -5017,15 +5020,20 @@
           throw err;
         }
         defi.apy = b.apy;
+        el.hidden = false;
+        document.getElementById('df-apy-label').hidden = false;
         el.textContent = b.apy.toFixed(2) + '%';
         // A rate with no date behind it is a claim rather than a number.
         note.textContent = b.at
           ? 'Variable rate, published ' + new Date(b.at).toLocaleDateString()
           : 'Variable rate';
       } catch (e) {
-        // Better to say the rate is unknown than to leave a dash that reads as
-        // zero, and far better than showing a number that is not current.
-        el.textContent = '—';
+        // No number at all rather than a dash. A dash in the size this is set
+        // in reads as a stray mark, and "Earning now" over nothing reads worse
+        // than the sentence underneath on its own.
+        el.textContent = '';
+        el.hidden = true;
+        document.getElementById('df-apy-label').hidden = true;
         // Two different things, and a person deciding whether to deposit is
         // owed the difference: nobody has published a rate yet, or we could
         // not go and look. Depositing works either way.

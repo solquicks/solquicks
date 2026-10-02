@@ -1615,7 +1615,7 @@ try {
   {
     await page.evaluate(() => switchTab('defi'));
     await page.waitForSelector('#panel-defi.active', { timeout: 10000 });
-    await page.waitForFunction(() => document.getElementById('df-apy').textContent !== '—',
+    await page.waitForFunction(() => /%/.test(document.getElementById('df-apy').textContent),
       null, { timeout: 15000 }).catch(() => {});
     eq('the rate people are shown is the rate that came back',
       (await page.textContent('#df-apy')).trim(), '5.25%');
@@ -1643,6 +1643,12 @@ try {
     await page.waitForFunction(() => /receive about/.test(document.getElementById('df-quote').textContent),
       null, { timeout: 15000 });
     eq('a quote is asked for in millionths', net.reflectQuotes.at(-1).amount, 25000000);
+    // Asked in millionths, read back in dollars and cents.
+    // Two decimal places exactly — dollars and cents. Not millionths, and not
+    // the six places the protocol counts in, which make a figure harder to read
+    // rather than more honest.
+    const shown = await page.textContent('#df-quote');
+    ok('and shown in money: two decimal places, no more', /\d+\.\d{2}(\D|$)/.test(shown) && !/\.\d{3}/.test(shown), shown);
     eq('and for the side they are on', net.reflectQuotes.at(-1).side, 'mint');
 
     await page.click('#df-side-out');
@@ -1714,8 +1720,10 @@ try {
     await page.evaluate(() => loadDefiRate());
     await page.waitForFunction(() => /Could not reach/.test(document.getElementById('df-apy-note').textContent),
       null, { timeout: 15000 });
-    eq('an unreadable rate shows nothing rather than a zero',
-      (await page.textContent('#df-apy')).trim(), '—');
+    // A dash set in 2.6rem green reads as a stray mark, and "Earning now" over
+    // nothing reads worse than the explanation on its own.
+    ok('an unreadable rate shows no number at all, rather than a zero or a dash',
+      await page.locator('#df-apy').isHidden() && await page.locator('#df-apy-label').isHidden());
     ok('and says so', /Could not reach the rate/.test(await page.textContent('#df-apy-note')));
     net.reflectDown = false;
 
