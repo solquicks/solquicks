@@ -1301,7 +1301,12 @@
     f.type = email ? 'email' : 'tel';
     f.autocomplete = email ? 'email' : 'tel';
     f.placeholder = email ? 'you@example.com' : '+1 555 000 1234';
-    $('signin-id-label').textContent = email ? 'Your email' : 'Your phone number';
+    // "US and Canada only" is a limit of the SMS provider, shown in Privy's
+    // dashboard and nowhere in the config this page can read — so it is said
+    // here instead. Without it somebody in London picks Phone, types their
+    // number, and meets a failure with no reason given. If that limit is ever
+    // widened in the dashboard, this line has to be widened with it.
+    $('signin-id-label').textContent = email ? 'Your email' : 'Your phone number (US and Canada)';
     backToIdentity();
   }
 

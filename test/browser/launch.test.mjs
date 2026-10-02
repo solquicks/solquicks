@@ -557,7 +557,12 @@ try {
       await page.textContent('#signin-msg'));
 
     await page.click('#way-phone');
-    eq('switching to a phone asks for a phone', (await page.textContent('#signin-id-label')).trim(), 'Your phone number');
+    // The SMS provider only reaches US and Canada numbers, and nothing in
+    // Privy's config says so — a creator elsewhere would type their number and
+    // meet a failure with no reason given.
+    const phoneLabel = (await page.textContent('#signin-id-label')).trim();
+    ok('switching to a phone asks for a phone', /phone number/i.test(phoneLabel), phoneLabel);
+    ok('and says where it can actually reach', /US and Canada/i.test(phoneLabel), phoneLabel);
     eq('and the keyboard matches', await page.locator('#signin-id').getAttribute('type'), 'tel');
     await page.click('#way-email');
     eq('and back again', (await page.textContent('#signin-id-label')).trim(), 'Your email');
