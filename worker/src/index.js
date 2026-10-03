@@ -2565,7 +2565,7 @@ const BOOKING_TYPES = [
     // Paid here, scheduled on Calendly: the hour is picked there rather than
     // duplicating a calendar this site would have to keep in step. The link
     // comes from config, so changing the event never needs a deploy.
-    id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
+    id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 150,
     // Its own wording, because the defaults for an async booking ("no calendar
     // needed", "Order this") are written for something made and delivered, not
     // for an hour spent on a call together.
@@ -2583,7 +2583,7 @@ const BOOKING_TYPES = [
     ]
   },
   {
-    id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 200,
+    id: 'space', name: 'Hosted X Space', mode: 'slot', minutes: 60, price: 300,
     blurb: 'I host the Space, schedule the guests, drive the conversation and bring the foxy energy.',
     includes: [
       'Schedule compatible guests',
@@ -2595,7 +2595,7 @@ const BOOKING_TYPES = [
     ]
   },
   {
-    id: 'podcast', name: 'Hosted Podcast', mode: 'slot', minutes: 60, price: 350,
+    id: 'podcast', name: 'Hosted Podcast', mode: 'slot', minutes: 60, price: 500,
     // edited afterwards, so it is recorded rather than live
     format: 'recorded',
     blurb: 'I host your podcast, build the agenda, drive the conversation and deliver the finished edit.',
@@ -2606,7 +2606,7 @@ const BOOKING_TYPES = [
     ]
   },
   {
-    id: 'stream', name: 'Hosted Stream', mode: 'slot', minutes: 60, price: 300,
+    id: 'stream', name: 'Hosted Stream', mode: 'slot', minutes: 60, price: 400,
     blurb: 'I host your stream live, build the agenda, drive the conversation and set up the visuals.',
     includes: [
       'Schedule the agenda for topics of conversation and questions',
@@ -2625,7 +2625,7 @@ const BOOKING_TYPES = [
     ]
   },
   {
-    id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1000,
+    id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1500,
     blurb: 'I MC your event, speak on stage, or host a fireside chat.',
     includes: [
       'MCing, speaking slots and fireside chats',
@@ -3265,18 +3265,22 @@ function bookingRef() {
 // approval — and is refundable until it runs.
 
 // Sold in the units people think in — weeks, then months, then a year — with
-// the per-week price falling to a floor of $180 and staying there. Past about
+// the per-week price falling to a floor of $215 and staying there. Past about
 // three months the discount stops: there is one slot on the site, so a long
 // booking is not just a bigger sale, it is every other advertiser turned away
 // for that whole period, at today's price however much the site grows.
+//
+// The curve is the same one it always was, lifted with the base rate: a tenth
+// off at two weeks, a fifth at a month, and a little over a quarter once the
+// floor is reached.
 const BANNER_RATES = [
-  { weeks: 1, price: 250, label: '1 week' },
-  { weeks: 2, price: 450, label: '2 weeks' },
-  { weeks: 3, price: 630, label: '3 weeks' },
-  { weeks: 4, price: 800, label: '1 month' },
-  { weeks: 13, price: 2340, label: '3 months' },
-  { weeks: 26, price: 4680, label: '6 months' },
-  { weeks: 52, price: 9360, label: '1 year' }
+  { weeks: 1, price: 300, label: '1 week' },      // $300 a week
+  { weeks: 2, price: 540, label: '2 weeks' },     // $270
+  { weeks: 3, price: 750, label: '3 weeks' },     // $250
+  { weeks: 4, price: 960, label: '1 month' },     // $240
+  { weeks: 13, price: 2800, label: '3 months' },  // $215
+  { weeks: 26, price: 5600, label: '6 months' },  // $215
+  { weeks: 52, price: 11200, label: '1 year' }    // $215
 ];
 
 function bannerRate(weeks) {

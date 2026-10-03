@@ -40,6 +40,15 @@ section('the calendar');
   eq('MC has no calendar', (await slots(env, 'mc')).length, 0);
 }
 
+// The rate card, read rather than written out. Every price below used to be a
+// number typed into an assertion, so changing one failed a dozen tests that
+// were not about prices at all.
+const PRICE = {};
+{
+  const types = await call(freshEnv(), 'GET', '/api/booking/types');
+  for (const t of types.body.types) PRICE[t.id] = t.price;
+}
+
 section('holding a slot — what gets refused');
 {
   const env = freshEnv();
@@ -63,15 +72,15 @@ section('holding a slot — what a good hold looks like');
   const r = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
   eq('accepted', r.status, 200);
   ok('reference looks like FOX-XXXXXX', /^FOX-[A-HJ-NP-Z2-9]{6}$/.test(r.body.ref), r.body.ref);
-  eq('quoted at list price', r.body.quote.total, 200);
-  eq('asks for exactly $200 in micro-USDC', r.body.usdc, 200000000);
+  eq('quoted at list price', r.body.quote.total, PRICE.space);
+  eq('asks for exactly the list price in micro-USDC', r.body.usdc, PRICE.space * 1e6);
   eq('pays the treasury', r.body.payTo, TREASURY);
   eq('in USDC', r.body.usdcMint, USDC);
   eq('held for 20 minutes', r.body.holdUntil - clock, 20 * MIN);
   ok('carries a Solana Pay reference', typeof r.body.reference === 'string' && r.body.reference.length >= 32);
   const b = row(env, r.body.ref);
   eq('stored as held', b.status, 'held');
-  eq('stored total matches the quote', b.total_usd, 200);
+  eq('stored total matches the quote', b.total_usd, PRICE.space);
 
   const after = await slots(env);
   ok('the held slot is gone from the calendar', !after.some((x) => x.starts === s.starts));
@@ -101,27 +110,28 @@ section('the price is decided by the server');
   const lie = await call(env, 'POST', '/api/booking/hold', {
     body: { type: 'space', startsAt: s.starts + 2 * HOUR, ...guest, holder: true, total: 1, usdc: 1, quote: { total: 1 } }
   });
-  eq('a client claiming to be a holder, and a $1 total, is ignored', lie.body.quote.total, 200);
+  eq('a client claiming to be a holder, and a $1 total, is ignored', lie.body.quote.total, PRICE.space);
 
   const holderTok = signIn(env, wallet(1), { holder: true });
   const h = await call(env, 'POST', '/api/booking/hold', { token: holderTok, body: { type: 'space', startsAt: s.starts + 4 * HOUR, ...guest } });
   // Derived from the discount the code actually applies, so a change of rate
   // updates the expectation instead of failing a number typed in months ago.
-  const holderPrice = Math.round(200 * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100;
+  const holderPrice = Math.round(PRICE.space * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100;
   eq('a signed-in holder pays the discounted price', h.body.quote.total, holderPrice);
   eq('and is asked for that in USDC', h.body.usdc, Math.round(holderPrice * 1e6));
 
   const plainTok = signIn(env, wallet(2));
   const p = await call(env, 'POST', '/api/booking/hold', { token: plainTok, body: { type: 'space', startsAt: s.starts + 6 * HOUR, ...guest } });
-  eq('a signed-in non-holder pays list price', p.body.quote.total, 200);
+  eq('a signed-in non-holder pays list price', p.body.quote.total, PRICE.space);
 
   const staleTok = signIn(env, wallet(3), { holder: true, expired: true });
   const st = await call(env, 'POST', '/api/booking/hold', { token: staleTok, body: { type: 'space', startsAt: s.starts + 8 * HOUR, ...guest } });
-  eq('a holder with an expired session pays list price', st.body.quote.total, 200);
+  eq('a holder with an expired session pays list price', st.body.quote.total, PRICE.space);
 
   const rushSlot = firstRush(await slots(env));
   const rr = await call(env, 'POST', '/api/booking/hold', { body: { type: 'podcast', startsAt: rushSlot.starts, ...guest } });
-  eq('a podcast inside 48 hours carries the rush: $525', rr.body.quote.total, 525);
+  eq('a podcast inside 48 hours carries the rush', rr.body.quote.total,
+    Math.round(PRICE.podcast * (1 + 50 / 100)));
 }
 
 section('services without a calendar');
@@ -156,16 +166,16 @@ section('paying by connected wallet');
   eq('unknown booking', (await confirm('whatever', tok, 'FOX-NOPE22')).status, 404);
 
   eq('a transaction that is not on chain', (await confirm('sig-not-landed')).status, 402);
-  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: 200e6, failed: true }))).status, 402);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: 199.99e6 }))).status, 402);
+  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: h.body.usdc, failed: true }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: h.body.usdc - 10000 }))).status, 402);
   const solPay = await confirm(pay({ from: buyer, sol: 2e9 }));
   eq('paid in SOL instead of USDC', solPay.status, 402);
   ok('and is told bookings are USDC only', /USDC only/.test(solPay.body.error || ''), solPay.body.error);
-  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: 200e6 }))).status, 402);
+  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: h.body.usdc }))).status, 402);
   eq('none of that marked it paid', row(env, ref).status, 'held');
   eq('none of that consumed a payment', payments(env), 0);
 
-  const good = pay({ from: buyer, usdc: 200e6 });
+  const good = pay({ from: buyer, usdc: h.body.usdc });
   const c = await confirm(good);
   eq('the exact amount from the booker is accepted', c.status, 200);
   eq('booking is paid', row(env, ref).status, 'paid');
@@ -187,7 +197,7 @@ section('paying by connected wallet');
   eq('reusing a payment for another booking is refused', reuse.status, 402);
   eq('that booking is still unpaid', row(env, h2.body.ref).status, 'held');
 
-  const over = await confirm(pay({ from: buyer, usdc: 250e6 }), tok, h2.body.ref);
+  const over = await confirm(pay({ from: buyer, usdc: h2.body.usdc + 50e6 }), tok, h2.body.ref);
   eq('overpaying is accepted', over.status, 200);
 }
 
@@ -200,13 +210,13 @@ section('paying by QR from a phone that never visited the site');
 
   eq('before paying it is waiting', (await watch()).body.status, 'waiting');
 
-  pay({ from: wallet(20), usdc: 299e6, reference: h.body.reference });
+  pay({ from: wallet(20), usdc: h.body.usdc - 1e6, reference: h.body.reference });
   const short = await watch();
   eq('a short payment leaves it waiting', short.body.status, 'waiting');
   ok('with a reason', !!short.body.note, JSON.stringify(short.body));
 
   const phone = wallet(21);
-  pay({ from: phone, usdc: 300e6, reference: h.body.reference });
+  pay({ from: phone, usdc: h.body.usdc, reference: h.body.reference });
   const paid = await watch();
   eq('the full payment is found by its reference', paid.body.status, 'paid');
   eq('booking is paid', row(env, h.body.ref).status, 'paid');
@@ -237,7 +247,7 @@ section('an abandoned hold frees the slot');
 
   // the original customer's wallet now pays, but the hour has gone to someone else
   const late = await call(env, 'POST', '/api/booking/confirm', {
-    token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: 200e6 }) }
+    token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: h.body.usdc }) }
   });
   eq('paying for the expired hold after the hour was taken is refused', late.status, 409);
   eq('and says a refund is coming', late.body.refund, true);
@@ -256,7 +266,7 @@ section('money that arrives when nobody is watching');
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
 
   advance(1 * MIN);
-  pay({ from: wallet(40), usdc: 200e6, reference: h.body.reference }); // paid in full, on time
+  pay({ from: wallet(40), usdc: h.body.usdc, reference: h.body.reference }); // paid in full, on time
   advance(20 * MIN); // ...and the tab was closed
   await slots(env);
   eq('with nobody watching, the hold expires on schedule', row(env, h.body.ref).status, 'expired');
@@ -283,7 +293,7 @@ section('late payment — each way it can go');
   const a = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: list[0].starts, ...guest } });
   advance(25 * MIN);
   await slots(env);
-  pay({ from: wallet(41), usdc: 200e6, reference: a.body.reference });
+  pay({ from: wallet(41), usdc: a.body.usdc, reference: a.body.reference });
   eq('hour still free: the page picks up a late payment as paid',
     (await call(env, 'GET', '/api/booking/watch?ref=' + a.body.ref)).body.status, 'paid');
 
@@ -293,7 +303,7 @@ section('late payment — each way it can go');
   await slots(env);
   const taker = await call(env, 'POST', '/api/booking/hold', { body: { type: 'stream', startsAt: list[8].starts + 30 * MIN, ...guest } });
   eq('once expired, an overlapping hold is allowed', taker.status, 200);
-  pay({ from: wallet(42), usdc: 350e6, reference: b.body.reference });
+  pay({ from: wallet(42), usdc: b.body.usdc, reference: b.body.reference });
   eq('hour taken: the late payment is marked for refund',
     (await call(env, 'GET', '/api/booking/watch?ref=' + b.body.ref)).body.status, 'refund');
   eq('and the person who took the hour keeps it', row(env, taker.body.ref).status, 'held');
@@ -304,7 +314,7 @@ section('late payment — each way it can go');
   const c = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[16].starts, ...guest } });
   advance(21 * MIN);
   await slots(env);
-  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: 200e6 }) } });
+  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
   eq('a wallet payment landing after the hold, hour free, is accepted', cc.status, 200);
   eq('and booked', row(env, c.body.ref).status, 'paid');
 
@@ -312,7 +322,7 @@ section('late payment — each way it can go');
   const d = await call(env, 'POST', '/api/booking/hold', { body: { type: 'custom', ...guest } });
   advance(30 * MIN);
   await slots(env);
-  pay({ from: wallet(44), usdc: 250e6, reference: d.body.reference });
+  pay({ from: wallet(44), usdc: d.body.usdc, reference: d.body.reference });
   eq('custom content paid late is honoured',
     (await call(env, 'GET', '/api/booking/watch?ref=' + d.body.ref)).body.status, 'paid');
 
@@ -320,7 +330,10 @@ section('late payment — each way it can go');
   const e = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: list[24].starts, ...guest } });
   advance(21 * MIN);
   await slots(env);
-  pay({ from: wallet(45), usdc: 100e6, reference: e.body.reference });
+  // Half of what is owed: short on purpose, which is the whole point of this
+  // one. Swapping the figure for "what the hold asks for" quietly made it a
+  // payment in full and the test passed by describing something else.
+  pay({ from: wallet(45), usdc: Math.round(e.body.usdc / 2), reference: e.body.reference });
   const ew = await call(env, 'GET', '/api/booking/watch?ref=' + e.body.ref);
   eq('a short late payment leaves the hold expired', ew.body.status, 'expired');
   ok('with a reason', !!ew.body.note);
@@ -337,7 +350,7 @@ section('late payment for a time that has already passed');
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
   setClock(s.starts + 5 * MIN); // the Space has started
   await slots(env);
-  pay({ from: wallet(46), usdc: 300e6, reference: h.body.reference });
+  pay({ from: wallet(46), usdc: h.body.usdc, reference: h.body.reference });
   eq('it is refunded rather than booked into the past',
     (await call(env, 'GET', '/api/booking/watch?ref=' + h.body.ref)).body.status, 'refund');
   setClock(START);
@@ -392,7 +405,7 @@ section('two bookings, one payment, the same moment');
   const list = (await slots(env)).filter((x) => !x.rush);
   const h1 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[0].starts, ...guest } });
   const h2 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[4].starts, ...guest } });
-  const sig = pay({ from: buyer, usdc: 200e6 });
+  const sig = pay({ from: buyer, usdc: h1.body.usdc });
   const both = await Promise.all([
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h1.body.ref, signature: sig } }),
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig } })
@@ -414,7 +427,7 @@ section('the page and the wallet noticing the same payment at once');
   const list = (await slots(env)).filter((x) => !x.rush);
 
   const h = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[0].starts, ...guest } });
-  const sig = pay({ from: buyer, usdc: 200e6, reference: h.body.reference });
+  const sig = pay({ from: buyer, usdc: h.body.usdc, reference: h.body.reference });
   const door = env.DB.pauseBefore(/^UPDATE bookings SET status = 'paid'/);
   const confirming = call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h.body.ref, signature: sig } });
   await door.reached;
@@ -428,7 +441,7 @@ section('the page and the wallet noticing the same payment at once');
   eq('payment recorded once', payments(env), 1);
 
   const h2 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[6].starts, ...guest } });
-  const sig2 = pay({ from: buyer, usdc: 200e6, reference: h2.body.reference });
+  const sig2 = pay({ from: buyer, usdc: h2.body.usdc, reference: h2.body.reference });
   const door2 = env.DB.pauseBefore(/^UPDATE bookings SET status = 'paid'/);
   const watching = call(env, 'GET', '/api/booking/watch?ref=' + h2.body.ref);
   await door2.reached;
@@ -461,7 +474,7 @@ section('payments switched off');
   const env = freshEnv({ TREASURY_WALLET: '' });
   const s = firstCalm(await slots(env));
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
-  const c = await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(60)), body: { ref: h.body.ref, signature: pay({ from: wallet(60), usdc: 200e6 }) } });
+  const c = await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(60)), body: { ref: h.body.ref, signature: pay({ from: wallet(60), usdc: h.body.usdc }) } });
   eq('with no treasury configured, nothing can be confirmed', c.status, 503);
   eq('and the booking is not marked paid', row(env, h.body.ref).status, 'held');
 }
@@ -501,20 +514,30 @@ section('ad slot — holding a run');
     '1 week, 2 weeks, 3 weeks, 1 month, 3 months, 6 months, 1 year');
   const perWeek = rates.map((r) => Math.round(r.price / r.weeks));
   ok('the per-week price never rises with length', perWeek.every((p, i) => i === 0 || p <= perWeek[i - 1]), perWeek.join(','));
-  eq('and flattens at $180 rather than falling forever', perWeek.slice(-3).join(','), '180,180,180');
+  // The floor exists because there is one slot on the site: a long booking is
+  // every other advertiser turned away for that period, at today's price.
+  const floor = perWeek[perWeek.length - 1];
+  eq('and flattens rather than falling forever', perWeek.slice(-3).join(','),
+    [floor, floor, floor].join(','));
+  ok('at a floor below the weekly rate but not far below it',
+    floor < perWeek[0] && floor > perWeek[0] * 0.6, perWeek.join(','));
 
   const a = await adHold(env, 1);
   eq('a one-week run is held', a.status, 200);
   ok('reference looks like AD-XXXXXX', /^AD-[A-HJ-NP-Z2-9]{6}$/.test(a.body.ref), a.body.ref);
   eq('it starts in a day', a.body.startsAt - clock, DAY);
   eq('and lasts a week', a.body.endsAt - a.body.startsAt, WEEK);
-  eq('for 250 USDC', a.body.usdc, 250e6);
+  // An advertising hold reports totalUsd rather than a quote — it has no rush
+  // window and no holder discount, so there is nothing to quote around.
+  eq('for the quoted amount in USDC', a.body.usdc, a.body.totalUsd * 1e6);
   eq('held for 20 minutes by the server\'s clock', a.body.holdUntil - a.body.serverNow, 20 * MIN);
 
   eq('the next run now starts when that one ends', (await adRates(env)).nextFree, a.body.endsAt);
   const b = await adHold(env, 2);
   eq('a second advertiser is queued straight after', b.body.startsAt, a.body.endsAt);
-  eq('for 450 USDC', b.body.usdc, 450e6);
+  eq('for the two-week rate in USDC', b.body.usdc, b.body.totalUsd * 1e6);
+  ok('which is less per week than one week alone', b.body.totalUsd / 2 < a.body.totalUsd,
+    b.body.totalUsd + ' for two vs ' + a.body.totalUsd + ' for one');
 }
 
 section('ad slot — an abandoned hold gives its run back');
@@ -537,7 +560,7 @@ section('ad slot — new advertisers fill the gap an abandoned hold leaves');
   const a = await adHold(env, 4, { name: 'Abandons' });
   const b = await adHold(env, 1, { name: 'Queued' });
   eq('an advertiser queues behind a four-week hold', b.body.startsAt, a.body.endsAt);
-  pay({ from: wallet(78), usdc: 250e6, reference: b.body.reference });
+  pay({ from: wallet(78), usdc: b.body.usdc, reference: b.body.reference });
   eq('and pays, so their run is theirs', (await call(env, 'GET', '/api/banner/watch?ref=' + b.body.ref)).body.status, 'paid');
 
   advance(21 * MIN);
@@ -577,12 +600,12 @@ section('ad slot — paying by connected wallet');
     body: { ref, sponsor: 'Sponsor', headline: 'Headline', url: 'https://example.com' } });
 
   eq('creative cannot be sent before paying', (await creative(a.body.ref)).status, 409);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: 249.99e6 }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: a.body.usdc - 10000 }))).status, 402);
   eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9 }))).status, 402);
-  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: 250e6 }))).status, 402);
+  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: a.body.usdc }))).status, 402);
   eq('none of that marked it paid', adRow(env, a.body.ref).status, 'held');
 
-  const good = pay({ from: buyer, usdc: 250e6 });
+  const good = pay({ from: buyer, usdc: a.body.usdc });
   const c = await confirm(good);
   eq('the exact amount is accepted', c.status, 200);
   eq('and asks for the creative', c.body.needsCreative, true);
@@ -605,11 +628,14 @@ section('ad slot — paying by QR');
   const a = await adHold(env, 2);
   const watch = () => call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref);
   eq('before paying it is waiting', (await watch()).body.status, 'waiting');
-  pay({ from: wallet(72), usdc: 400e6, reference: a.body.reference });
+  // A dollar short, on purpose. Replacing the figure with "what the hold asks
+  // for" quietly made this a payment in full, and the test then passed while
+  // describing something it was not doing.
+  pay({ from: wallet(72), usdc: a.body.usdc - 1e6, reference: a.body.reference });
   const short = await watch();
   eq('a short payment leaves it waiting', short.body.status, 'waiting');
   ok('with a reason', !!short.body.note);
-  pay({ from: wallet(73), usdc: 450e6, reference: a.body.reference });
+  pay({ from: wallet(73), usdc: a.body.usdc, reference: a.body.reference });
   eq('the full payment is found by reference', (await watch()).body.status, 'paid');
   eq('the paying wallet is recorded', adRow(env, a.body.ref).wallet, wallet(73));
   eq('watching again stays paid', (await watch()).body.status, 'paid');
@@ -621,7 +647,7 @@ section('ad slot — money nobody was watching for');
   const env = freshEnv();
   const a = await adHold(env, 1);
   advance(1 * MIN);
-  pay({ from: wallet(74), usdc: 250e6, reference: a.body.reference });
+  pay({ from: wallet(74), usdc: a.body.usdc, reference: a.body.reference });
   advance(20 * MIN); // tab closed
   await adRates(env);
   eq('with nobody watching, the hold expires on schedule', adRow(env, a.body.ref).status, 'expired');
@@ -645,7 +671,7 @@ section('ad slot — late payment after the run was taken');
   ok('once expired, an overlapping run is offered to the next advertiser',
     b.body.startsAt < a.body.endsAt && a.body.startsAt < b.body.endsAt);
 
-  pay({ from: wallet(75), usdc: 250e6, reference: a.body.reference });
+  pay({ from: wallet(75), usdc: a.body.usdc, reference: a.body.reference });
   const before = chain.alerts.length;
   eq('the late payment is marked for refund', (await call(env, 'GET', '/api/banner/watch?ref=' + a.body.ref)).body.status, 'refund');
   eq('the advertiser who took the run keeps it', adRow(env, b.body.ref).status, 'held');
@@ -663,7 +689,7 @@ section('ad slot — late payment after the run was taken');
   const c = await adHold(env, 1, { token: tok });
   advance(21 * MIN);
   await adRates(env);
-  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: 250e6 }) } });
+  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
   eq('a late wallet payment for a run still free is accepted', cc.status, 200);
   eq('and asks for the creative', cc.body.needsCreative, true);
 }
@@ -691,7 +717,7 @@ section('ad slot — the page and the wallet noticing one payment at once');
   const buyer = wallet(77);
   const tok = signIn(env, buyer);
   const a = await adHold(env, 1, { token: tok });
-  const sig = pay({ from: buyer, usdc: 250e6, reference: a.body.reference });
+  const sig = pay({ from: buyer, usdc: a.body.usdc, reference: a.body.reference });
   const door = env.DB.pauseBefore(/^UPDATE banner_bookings SET status = 'paid'/);
   const confirming = call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: a.body.ref, signature: sig } });
   await door.reached;
@@ -802,7 +828,7 @@ section('after paying — the details I actually need');
   const brief = (ref, details) => call(env, 'POST', '/api/booking/brief', { body: { ref, details } });
   eq('details before paying are refused', (await brief(h.body.ref, 'guests: @a')).status, 409);
 
-  const sig = pay({ from: wallet(50), usdc: 200e6, reference: h.body.reference });
+  const sig = pay({ from: wallet(50), usdc: h.body.usdc, reference: h.body.reference });
   await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(50)), body: { ref: h.body.ref, signature: sig } });
   eq('once paid they are taken', (await brief(h.body.ref, 'guests: @a, @b · topic: launch')).status, 200);
   eq('and stored against the booking',
@@ -826,7 +852,7 @@ section('the consulting hour');
   const types = (await call(env, 'GET', '/api/booking/types')).body.types;
   const consult = types.find((t) => t.id === 'consult');
   ok('it is on the rate card', !!consult, types.map((t) => t.id).join(','));
-  eq('at $100 for an hour', consult.price + '/' + consult.minutes, '100/60');
+  eq('at $150 for an hour', consult.price + '/' + consult.minutes, '150/60');
 
   // The seven lines solquicks wrote, served as written. This is what a
   // customer reads before paying $100, so a silent edit should fail here.
@@ -840,7 +866,7 @@ section('the consulting hour');
   const h = await call(env, 'POST', '/api/booking/hold', { body: { type: 'consult', ...guest } });
   eq('it can be booked', h.status, 200);
   eq('the link comes back with the booking', h.body.calendly, 'https://calendly.com/solquicks/secret-hour');
-  eq('and it is paid for like anything else', h.body.usdc, 100000000);
+  eq('and it is paid for like anything else', h.body.usdc, PRICE.consult * 1e6);
 
   // Calendly's free plan allows one event type and the 30-minute link is
   // using it, so the hour is arranged by hand: sold with no link at all, and

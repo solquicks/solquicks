@@ -230,7 +230,7 @@ function workerAnswer(p, url) {
         blurb: 'I host the Space.', includes: ['Guests', 'Agenda'], format: 'live' },
       { id: 'custom', name: 'Custom content', mode: 'async', minutes: null, price: 250,
         blurb: 'Made for you.', includes: ['A video'] },
-      { id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 100,
+      { id: 'consult', name: 'Project consulting', mode: 'async', minutes: 60, price: 150,
         blurb: 'An hour on your project.',
         // As many lines as the real one has: the page has to render every one
         // it is given, not the first few.
@@ -1024,22 +1024,24 @@ try {
 
   section('booking: the rate card');
   {
-    // "from $180 /week" was the best rate, only reached at three months. The
-    // cheapest way in is $250 for one week, so an advertiser clicked expecting
-    // $180 and found $250.
+    // The headline has to be the price somebody can actually pay on the day
+    // they arrive. It once read "from $180 /week" — the best rate, only reached
+    // at three months — so an advertiser clicked expecting $180 and found $250.
     await page.evaluate(() => switchTab('book'));
     await page.waitForSelector('.bk-ad', { timeout: 15000 });
     const ad = (await page.textContent('.bk-ad')).replace(/\s+/g, ' ');
-    ok('the advertising price is one you can actually pay today', /\$250/.test(ad), ad);
+    ok('the advertising price is one you can actually pay today', /\$300/.test(ad), ad);
     ok('and the cheaper rate is explained rather than advertised as the price',
-      /down to \$180 on three months or more/.test(ad), ad);
+      /down to \$215 on three months or more/.test(ad), ad);
+    ok('with the headline being the dearer of the two, not the cheaper',
+      ad.indexOf('$300') < ad.indexOf('$215'), ad);
 
     await page.evaluate(() => switchTab('book'));
     await page.waitForSelector('.bk-card', { timeout: 15000 });
 
     const consult = page.locator('.bk-card', { hasText: 'Project consulting' });
     eq('the consulting hour is on the card', await consult.count(), 1);
-    eq('at its price', (await consult.locator('.bk-price').first().textContent()).replace(/\s+/g, ' ').trim().slice(0, 4), '$100');
+    eq('at its price', (await consult.locator('.bk-price').first().textContent()).replace(/\s+/g, ' ').trim().slice(0, 4), '$150');
 
     // Seven lines are served and seven have to appear. A card that quietly
     // renders the first few would sell an hour on a shorter promise than the

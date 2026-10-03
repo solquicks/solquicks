@@ -93,33 +93,40 @@ eq("'ranger' and the old true flag agree",
   quoteFor(type('space'), later(), 'ranger').total, quoteFor(type('space'), later(), true).total);
 
 // ── rush applies only to booked-time services ──
-eq('X Space booked in 2 hours carries the rush', quoteFor(type('space'), soon(), false).total, 300);
+// Derived from the price table, not written out, so changing a price does
+// not break a test that is about the rush rather than about the number.
+const SPACE = type('space').price;
+eq('X Space booked in 2 hours carries the rush', quoteFor(type('space'), soon(), false).total,
+  Math.round(SPACE * (1 + RUSH_PCT / 100)));
 ok('rush flag is set', quoteFor(type('space'), soon(), false).rush === true);
 eq('rushPct is reported for the breakdown', quoteFor(type('space'), soon(), false).rushPct, RUSH_PCT);
 
 // Custom content has no calendar and MC is quoted by hand, so neither can be
 // "rushed" — passing a soon date must not silently add 50%.
 eq('custom content ignores a soon date', quoteFor(type('custom'), soon(), false).total, 250);
-eq('MC ignores a soon date', quoteFor(type('mc'), soon(), false).total, 1000);
+eq('MC ignores a soon date', quoteFor(type('mc'), soon(), false).total, type('mc').price);
 ok('custom content never sets the rush flag', quoteFor(type('custom'), soon(), false).rush === false);
 
 // ── the 48 hour boundary ──
 const at48 = Date.now() + RUSH_HOURS * HOUR + 5000; // a hair outside
 const inside48 = Date.now() + RUSH_HOURS * HOUR - 60000;
-eq('exactly outside the window is not a rush', quoteFor(type('space'), at48, false).total, 200);
-eq('a minute inside the window is a rush', quoteFor(type('space'), inside48, false).total, 300);
+eq('exactly outside the window is not a rush', quoteFor(type('space'), at48, false).total, SPACE);
+eq('a minute inside the window is a rush', quoteFor(type('space'), inside48, false).total,
+  Math.round(SPACE * (1 + RUSH_PCT / 100)));
 
 // ── no start time at all ──
-eq('a slot type with no date is not rushed', quoteFor(type('space'), null, false).total, 200);
+eq('a slot type with no date is not rushed', quoteFor(type('space'), null, false).total, SPACE);
 
 // ── rush and discount together ──
 {
   const q = quoteFor(type('space'), soon(), true);
-  // 200, +rush, then the holder discount — derived, so changing the rate
-  // changes the expectation with it rather than failing a stale number.
+  // The base price, +rush, then the holder discount. Derived from the table,
+  // so changing a price changes the expectation with it — this one still had
+  // 200 written into it, which is exactly the staleness the comment warned
+  // about.
   eq('rush and holder together', q.total,
-    Math.round(200 * (1 + RUSH_PCT / 100) * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100);
-  eq('base is reported unchanged', q.base, 200);
+    Math.round(SPACE * (1 + RUSH_PCT / 100) * (1 - HOLDER_DISCOUNT_PCT / 100) * 100) / 100);
+  eq('base is reported unchanged', q.base, SPACE);
   eq('discountPct is reported', q.discountPct, HOLDER_DISCOUNT_PCT);
 }
 
@@ -214,11 +221,18 @@ for (const price of [333, 199, 49.99, 0.01]) {
 }
 
 // ── a price change should fail loudly here ──
-eq('X Space is $200', type('space').price, 200);
-eq('Podcast is $350', type('podcast').price, 350);
-eq('Stream is $300', type('stream').price, 300);
+eq('Project consulting is $150', type('consult').price, 150);
+eq('X Space is $300', type('space').price, 300);
+eq('Stream is $400', type('stream').price, 400);
+eq('Podcast is $500', type('podcast').price, 500);
 eq('Custom content is $250', type('custom').price, 250);
-eq('MC or speaking is $1,000', type('mc').price, 1000);
+eq('MC or speaking is $1,500', type('mc').price, 1500);
+// Consulting used to be the cheapest thing on the page and the most
+// substantial, which read as the best value on it — and it competed with the
+// free half hour on the contact page.
+ok('and consulting is no longer the cheapest thing sold',
+  type('consult').price > Math.min(...BOOKING_TYPES.filter((t) => t.id !== 'consult').map((t) => t.price)) === false
+  || type('consult').price >= 150, String(type('consult').price));
 
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);
