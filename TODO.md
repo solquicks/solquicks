@@ -613,7 +613,9 @@ Outstanding:
   feature is credited to Slabz and Collector Crypt. Worth knowing they are in
   the same room, whether or not that changes anything.
 
-**5. Sat Rush rates and terms**, to replace the placeholder on Mine Bitcoin.
+**5. ~~Sat Rush rates and terms~~** — moved to the business development
+roadmap at the end of this file 2026-10-03. The integration needs money, so the
+terms cannot be written before there is something to have terms about.
 
 **6. Gacha odds.** The page already commits to publishing them before anyone
 spends. Worth settling what they are before it is built, not after — paid
@@ -1143,3 +1145,98 @@ ships them, and that is their side, not ours.
 >
 > We would also like our users whitelisted for the closed beta so they can
 > deposit.
+
+---
+
+# Business development roadmap
+
+Started 2026-10-03. Everything here needs money, a partner's agreement, or both,
+and **none of it has to be live for the hackathon**. It is kept separate from
+the to-do list so that list only holds things that can actually be finished.
+
+Each item says what it costs, what it earns, and what has to be true before it
+can start — because the order to do them in is the order of that last column,
+not the first.
+
+## 1. Reflect — the branded savings token
+
+**What it unlocks.** Savings currently earns nobody anything. It runs on
+Reflect's plain `/stablecoin/*` endpoints, which pay no fee to anyone. A branded
+stablecoin is what carries the split: Reflect's own example is $100,000 a year
+for every $10M deposited at a fifth of a 5% rate. It is the only revenue on the
+whole site that compounds without traffic — every other line needs somebody to
+come back and do something.
+
+**Blocked, and not on money.** The entire `/integration/*` namespace answers 404
+on both prod and dev, while `/stablecoin/*` answers 200 beside it. Documented,
+not deployed. No API key changes that — the routes are not there to
+authenticate against. Reflect also runs a closed beta and integrator users must
+be whitelisted before any of them can deposit.
+
+**Decided already:** one token, not one per creator. Creators keep all of their
+own savings revenue; solquicks.com is a site like any other and keeps its own.
+Reasoning is under "One stablecoin, not one per creator" above.
+
+**Next:** send them the message that is already written. It costs nothing and
+is the only thing that moves this.
+
+## 2. Titan — swap routing
+
+**Dropped 2026-09-15 and still dropped.** Routing swaps through Titan needs
+Titan's team to approve a fee account, on top of a paid Triton or QuickNode
+plan. Without the approval every swap routed through them earns nothing, so
+paying for infrastructure would mean paying to lose the 20 bps that Jupiter
+pays today.
+
+**Cost:** a Triton or QuickNode plan, ongoing.
+**Earns:** nothing extra on its own — it is a second route, not a second fee.
+The case for it is better pricing for the person swapping, which earns loyalty
+rather than margin.
+**Before it can start:** the fee account approved. The API key was never the
+blocker and having one changes nothing.
+
+**Also outstanding:** the key that was pasted into a chat needs rotating
+regardless of whether this is ever built.
+
+## 3. Sat Rush — Mine Bitcoin
+
+The page says the rates and terms are still being worked out, which is true and
+will stay true until there is an integration to have terms about. That
+integration needs money.
+
+**Cost:** unknown until they quote it.
+**Earns:** unknown. Worth asking what the integrator economics look like before
+committing — if it is a flat fee with no share, it is a feature rather than a
+revenue line, and should be priced as one.
+**Before it can start:** their rates, their terms, and what it costs to wire up.
+
+## 4. Reflect — the rate, and the split disclosure
+
+Two smaller things that follow item 1 rather than standing alone.
+
+Reflect publishes no APY; their endpoint answers 404 and has throughout. This
+site measures its own from what the token actually redeems for, which works —
+but 36 readings over 17.5 hours show the rate has not moved at all. **USDC+ is
+not currently accruing.** Worth raising with them, because a savings product
+that pays nothing is not a savings product.
+
+And once a fee split exists, the page has to say so. A page showing 5% while
+paying 4% is a page that lies, and the split belongs next to the rate rather
+than in a footnote.
+
+## 5. MoonPay — buying crypto with a card
+
+Already planned in detail further up this file. Listed here because the slow
+part is theirs: a partner account, then business verification measured in days.
+Free to onboard, approval needed before going live.
+
+**Start the verification before anything else on this list** — it is the only
+item whose clock runs without any work from us.
+
+## What this list is not
+
+Everything above is deliberately out of the hackathon build. The submission
+stands on what is live and working: the swap and its fees, bookings, the
+advertising slot, the collectible, Fox Points, Moon Rangers, wallet cleanup,
+Savings, the referral links, and the Creator Launchpad. None of those are
+waiting on money.
