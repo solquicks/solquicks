@@ -1930,14 +1930,11 @@ async function rdapBase(env, tld) {
   return null;
 }
 
-async function domainTaken(env, name) {
-  const tld = String(name).split('.').pop().toLowerCase();
+/// One registry, asked once. 404 means nobody owns it, a 200 means somebody
+/// does, and anything else is null — unknown, which is never shown as free.
+async function rdapAsk(url) {
   try {
-    const base = await rdapBase(env, tld);
-    // A TLD nobody publishes a registry for cannot be checked at all. That is
-    // not the same as free, and must never be shown as though it were.
-    if (!base) return null;
-    const res = await fetch(base + 'domain/' + encodeURIComponent(name), {
+    const res = await fetch(url, {
       headers: { Accept: 'application/rdap+json' },
       redirect: 'follow'
     });
@@ -1947,6 +1944,27 @@ async function domainTaken(env, name) {
   } catch (e) {
     return null;
   }
+}
+
+async function domainTaken(env, name) {
+  const tld = String(name).split('.').pop().toLowerCase();
+  const base = await rdapBase(env, tld);
+  // A TLD nobody publishes a registry for cannot be checked at all. That is
+  // not the same as free, and must never be shown as though it were — and the
+  // fallback below cannot tell those apart either, since it answers 404 both
+  // for a name nobody owns and for a TLD it has never heard of. So an unknown
+  // TLD stops here rather than borrowing an answer that means something else.
+  if (!base) return null;
+
+  const direct = await rdapAsk(base + 'domain/' + encodeURIComponent(name));
+  if (direct !== null) return direct;
+
+  // Some registries answer from a laptop and not from here — .xyz's does
+  // exactly that, which left every .xyz unknown however long somebody waited.
+  // rdap.org forwards to whichever registry owns the name, from a host this
+  // can reach. Only reached when a registry we know of did not answer, so a
+  // working direct route is never replaced by a slower indirect one.
+  return await rdapAsk('https://rdap.org/domain/' + encodeURIComponent(name));
 }
 
 const SWAP_POINTS_PER_USD = 1;

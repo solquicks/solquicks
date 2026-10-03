@@ -2630,9 +2630,18 @@ try {
       } else {
         ok(tab + ': every mark starts on the same line',
           new Set(m.logoX).size === 1, JSON.stringify(m.logoX));
-        ok(tab + ': and the group of them is still under the middle',
-          Math.abs(Math.round((Math.min(...m.pairs) + Math.max(...m.pairs)) / 2) - m.head) <= 24,
-          JSON.stringify(m));
+        // The block, not the marks. Once partners carry a line of description
+        // the block is as wide as the longest one, so the marks sit at its left
+        // edge by design — which is the alignment that was asked for. What has
+        // to stay centred is the block itself.
+        const box = await page.evaluate((t) => {
+          const el = document.querySelector('#panel-' + t + ' .soon-with-list');
+          const r = el.getBoundingClientRect();
+          const p = el.parentElement.getBoundingClientRect();
+          return { mid: Math.round(r.x + r.width / 2), parentMid: Math.round(p.x + p.width / 2) };
+        }, tab);
+        ok(tab + ': and the block of them is centred',
+          Math.abs(box.mid - box.parentMid) <= 2, JSON.stringify(box));
       }
     }
 

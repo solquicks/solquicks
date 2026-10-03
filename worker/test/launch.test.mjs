@@ -133,6 +133,34 @@ section('the domain, asked of the registry rather than guessed');
   const out = await domain(env, 'ripple.io');
   eq('a registry that will not answer says so', out.body.status, 'unknown');
   ok('rather than claiming it is available', out.body.status !== 'free', out.body.status);
+
+  // Some registries answer from a laptop and not from a Worker — .xyz's does
+  // exactly that, which left every .xyz unknown however long anybody waited.
+  // rdap.org forwards to whichever registry owns the name, from a host this
+  // can reach.
+  const asked = [];
+  chain.rdap = (u) => {
+    asked.push(u);
+    if (u.indexOf('data.iana.org') >= 0) {
+      return new Response(JSON.stringify(BOOTSTRAP), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (u.indexOf('rdap.org') >= 0) {
+      return new Response('', { status: REGISTERED.indexOf(decodeURIComponent(u.split('/').pop())) >= 0 ? 200 : 404 });
+    }
+    return new Response('', { status: 500 });   // the registry itself, unreachable
+  };
+  const viaProxy = await domain(env, 'nobodyhasthisone.com');
+  eq('a registry we cannot reach falls back and still answers', viaProxy.body.status, 'free');
+  ok('having asked the forwarder', asked.some((u) => u.indexOf('rdap.org') >= 0), asked.join(' '));
+
+  // And the fallback must be the fallback. A registry that answers is not
+  // replaced by a slower route through somebody else.
+  asked.length = 0;
+  chain.rdap = registries;
+  await domain(env, 'nobodyhasthisone.com');
+  ok('while a registry that does answer is not routed around',
+    !asked.some((u) => u.indexOf('rdap.org') >= 0), asked.join(' '));
+
   chain.rdap = registries;
 
   await create(env, {});
