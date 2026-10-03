@@ -226,6 +226,14 @@ section('a record of what happened');
   const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
   const SIG = '5' + 'x'.repeat(0) + 'J7rA9kqLm2pQwTvZ8nYcHbGdEfMxKs3RtUvWyZaBcDeFgHiJkLmNoPqRsTuVwXyZ12';
 
+  // The chain is asked whether this transaction is theirs. Without that, the
+  // wallet and the signature both arrive from whoever is posting.
+  const onChain = (sig, payer, failed = false) => chain.txs.set(sig, {
+    meta: { err: failed ? { InstructionError: [0, 'Custom'] } : null },
+    transaction: { message: { accountKeys: [{ pubkey: payer }, { pubkey: 'other' }] } }
+  });
+  onChain(SIG, WALLET);
+
   const w = await call(env, 'POST', '/api/reflect/record',
     { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
   eq('a deposit is written down', w.status, 200);
@@ -236,6 +244,7 @@ section('a record of what happened');
   eq('and which way it went', h.body.rows[0].side, 'in');
 
   // A page that retries a record must not double it. The signature is the key.
+  onChain(SIG, WALLET);
   await call(env, 'POST', '/api/reflect/record',
     { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
   const h2 = await call(env, 'GET', '/api/reflect/history?wallet=' + WALLET);
@@ -251,6 +260,52 @@ section('a record of what happened');
 
   const other = await call(env, 'GET', '/api/reflect/history?wallet=' + wallet(2));
   eq('and one wallet cannot see another\'s', other.body.rows.length, 0);
+}
+
+{
+  // Nothing here moves money, but it is read back as somebody's own record and
+  // decides what they are told they have earned. Both the wallet and the
+  // signature arrive from whoever is posting, so without asking the chain,
+  // anybody could write anything into anybody's history.
+  reset(); serving();
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+  const SIG = 'J7rA9kqLm2pQwTvZ8nYcHbGdEfMxKs3RtUvWyZaBcDeFgHiJkLmNoPqRsTuVwXyZ12';
+  const victim = wallet(3);
+
+  // Somebody else's transaction: the victim appears in it but did not sign it.
+  chain.txs.set(SIG, { meta: { err: null },
+    transaction: { message: { accountKeys: [{ pubkey: WALLET }, { pubkey: victim }] } } });
+  const forged = await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: victim, signature: SIG, side: 'in', amount: 999999 } });
+  eq('a row cannot be written into somebody else\'s history', forged.status, 403);
+
+  // A signature that does not exist at all.
+  chain.txs.delete(SIG);
+  const invented = await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
+  eq('nor for a transaction that never happened', invented.status, 403);
+
+  // One that failed on chain is not a deposit either.
+  chain.txs.set(SIG, { meta: { err: { InstructionError: [0, 'Custom'] } },
+    transaction: { message: { accountKeys: [{ pubkey: WALLET }] } } });
+  const failed = await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: WALLET, signature: SIG, side: 'in', amount: 25 } });
+  eq('nor for one that failed', failed.status, 403);
+
+  const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM savings').first();
+  eq('and none of them were written down', rows.n, 0);
+}
+
+{
+  // 1e99 went in happily and came back out as somebody's history.
+  reset(); serving();
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+  chain.txs.set('K7rA9kqLm2pQwTvZ8nYcHbGdEfMxKs3RtUvWyZaBcDeFgHiJkLmNoPqRsTuVwXyZ12',
+    { meta: { err: null }, transaction: { message: { accountKeys: [{ pubkey: WALLET }] } } });
+  const r = await call(env, 'POST', '/api/reflect/record',
+    { body: { wallet: WALLET, signature: 'K7rA9kqLm2pQwTvZ8nYcHbGdEfMxKs3RtUvWyZaBcDeFgHiJkLmNoPqRsTuVwXyZ12',
+              side: 'in', amount: 1e99 } });
+  eq('an amount past the ceiling is refused here too', r.status, 400);
 }
 
 // ── a rate of our own ───────────────────────────────────────────────────────

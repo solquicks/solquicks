@@ -1227,6 +1227,35 @@ function reflectAmount(v) {
   return n;
 }
 
+/// Did this wallet actually sign this transaction? Without asking, the savings
+/// log takes both on trust from whoever posts them — which let anybody write
+/// any amount into any wallet's history, for a signature that need not exist.
+/// Nothing there moves money, but it is read back as somebody's own record and
+/// feeds what they are told they have earned.
+async function signedBy(env, signature, wallet) {
+  if (!env.HELIUS_API_KEY) return false;
+  let data;
+  try {
+    const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 'tx', method: 'getTransaction',
+        params: [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]
+      })
+    });
+    data = await res.json();
+  } catch (e) {
+    return false;
+  }
+  const tx = data && data.result;
+  if (!tx || (tx.meta && tx.meta.err)) return false;
+  const keys = (tx.transaction.message.accountKeys || []).map(function (k) { return k.pubkey || k; });
+  // The fee payer is the first key and always signed. Anything else could be a
+  // wallet that merely appears in somebody else's transaction.
+  return keys[0] === wallet;
+}
+
 async function reflect(env, method, path, body) {
   const init = { method: method, headers: { Accept: 'application/json' } };
   // Reads work without it and are simply rate-limited harder; writes need it.
@@ -4463,8 +4492,16 @@ export default {
         if (!/^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature)) {
           return json(request, env, { error: 'that is not a signature' }, 400);
         }
-        if (!Number.isFinite(amount) || amount <= 0) {
+        // The same ceiling a deposit has. Without one, 1e99 went in happily and
+        // came back out as somebody's history.
+        if (!Number.isFinite(amount) || amount <= 0 || amount > REFLECT_MAX / 1000000) {
           return json(request, env, { error: 'that is not an amount' }, 400);
+        }
+        // And the transaction has to be theirs. The wallet and the signature
+        // both arrive from whoever is posting, so taking them on trust let
+        // anyone write rows into anyone's history.
+        if (!(await signedBy(env, signature, wallet))) {
+          return json(request, env, { error: 'that transaction is not yours' }, 403);
         }
         // The signature is the key, so a page that retries cannot write twice.
         await env.DB.prepare(
