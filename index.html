@@ -3394,6 +3394,16 @@
     // read early, which silently kills the rest of the script.
     var analyticsTimer = null;
 
+    // How many names a leaderboard needs before it shows them rather than
+    // reporting a count. A board of one is not a board — it is the owner
+    // looking at himself.
+    //
+    // ONE constant for every board on the site. There used to be three copies
+    // of this number, which is why the Fox Points board was raised to two on
+    // 2026-10-03 and the swap board stayed hidden anyway, and the staking board
+    // after that. A product rule in three places drifts in three directions.
+    var BOARD_OPENS_AT = 2;
+
     // The server behind every /api call. Declared up here for the same reason:
     // restoring a tab from the address bar loads that tab's data immediately,
     // and a `const` further down the file cannot be read before it runs — which
@@ -7699,14 +7709,12 @@
           'Fox Points: ' + d.prizes.map(function (p, i) { return place[i] + ' ' + p.toLocaleString(); }).join(' · ') +
           ' · at least $' + d.minUsd + ' of swaps to place';
         const list = document.getElementById('sw-board-list');
-        // A board of one or two names reads as nobody is here — and worse, the
-        // one name is usually mine, which reads as nobody but me. The same
-        // treatment the staking board already has: say the number instead, and
-        // open the list once there is a race worth showing.
-        const RACE_NEEDS = 3;
+        // Say the number instead of naming a single wallet, and open the list
+        // once there is a race worth showing.
+        const RACE_NEEDS = BOARD_OPENS_AT;
         list.innerHTML = d.top.length && d.top.length < RACE_NEEDS
           ? '<div class="sw-empty">' + d.top.length + ' wallet' + (d.top.length === 1 ? '' : 's') +
-            ' swapping this week. The board opens up once a few more join — ' +
+            ' swapping this week. The board opens up as soon as somebody else joins — ' +
             '$' + d.minUsd + ' is all it takes to place.</div>'
           : d.top.length ? d.top.map(function (r) {
           const me = Wallet.pubkey && r.wallet === Wallet.pubkey;
@@ -10011,12 +10019,12 @@
           (p.shareOfHolders !== null && p.shareOfHolders !== undefined ? ', by ' + p.shareOfHolders + '% of holders' : '')
         : '');
       const list = document.getElementById('an-stakers');
-      // a leaderboard of one or two names reads as nobody is here; say the number instead
+      // Same rule as every other board on the site; see BOARD_OPENS_AT.
       list.innerHTML = (p.top || []).length === 0
         ? '<div class="an-empty">Nobody has locked a Ranger yet. Be first.</div>'
-        : (p.top || []).length < 3
+        : (p.top || []).length < BOARD_OPENS_AT
         ? '<div class="an-empty">' + (p.stakingWallets || 0) + ' wallet' + ((p.stakingWallets || 0) === 1 ? '' : 's') +
-          ' staking so far. The list opens up once a few more join.</div>'
+          ' staking so far. The list opens up as soon as somebody else joins.</div>'
         : p.top.map(function (r, i) {
             return '<div class="an-row"><span class="an-pos">' + (i + 1) + '</span>' +
               '<span class="an-who">' + escapeHtml(shortWallet(r.wallet)) + '</span>' +
@@ -10925,14 +10933,11 @@
 
       rows.sort(function (a, b) { return b.points - a.points; });
 
-      // A board of one is not a board — it is the owner looking at himself, and
-      // the swap and staking boards say the number instead for that reason.
-      //
       // This used to need three, written when both entries on it were the
       // owner's own wallets. That is no longer true: two different people
       // earning is a race, and hiding it tells the second one their points did
-      // not count. Two is the floor now.
-      const RACE_NEEDS = 2;
+      // not count.
+      const RACE_NEEDS = BOARD_OPENS_AT;
       const others = rows.filter(function (r) { return !r.me; }).length;
       if (rows.length && rows.length < RACE_NEEDS) {
         el.innerHTML = '<div class="lb-log-empty">' +

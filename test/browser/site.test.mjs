@@ -59,7 +59,9 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
-  quoteFail: 0, siteDelay: 0, boardThin: true, players: 2, bundlesDown: false,
+  // How many wallets the swap board is told about. The old switch was a
+  // boolean giving 1 or 3, so two — the threshold itself — was untestable.
+  quoteFail: 0, siteDelay: 0, boardSize: 1, players: 2, bundlesDown: false,
   reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
   reflectMeasured: false, savings: [],
   // what the connected wallet holds, by mint
@@ -133,9 +135,8 @@ function workerAnswer(p, url, body) {
     return {
       weekStart: Date.now() - 3 * 86400000, weekEnd: Date.now() + 4 * 86400000,
       prizes: [500, 250, 100], minUsd: 25,
-      top: net.boardThin ? many.slice(0, 1) : many,
-      lastWeek: net.boardThin ? [{ rank: 1, wallet: WALLET }]
-        : many.map((r) => ({ rank: r.rank, wallet: r.wallet }))
+      top: many.slice(0, net.boardSize),
+      lastWeek: many.slice(0, net.boardSize).map((r) => ({ rank: r.rank, wallet: r.wallet }))
     };
   }
   // a pair with no fee account on either side: the fee is a SOL payment
@@ -719,7 +720,7 @@ const page = await context.newPage();
 // the page, which is where loadInvite runs.
 await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
 await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
-await page.exposeFunction('net_boardThin', (v) => { net.boardThin = v; return v; });
+await page.exposeFunction('net_board_size', (n) => { net.boardSize = n; return n; });
 await page.exposeFunction('net_players', (n) => { net.players = n; return n; });
 await page.exposeFunction('net_bundles_down', (v) => { net.bundlesDown = !!v; return v; });
 await page.exposeFunction('net_invite', () => net.invite);
@@ -1541,7 +1542,23 @@ try {
       thin.prizes.indexOf('Fox Points') < thin.prizes.indexOf('500'), thin.prizes);
 
     // Once there is a real race, the names are the point.
-    await page.evaluate(() => { net_boardThin(false); return loadSwapLeaderboard(); });
+    // TWO is the case that was broken: the board stayed a count while a second
+    // wallet was genuinely swapping, which tells that wallet it does not count.
+    // Untestable before, because the mock only ever served one or three.
+    await page.evaluate(() => { net_board_size(2); return loadSwapLeaderboard(); });
+    await page.waitForFunction(() => document.querySelectorAll('#sw-board-list .sw-hrow').length === 2,
+      null, { timeout: 10000 });
+    const two = await page.evaluate(() => ({
+      rows: document.querySelectorAll('#sw-board-list .sw-hrow').length,
+      list: document.getElementById('sw-board-list').textContent.replace(/\s+/g, ' ').trim(),
+      last: document.getElementById('sw-board-last').textContent.trim()
+    }));
+    eq('two swappers are both named', two.rows, 2);
+    ok('and not hidden behind a count', !/wallets swapping this week/.test(two.list), two.list);
+    ok('last week is named at two as well', /Last week: 1st/.test(two.last), two.last);
+
+    // Once there is a real race, the names are the point.
+    await page.evaluate(() => { net_board_size(3); return loadSwapLeaderboard(); });
     await page.waitForFunction(() => document.querySelectorAll('#sw-board-list .sw-hrow').length === 3,
       null, { timeout: 10000 });
     const full = await page.evaluate(() => ({
@@ -1550,7 +1567,16 @@ try {
     }));
     eq('three swappers are listed by name', full.rows, 3);
     ok('and last week is named too', /Last week: 1st/.test(full.last), full.last);
-    await page.evaluate(() => { net_boardThin(true); return loadSwapLeaderboard(); });
+
+    // Every board on the site opens at the same count, from one constant.
+    // Three copies of this number is how the swap board stayed hidden after
+    // the Fox Points board was fixed.
+    eq('the threshold is shared, not copied',
+      await page.evaluate(() => BOARD_OPENS_AT), 2);
+    eq('and only one place names a number',
+      await page.evaluate(() => typeof BOARD_OPENS_AT), 'number');
+
+    await page.evaluate(() => { net_board_size(1); return loadSwapLeaderboard(); });
   }
 
   section('swap: being busy does not become "No route"');
