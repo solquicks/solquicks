@@ -1333,3 +1333,54 @@ owns the days it is on rather than an hour of them.
   reads `bkPacks`, declared 5,900 lines later. As `let` that throws in its dead
   zone and silently kills the rest of the script; it is `var`, like `bkData`
   beside it, for exactly that reason.
+
+## Where this stands — end of 2026-10-03
+
+Read this first in a new session. Everything below is deployed and verified
+against production, not just committed.
+
+**Live and confirmed:**
+- Worker `bundles-calendar-2`, `/api/health` ok. Both migrations run; 40 tables,
+  `node worker/test/schema-live.mjs` reports all present (it checks columns too
+  now, not only tables).
+- Prices correct in production: consult 150, space 300, stream 400, podcast 500,
+  custom 250, mc 1500. The collectible discount is gone — Rangers only, 30%.
+- Bundles live, all 10. Podcast 4-pack $1,500 ($375 each), 10-pack $3,250
+  ($325 each). Ranger discount stacks on top, deepest case 54% off list, which
+  the owner chose deliberately on 2026-10-03.
+- Every leaderboard opens at two names, from one `BOARD_OPENS_AT` in index.html.
+- CI green on 7246a23, all six checks.
+
+**Built but switched off:** Google Calendar. Needs `GCAL_CLIENT_EMAIL`,
+`GCAL_PRIVATE_KEY`, `GCAL_CALENDAR_ID` — only the owner can create them. See
+`docs/google-calendar.md`. `/api/health` reports `calendar: "off"` until then,
+and `/api/admin/calendar/test` names which of the three setup steps failed.
+
+**Designed, not built:** creator-minted collectibles, in
+`docs/creator-collectibles-design.md`. The important finding there: creator
+payments take **no platform cut at all** today. `LAUNCH_PLATFORM_PCT = 1` is a
+share of a launched token, not of transactions, and has never moved a dollar.
+`verifyInvoice` demands the full invoice to one wallet, so a 99/1 split is
+refused as underpaid. The 1% is a new mechanism, and the risky part is changing
+a function every paid route depends on.
+
+**Workers Builds is NOT broken.** It reports success. Earlier notes called it
+red on every PR; that was only ever non-main branches, and it is not a required
+check. Nothing to fix.
+
+**Two lessons worth keeping:**
+- A changed Worker must bump `BUILD`, now enforced by
+  `worker/test/build-bumped.mjs` in CI. Two October commits changed prices
+  without bumping it, were never deployed, and `/api/health` reported a match
+  because the constant was identical on both sides — so a stale deploy and a
+  current one were indistinguishable by the check meant to tell them apart.
+- The secret scan refuses a literal private-key header anywhere in the tree,
+  including in documentation and in parsing code. It is right to. Write PEM
+  markers with a gap, and strip them with a general pattern.
+
+**Open, in rough priority order:**
+- [ ] Google Calendar settings (above).
+- [ ] Referral `youGet` lines describe what joining gives you; no signup bonuses
+      were invented, because only the referral dashboards know whether any
+      exist. Three more links wanted to reach ten.
+- [ ] Hackathon submission is due 12 Oct 2026.
