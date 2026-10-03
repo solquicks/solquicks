@@ -1240,3 +1240,96 @@ stands on what is live and working: the swap and its fees, bookings, the
 advertising slot, the collectible, Fox Points, Moon Rangers, wallet cleanup,
 Savings, the referral links, and the Creator Launchpad. None of those are
 waiting on money.
+
+## Bundles, the calendar, and the MC cap — 2026-10-03
+
+Shipped on `feat/bookings-bundles-calendar-03-10-2026`.
+
+### Bundles
+
+Several of the same session, bought at once and cheaper each. Two timings,
+chosen at checkout and otherwise identical: pick every time up front, or buy the
+credits and book as you go. A credit redeems into an ordinary `bookings` row at
+zero, so a bundle session and a single session are the same thing on the
+calendar and in the diary.
+
+**The price ladder is derived, not typed.** `BUNDLE_TIERS` is one list —
+4 sessions at 25% off, 10 at 35% — and every bundle is generated from it:
+
+| | 4-pack | each | 10-pack | each |
+|---|---|---|---|---|
+| X Space ($300) | $900 | $225 | $1,950 | $195 |
+| Podcast ($500) | $1,500 | $375 | $3,250 | $325 |
+| Stream ($400) | $1,200 | $300 | $2,600 | $260 |
+| Custom ($250) | $750 | $187.50 | $1,625 | $162.50 |
+| Consulting ($150) | $450 | $112.50 | $975 | $97.50 |
+
+The old card had the podcast 4-pack at $1,500 ($375 each) and the 10-pack at
+$4,000 — **$400 each**, so the bigger commitment carried the smaller discount.
+Nothing was broken; the two numbers had been typed independently. Deriving both
+from one ladder makes that arithmetic impossible, and `test/bundle.test.mjs`
+asserts the invariant rather than the prices: more sessions must never cost more
+each. Reintroducing the old 20% ten-pack fails 11 assertions.
+
+**A Ranger discount stacks on top**, because the site promises "hold any Moon
+Ranger and 30% comes off" without exceptions and carving bundles out of that
+would be worse than the discount being generous. The deepest combination on the
+site is now **54% off list** (a Ranger buying 10 consulting hours at $68.25
+each). That is asserted with a 60% ceiling, so it is a decision rather than a
+surprise — if it is too much, change `BUNDLE_TIERS` or carve bundles out.
+
+MC is not bundled: `bundleableTypes()` excludes `mode: 'enquiry'`, so it is
+excluded by construction rather than by a flag somebody has to remember.
+
+### Google Calendar
+
+A paid booking is written to the fox's Google Calendar, which is the calendar
+Calendly checks for conflicts — so a session sold here takes itself out of
+Calendly's availability. One calendar, two writers, no integration between them.
+
+Service account rather than OAuth: no consent screen, nothing to re-authorise.
+Full setup in `docs/google-calendar.md`. Unset means bookings never reach a
+calendar and nothing else changes; `/api/health` reports `calendar: "off"`.
+
+A calendar write **never** fails a payment. Every failure is logged under
+`calendar.sync` and swallowed — a paid booking missing from the calendar is a
+minute's work, a payment refused because Google was slow is a lost sale.
+
+`/api/admin/calendar/test` proves the whole chain in one call and names which of
+the three steps failed, because "key will not parse", "API not enabled" and
+"calendar not shared" all look identical from outside.
+
+### MC or speaking
+
+Flat $1,500, all-in. Flights and accommodation are the fox's own to arrange and
+pay for, so there is nothing to itemise afterwards. **Capped at a 2-day
+appearance** (`MC_MAX_DAYS`), stated in a note under the card rather than as a
+ticked inclusion — a limit rendered as something you get is misleading. Goes on
+the calendar as an **all-day event spanning both days**, because an appearance
+owns the days it is on rather than an hour of them.
+
+### Still to do
+
+- [ ] **Three production migrations.** `worker/test/schema-live.mjs` prints the
+      exact commands. Until they run, bundles answer 500.
+- [ ] **Decide on the 54% Ranger-plus-bundle floor.** Shipped as-is; the test
+      documents it as a decision, not an accident.
+- [ ] Google Calendar needs three settings only the owner can create — see
+      `docs/google-calendar.md`.
+
+### Noticed while doing this
+
+- **`reflect.test.mjs` was never in CI.** Written with the Savings tab and run
+  only when somebody remembered. Added, along with `bundle.test.mjs`.
+- **`schema-live.mjs` only compared tables, not columns.** `bookings.bundle_ref`
+  is a new column on an existing table, which it called a pass. It now compares
+  columns too and prints the `ALTER TABLE` for each gap.
+- **Creator payments take no platform cut at all.** `LAUNCH_PLATFORM_PCT = 1` is
+  a share of a launched token, not of transactions, and has never moved a
+  dollar. `verifyInvoice` demands the full invoice to one wallet, so a 99/1
+  split would be refused as underpaid. The 1% on creator collectibles is a new
+  mechanism, not a constant — designed in `docs/creator-collectibles-design.md`.
+- **The dead-zone trap, caught before it bit a fifth time.** `switchTab` now
+  reads `bkPacks`, declared 5,900 lines later. As `let` that throws in its dead
+  zone and silently kills the rest of the script; it is `var`, like `bkData`
+  beside it, for exactly that reason.

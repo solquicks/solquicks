@@ -92,7 +92,9 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL,
   hold_until INTEGER,
   name TEXT, contact TEXT, brief TEXT,
-  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT, details TEXT, site_slug TEXT);
+  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT, details TEXT, site_slug TEXT,
+  -- set when this session was redeemed from a bundle rather than bought on its own
+  bundle_ref TEXT);
 
 -- A basket paid for in one go. The bookings and ad runs inside it each hold
 -- their own slot from the moment they are added; this row only carries the
@@ -235,3 +237,36 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 CREATE INDEX IF NOT EXISTS idx_sites_wallet ON sites(wallet);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_domain ON sites(domain) WHERE domain IS NOT NULL;
+
+-- A bundle of sessions, bought at once and cheaper per session. The money
+-- lives here; each session redeemed from it is an ordinary row in `bookings`
+-- with bundle_ref pointing back, priced at zero because it is already paid.
+-- Credits are counted from those rows, never stored, so a tally cannot drift.
+CREATE TABLE IF NOT EXISTS bundles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref TEXT NOT NULL UNIQUE,
+  wallet TEXT,
+  bundle_id TEXT NOT NULL,
+  type_id TEXT NOT NULL,
+  qty INTEGER NOT NULL,
+  base_usd REAL NOT NULL,
+  discount_pct INTEGER NOT NULL DEFAULT 0,
+  total_usd REAL NOT NULL,
+  signature TEXT,
+  status TEXT NOT NULL,
+  hold_until INTEGER,
+  -- starts counting from the day it is paid for, not the day it is bought
+  expires_at INTEGER,
+  name TEXT, contact TEXT, brief TEXT,
+  created_at INTEGER NOT NULL, paid_at INTEGER, reference TEXT, group_ref TEXT, site_slug TEXT,
+  -- never reserves time of its own; here so the settle statement binds alike
+  starts_at INTEGER);
+CREATE INDEX IF NOT EXISTS bundles_status ON bundles(status);
+CREATE INDEX IF NOT EXISTS bookings_bundle ON bookings(bundle_ref);
+
+-- Which Google Calendar event stands for which booking. Keyed by the booking
+-- so a settle that runs twice updates one event instead of creating a second.
+CREATE TABLE IF NOT EXISTS calendar_events (
+  booking_ref TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  synced_at INTEGER NOT NULL);

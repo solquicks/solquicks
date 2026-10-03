@@ -1,5 +1,5 @@
 {
-  "note": "Platforms solquicks uses and gets a referral credit from. Each entry needs a logo in img/referrals/, what the platform does, and what the visitor gets for using the link. The Referrals tab does not appear at all while items is empty.",
+  "note": "Platforms solquicks uses and gets a referral credit from. Each entry needs a logo in img/referrals/, what the platform does, and what the visitor gets for using the link. `youGet` is a promise to the reader: say what joining actually gives them, never a signup bonus unless the referral dashboard confirms one exists. The Referrals tab does not appear at all while items is empty.",
   "items": [
     {
       "name": "Superteam Talent",
@@ -15,6 +15,7 @@
       "tag": "Bitcoin",
       "url": "https://satrush.io/r/solquicks",
       "what": "Bitcoin mining you take part in by depositing, rather than by running hardware.",
+      "youGet": "A share of a mining operation without buying, powering or cooling a single machine.",
       "logo": "img/partners/sat-rush.jpg"
     },
     {
@@ -22,6 +23,7 @@
       "tag": "Liquidity",
       "url": "https://app.meteora.ag/ref/HHZQDEP7YA",
       "what": "Liquidity pools on Solana. Put a pair to work and earn a share of what trades through it.",
+      "youGet": "Your pair earning a cut of everything that trades through it, with the pool types and fee settings laid out rather than hidden.",
       "logo": "img/referrals/meteora.jpg"
     },
     {
@@ -29,6 +31,7 @@
       "tag": "Staking",
       "url": "https://sanctum.so/app/r/HNW19G",
       "what": "Liquid staking on Solana. Stake SOL for the yield and keep a token you can still use elsewhere.",
+      "youGet": "Staking yield on your SOL while keeping a token you can still lend, trade or supply elsewhere.",
       "logo": "img/referrals/sanctum.jpg"
     },
     {
@@ -36,6 +39,7 @@
       "tag": "Swap",
       "url": "https://titan.exchange/solquicks",
       "what": "A Solana swap router — the one whose routing is coming to the swap on this site.",
+      "youGet": "Routing across Solana venues at once, so a trade is filled at the best price any of them offers.",
       "logo": "img/partners/titan.jpg"
     },
     {
@@ -43,6 +47,7 @@
       "tag": "Trading",
       "url": "https://fomo.family/r/quicks",
       "what": "Social trading. Follow what the better traders are buying, and trade it in seconds.",
+      "youGet": "The positions good traders are actually taking, and the same trade in a couple of taps.",
       "logo": "img/referrals/fomo.jpg"
     },
     {
@@ -50,6 +55,7 @@
       "tag": "Gacha",
       "url": "https://www.junglefun.io/gacha?r=AE-sDf11g9YyE5o7Js1GDR1SPDo7nE14j3xlN2DjtNxG",
       "what": "Gacha packs of Solana NFTs, built by MonkeDAO and MagicBlock. Open a pack, see what you pull.",
+      "youGet": "Packs you open yourself, with the odds published up front and the pulls yours to keep, sell or trade.",
       "logo": "img/referrals/junglefun.jpg"
     }
   ]

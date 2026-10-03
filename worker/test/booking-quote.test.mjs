@@ -35,6 +35,7 @@ const {
   HOLDER_DISCOUNT_PCT
 } = new Function(`
     ${lift('USDC_DECIMALS', 'line')}
+    ${lift('MC_MAX_DAYS', 'line')}
     ${lift('RUSH_HOURS', 'line')}
     ${lift('RUSH_PCT', 'line')}
     ${lift('HOLDER_DISCOUNT_PCT', 'line')}

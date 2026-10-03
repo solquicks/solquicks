@@ -362,11 +362,16 @@ const RATE_RULES = [
   { match: ['/api/analytics/wallet'], name: 'lookup', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/booking/types', '/api/booking/slots', '/api/booking/lookup'], name: 'bookread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/bundle/types', '/api/bundle/lookup'], name: 'bundleread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/bundle/hold', '/api/bundle/confirm'], name: 'bundlewrite', by: 'ip', limit: 12, windowMs: 60000 },
+  // Spending a credit costs the caller nothing, so a reference worth guessing
+  // at is the risk here rather than the money — kept deliberately tight.
+  { match: ['/api/bundle/redeem'], name: 'bundleredeem', by: 'ip', limit: 10, windowMs: 60000 },
   { match: ['/api/booking/brief'], name: 'bookbrief', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/cart/checkout', '/api/cart/confirm'], name: 'cartwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/cart/watch'], name: 'cartwatch', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/banner/rates', '/api/banner/live'], name: 'adread', by: 'ip', limit: 60, windowMs: 60000 },
-  { match: ['/api/booking/watch', '/api/banner/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
+  { match: ['/api/booking/watch', '/api/banner/watch', '/api/bundle/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top', '/api/swap/traded'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
@@ -544,6 +549,12 @@ async function healthCheck(env) {
     if (detail.errorsLastHour > 25) ok = false;
   } catch (e) { /* already covered by the db check */ }
 
+  // Reported but never fails the check: bookings work perfectly well without a
+  // calendar, they just do not appear on one. Worth seeing at a glance, because
+  // "the booking never reached my calendar" and "the calendar is not set up"
+  // look identical from outside.
+  detail.calendar = gcalConfigured(env) ? 'configured' : 'off';
+
   return { ok, detail };
 }
 
@@ -554,7 +565,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'health-settings-1';
+const BUILD = 'bundles-calendar-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2523,6 +2534,11 @@ async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury)
 //   enquiry — in-person work, travel included. Date and venue get agreed first, so
 //             nobody pays before there is something to pay for.
 
+// An MC booking is a flat fee for an appearance of up to this many days, and
+// it takes those days off the calendar whole. Longer than this is a different
+// job priced differently, not a multiple of this one.
+const MC_MAX_DAYS = 2;
+
 const RUSH_HOURS = 48;
 const RUSH_PCT = 50;
 const HOLDER_DISCOUNT_PCT = 30;
@@ -2625,13 +2641,25 @@ const BOOKING_TYPES = [
     ]
   },
   {
+    // A flat fee, not a quote. Flights and accommodation are mine to arrange
+    // and mine to pay for, so there is nothing to itemise afterwards and no
+    // expenses conversation — the number on the card is the number.
     id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1500,
+    // Blocks whole days rather than an hour: an appearance owns the day it is
+    // on, and anything else booked around it would be a double commitment.
+    allDay: true, days: MC_MAX_DAYS,
+    meta: 'In person · up to ' + MC_MAX_DAYS + ' days · flights and stay are on me',
     blurb: 'I MC your event, speak on stage, or host a fireside chat.',
     includes: [
       'MCing, speaking slots and fireside chats',
-      'My travel is included in the fee',
+      'Every service I offer, for the whole appearance',
+      'My flights and accommodation — I arrange and pay for both',
       'Date and venue agreed before anything is paid'
-    ]
+    ],
+    // Rendered under the card, because it is a limit rather than an inclusion
+    // and reading it as a tick next to what you get would be misleading.
+    note: 'Covers an appearance of up to ' + MC_MAX_DAYS + ' days. Anything longer needs its ' +
+      'own package — get in touch and we will put one together.'
   }
 ];
 
@@ -3101,6 +3129,19 @@ const CHECKOUTS = {
       return '🧺 Basket paid ' + g.ref + ' — $' + g.total_usd + '\n' + g.name + ' · ' + g.contact;
     }
   },
+  // Credits, not an hour. Sessions scheduled up front each hold their own
+  // time the moment they are written, so the bundle itself reserves nothing
+  // and can never overlap anything — same shape as a basket.
+  bundle: {
+    table: 'bundles',
+    purpose: 'bundle:',
+    overlap: 'SELECT 1 WHERE 0 AND ? IS NOT NULL AND ? IS NOT NULL',
+    endOf: function () { return null; },
+    bookedAlert: function (b) {
+      return '🎟️ Bundle paid ' + b.ref + ' — ' + b.qty + '× ' + b.type_id +
+        ' — $' + b.total_usd + '\n' + b.name + ' · ' + b.contact;
+    }
+  },
   banner: {
     table: 'banner_bookings',
     purpose: 'banner:',
@@ -3204,12 +3245,30 @@ async function markCartPaid(env, ref, signature) {
   }
 }
 
+/// A paid bundle turns its held sessions into confirmed ones — they have
+/// nothing left to pay. Done after the bundle row is marked, never before: if
+/// this fails halfway the money is already recorded against the bundle and the
+/// sweep finishes the job.
+async function markBundlePaid(env, ref, signature) {
+  const now = Date.now();
+  await env.DB.prepare(
+    "UPDATE bookings SET status = 'confirmed', paid_at = ?, hold_until = NULL " +
+    "WHERE bundle_ref = ? AND status IN ('held','expired')"
+  ).bind(now, ref).run();
+  await env.DB.prepare(
+    'UPDATE bundles SET expires_at = ? WHERE ref = ? AND expires_at IS NULL'
+  ).bind(now + BUNDLE_VALID_DAYS * 86400000, ref).run();
+  for (const b of await bundleSessions(env, ref)) {
+    if (b.startsAt) await calendarSync(env, 'booking', b.ref);
+  }
+}
+
 /// The payment page only watches while it is open. This finds payments made
 /// after it closed — or after it stopped looking — so "the payment is still
 /// found" is true. Runs from the scheduled handler.
 async function reconcilePayments(env) {
   if (!env.TREASURY_WALLET || !env.HELIUS_API_KEY) return;
-  for (const kind of [CHECKOUTS.booking, CHECKOUTS.banner, CHECKOUTS.cart]) {
+  for (const kind of [CHECKOUTS.booking, CHECKOUTS.banner, CHECKOUTS.cart, CHECKOUTS.bundle]) {
     const rows = await env.DB.prepare(
       'SELECT * FROM ' + kind.table + " WHERE status IN ('held','expired') AND reference IS NOT NULL " +
       'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
@@ -3221,6 +3280,8 @@ async function reconcilePayments(env) {
       // A basket found this way has to pass the payment on to its lines, the
       // same as when the page confirms it.
       if (kind === CHECKOUTS.cart && settled.status === 'paid') await markCartPaid(env, b.ref, sig);
+      if (kind === CHECKOUTS.bundle && settled.status === 'paid') await markBundlePaid(env, b.ref, sig);
+      if (kind === CHECKOUTS.booking && settled.status === 'paid') await calendarSync(env, 'booking', b.ref);
     }
   }
 }
@@ -3256,6 +3317,384 @@ function bookingRef() {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   for (const b of bytes) out += s[b % s.length];
   return out;
+}
+
+
+// ── GOOGLE CALENDAR ─────────────────────────────────────────────────────────
+// Every confirmed booking is written to the fox's own Google Calendar, which is
+// the calendar Calendly checks for conflicts — so a session sold here takes
+// itself off the Calendly availability without anything syncing the two
+// directly. One calendar, two writers.
+//
+// Authentication is a SERVICE ACCOUNT, not OAuth. There is no consent screen,
+// no refresh token to go stale, and nothing to re-authorise six months from
+// now: the Worker signs a JWT with the service account's key and exchanges it
+// for a one-hour access token. The calendar is shared with the service
+// account's address, the same way a calendar is shared with a colleague.
+//
+// Writing to the calendar must NEVER fail a payment. A booking that is paid for
+// and missing from the calendar is a scheduling problem somebody can fix in a
+// minute; a payment refused because Google was slow is money turned away. So
+// every failure here is logged and swallowed.
+
+const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+const GCAL_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GCAL_API = 'https://www.googleapis.com/calendar/v3';
+
+function gcalConfigured(env) {
+  return !!(env.GCAL_CLIENT_EMAIL && env.GCAL_PRIVATE_KEY && env.GCAL_CALENDAR_ID);
+}
+
+function b64url(bytes) {
+  let bin = '';
+  for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/// A service-account key arrives as PEM. Secrets set from a shell routinely
+/// carry the newlines as a literal backslash-n, so both forms are accepted —
+/// getting this wrong produces an "invalid key" that looks like a wrong key.
+function pemToPkcs8(pem) {
+  const body = String(pem)
+    .replace(/\\n/g, '\n')
+    .replace(/-----BEGIN PRIVATE KEY-----/, '')
+    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/\s+/g, '');
+  const raw = atob(body);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/// A one-hour access token, fetched fresh each time it is needed.
+///
+/// Deliberately NOT cached. Confirmed bookings happen a handful of times a day,
+/// so caching would save one request and in exchange would keep a live bearer
+/// token sitting in the database between uses. Signing a JWT is local work; the
+/// only cost is a single round trip to Google on a path that is already waiting
+/// on Google anyway.
+async function gcalToken(env) {
+  const iat = Math.floor(Date.now() / 1000);
+  const claims = {
+    iss: env.GCAL_CLIENT_EMAIL,
+    scope: GCAL_SCOPE,
+    aud: GCAL_TOKEN_URL,
+    iat: iat,
+    exp: iat + 3600
+  };
+  const enc = new TextEncoder();
+  const unsigned = b64url(enc.encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))) +
+    '.' + b64url(enc.encode(JSON.stringify(claims)));
+
+  const key = await crypto.subtle.importKey(
+    'pkcs8', pemToPkcs8(env.GCAL_PRIVATE_KEY),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, enc.encode(unsigned));
+  const jwt = unsigned + '.' + b64url(sig);
+
+  const res = await fetch(GCAL_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=' + encodeURIComponent(jwt)
+  });
+  const d = await res.json().catch(function () { return null; });
+  if (!res.ok || !d || !d.access_token) {
+    throw new Error('calendar auth failed: ' + ((d && (d.error_description || d.error)) || res.status));
+  }
+  return d.access_token;
+}
+
+/// The date in the fox's own timezone, as Google wants it for an all-day
+/// event: YYYY-MM-DD with no time and no zone.
+function gcalDate(ts) {
+  const off = tzOffsetMinutes(ts);
+  return new Date(ts + off * 60000).toISOString().slice(0, 10);
+}
+
+/// What a booking looks like on the calendar. An MC appearance owns whole days
+/// rather than an hour — it is an all-day event spanning its cap, because
+/// anything else accepted on those days would be a double commitment.
+function gcalEvent(row, type) {
+  const title = (type ? type.name : row.type_id) + ' — ' + (row.name || 'booked on solquicks.com');
+  const lines = [
+    'Booked through solquicks.com',
+    'Reference: ' + row.ref,
+    'Contact: ' + (row.contact || 'not given')
+  ];
+  if (row.bundle_ref) lines.push('Part of bundle ' + row.bundle_ref);
+  lines.push(row.total_usd > 0 ? 'Paid: $' + row.total_usd : 'Paid for inside a bundle');
+  if (row.brief) lines.push('', 'Brief:', row.brief);
+
+  const ev = {
+    summary: title,
+    description: lines.join('\n'),
+    // So an event this Worker wrote can always be told from one added by hand
+    source: { title: 'solquicks.com', url: 'https://solquicks.com/#book' }
+  };
+
+  if (type && type.allDay) {
+    // end is exclusive in Google's all-day format, so a two-day appearance
+    // ends on the third date.
+    const days = type.days || 1;
+    ev.start = { date: gcalDate(row.starts_at) };
+    ev.end = { date: gcalDate(row.starts_at + days * 86400000) };
+    ev.transparency = 'opaque';
+    ev.description += '\n\nUp to ' + days + ' days. Longer needs its own package.';
+  } else {
+    const mins = row.minutes || 60;
+    ev.start = { dateTime: new Date(row.starts_at).toISOString(), timeZone: BOOKING_TZ };
+    ev.end = { dateTime: new Date(row.starts_at + mins * 60000).toISOString(), timeZone: BOOKING_TZ };
+  }
+  return ev;
+}
+
+/// Puts a booking on the calendar, or updates the event already there. Keyed by
+/// the booking's reference so running twice cannot produce two events — which
+/// matters, because the payment page, the wallet and the scheduled sweep can
+/// each settle the same booking.
+///
+/// Returns a short status rather than throwing: callers are payment paths, and
+/// none of them should care whether Google answered.
+async function calendarSync(env, kindName, ref) {
+  if (!gcalConfigured(env)) return { ok: false, skipped: 'not configured' };
+  try {
+    const row = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
+    if (!row || !row.starts_at) return { ok: false, skipped: 'nothing to schedule' };
+    if (row.status !== 'paid' && row.status !== 'confirmed') return { ok: false, skipped: row.status };
+
+    const type = bookingType(row.type_id);
+    const body = gcalEvent(row, type);
+    const token = await gcalToken(env);
+    const cal = encodeURIComponent(env.GCAL_CALENDAR_ID);
+
+    const existing = await env.DB.prepare(
+      'SELECT event_id FROM calendar_events WHERE booking_ref = ?'
+    ).bind(ref).first();
+
+    const url = existing && existing.event_id
+      ? GCAL_API + '/calendars/' + cal + '/events/' + encodeURIComponent(existing.event_id)
+      : GCAL_API + '/calendars/' + cal + '/events';
+    const res = await fetch(url, {
+      method: existing && existing.event_id ? 'PATCH' : 'POST',
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await res.json().catch(function () { return null; });
+    if (!res.ok || !d || !d.id) {
+      throw new Error('calendar write failed: ' + (d && d.error && d.error.message || res.status));
+    }
+    await env.DB.prepare(
+      'INSERT INTO calendar_events (booking_ref, event_id, synced_at) VALUES (?, ?, ?) ' +
+      'ON CONFLICT(booking_ref) DO UPDATE SET event_id = excluded.event_id, synced_at = excluded.synced_at'
+    ).bind(ref, d.id, Date.now()).run();
+    return { ok: true, eventId: d.id, link: d.htmlLink || null };
+  } catch (e) {
+    // Logged, never raised. See the note at the top of this section.
+    await logError(env, 'calendar.sync', (e && e.message) || String(e));
+    return { ok: false, error: (e && e.message) || 'calendar write failed' };
+  }
+}
+
+/// Takes a booking off the calendar — a cancellation or a refund. Same
+/// swallow-everything contract as the write.
+async function calendarRemove(env, ref) {
+  if (!gcalConfigured(env)) return { ok: false, skipped: 'not configured' };
+  try {
+    const existing = await env.DB.prepare(
+      'SELECT event_id FROM calendar_events WHERE booking_ref = ?'
+    ).bind(ref).first();
+    if (!existing || !existing.event_id) return { ok: false, skipped: 'never scheduled' };
+    const token = await gcalToken(env);
+    const res = await fetch(
+      GCAL_API + '/calendars/' + encodeURIComponent(env.GCAL_CALENDAR_ID) +
+      '/events/' + encodeURIComponent(existing.event_id),
+      { method: 'DELETE', headers: { authorization: 'Bearer ' + token } });
+    // 410 means it is already gone, which is the outcome being asked for.
+    if (!res.ok && res.status !== 404 && res.status !== 410) {
+      throw new Error('calendar delete failed: ' + res.status);
+    }
+    await env.DB.prepare('DELETE FROM calendar_events WHERE booking_ref = ?').bind(ref).run();
+    return { ok: true };
+  } catch (e) {
+    await logError(env, 'calendar.remove', (e && e.message) || String(e));
+    return { ok: false, error: (e && e.message) || 'calendar delete failed' };
+  }
+}
+
+
+// ── BUNDLES ─────────────────────────────────────────────────────────────────
+// Buying several of the same session at once, cheaper per session. A bundle is
+// bought like any other item on the rate card; what it buys is credits, and a
+// credit is redeemed into an ordinary booking that holds its own hour.
+//
+// Prices are DERIVED, never written down twice. The first cut of this had the
+// four-pack at $1,500 ($375 each) and the ten-pack at $4,000 ($400 each) — the
+// bigger commitment carrying the smaller discount, which reads as a mistake to
+// anybody who divides. Generating both from one ladder makes that arithmetic
+// impossible to get wrong, and test/bundle.test.mjs asserts it stays that way.
+const BUNDLE_TIERS = [
+  { qty: 4, pct: 25 },
+  { qty: 10, pct: 35 }
+];
+
+// Credits are not a deposit and they are not a season ticket — they expire, so
+// the obligation they create does not sit open forever.
+const BUNDLE_VALID_DAYS = 365;
+
+// A bundle reserves no hour of its own, so this is only how long the buyer has
+// to pay once they have committed. Sessions scheduled up front hold their own
+// hours for the same window.
+const BUNDLE_HOLD_MINUTES = HOLD_MINUTES;
+
+/// Which sessions can be bought several at a time. An enquiry is priced per
+/// engagement and agreed before anything is paid, so there is nothing to
+/// pre-buy — which is also why MC is not in here, by construction rather than
+/// by a flag somebody has to remember to set.
+function bundleableTypes() {
+  return BOOKING_TYPES.filter(function (t) { return t.mode !== 'enquiry'; });
+}
+
+/// Every bundle on offer: each bundleable session at each tier.
+function bundleList() {
+  const out = [];
+  for (const t of bundleableTypes()) {
+    for (const tier of BUNDLE_TIERS) {
+      const full = t.price * tier.qty;
+      const price = Math.round(full * (1 - tier.pct / 100));
+      out.push({
+        id: t.id + '-' + tier.qty,
+        typeId: t.id,
+        name: tier.qty + '× ' + t.name,
+        qty: tier.qty,
+        minutes: t.minutes,
+        mode: t.mode,
+        unitPrice: t.price,
+        // what the same sessions cost bought one at a time
+        fullPrice: full,
+        price: price,
+        bundlePct: tier.pct,
+        perSession: price / tier.qty,
+        saves: full - price,
+        validDays: BUNDLE_VALID_DAYS
+      });
+    }
+  }
+  return out;
+}
+
+const BUNDLE_POLICY = {
+  credits: 'A bundle buys credits, not fixed dates. Book them all now if you want the ' +
+    'times locked in, or keep them and book as you go.',
+  expiry: 'Credits last ' + BUNDLE_VALID_DAYS + ' days from the day the bundle is paid for.',
+  holder: 'Hold any Moon Ranger and ' + HOLDER_DISCOUNT_PCT + '% comes off the bundle too.',
+  rush: 'No rush fee on a bundle credit, whenever you book it.',
+  transfer: 'Credits are tied to the reference, not to a wallet — pass the reference on and ' +
+    'whoever has it can book.',
+  cancellation: 'Cancel a booked session more than 48 hours ahead and the credit goes back on ' +
+    'the bundle. Inside 48 hours the credit is spent, same as a single booking.',
+  currency: 'Prices are in USD and paid in USDC. The price is held for ' +
+    BUNDLE_HOLD_MINUTES + ' minutes while you pay.'
+};
+
+function bundleById(id) {
+  return bundleList().find(function (b) { return b.id === id; }) || null;
+}
+
+/// What a bundle costs this wallet. The Ranger discount comes off the bundle
+/// price, not the full price — the site promises "hold any Moon Ranger and 30%
+/// comes off" without exceptions, and carving bundles out of that promise
+/// would be worse than the discount being generous.
+function bundleQuote(bundle, tier) {
+  const discount = discountPctFor(tier);
+  const total = Math.round(bundle.price * (1 - discount / 100) * 100) / 100;
+  return {
+    base: bundle.price,
+    fullPrice: bundle.fullPrice,
+    bundlePct: bundle.bundlePct,
+    discountPct: discount,
+    total: total,
+    perSession: Math.round((total / bundle.qty) * 100) / 100
+  };
+}
+
+/// How many credits a paid bundle still has, and when they run out. Counted
+/// from the sessions booked against it rather than a stored tally, so a
+/// counter cannot drift away from the bookings it is supposed to describe.
+async function bundleCredits(env, row) {
+  const used = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM bookings WHERE bundle_ref = ? AND status != 'expired'"
+  ).bind(row.ref).first();
+  const spent = (used && used.n) || 0;
+  return {
+    qty: row.qty,
+    used: spent,
+    left: Math.max(0, row.qty - spent),
+    expiresAt: row.expires_at,
+    expired: !!(row.expires_at && Date.now() > row.expires_at)
+  };
+}
+
+/// The sessions booked against a bundle, soonest first.
+async function bundleSessions(env, ref) {
+  const r = await env.DB.prepare(
+    'SELECT * FROM bookings WHERE bundle_ref = ? ORDER BY COALESCE(starts_at, created_at)'
+  ).bind(ref).all();
+  return (r.results || []).map(publicBooking);
+}
+
+/// Writes one session against a bundle, holding its hour in the same statement
+/// that checks the hour is free — the same atomic guard a paid booking uses, so
+/// a credit cannot be spent on an hour somebody else already has.
+///
+/// `status` is 'held' while the bundle itself is still being paid for and
+/// 'confirmed' once it is, because a confirmed session has nothing left to pay.
+async function redeemCredit(env, row, type, startsAt, status, holdUntil) {
+  const ref = bookingRef();
+  const now = Date.now();
+  const slot = type.mode === 'slot' ? startsAt : null;
+  const guard = slot ? ' WHERE NOT EXISTS (' + OVERLAPS_LIVE_BOOKING + ')' : '';
+  const inserted = await env.DB.prepare(
+    'INSERT INTO bookings (ref, wallet, type_id, mode, starts_at, minutes, base_usd, rush_pct, ' +
+    'discount_pct, total_usd, status, hold_until, name, contact, brief, created_at, reference, ' +
+    'site_slug, bundle_ref) ' +
+    'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' + guard
+  ).bind(...[
+    ref, row.wallet, type.id, type.mode, slot, type.minutes,
+    // Already paid for inside the bundle. Carrying the per-session price here
+    // would make the money look like it is owed twice when the two are added
+    // up, which is exactly what a revenue report does.
+    0, 0, 0, 0,
+    status, holdUntil,
+    row.name, row.contact, row.brief, now, newReference(), row.site_slug, row.ref
+  ].concat(slot ? [slot + type.minutes * 60000, slot] : [])).run();
+  if (inserted.meta.changes !== 1) return null;
+  return ref;
+}
+
+function bundleRef() {
+  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let out = 'PACK-';
+  const bytes = crypto.getRandomValues(new Uint8Array(5));
+  for (const b of bytes) out += s[b % s.length];
+  return out;
+}
+
+function publicBundle(row, credits) {
+  return {
+    ref: row.ref,
+    bundleId: row.bundle_id,
+    type: row.type_id,
+    qty: row.qty,
+    baseUsd: row.base_usd,
+    discountPct: row.discount_pct,
+    totalUsd: row.total_usd,
+    status: row.status,
+    signature: row.signature,
+    name: row.name,
+    createdAt: row.created_at,
+    paidAt: row.paid_at,
+    credits: credits || null
+  };
 }
 
 
@@ -3403,6 +3842,12 @@ export default {
       ctx.waitUntil(env.DB.prepare(
         "UPDATE cart_groups SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
       ).bind(Date.now()).run().catch(function () {}));
+      // A bundle holds no hour itself, but the sessions scheduled against it
+      // do — those expire on the line above, and this retires the bundle with
+      // them so an abandoned one is not left looking live.
+      ctx.waitUntil(env.DB.prepare(
+        "UPDATE bundles SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
+      ).bind(Date.now()).run().catch(function () {}));
 
 
 
@@ -3415,6 +3860,9 @@ export default {
           path === '/api/booking/slots' || path === '/api/booking/hold' ||
           path === '/api/booking/confirm' || path === '/api/booking/lookup' ||
           path === '/api/booking/brief' ||
+          path === '/api/bundle/types' || path === '/api/bundle/hold' ||
+          path === '/api/bundle/confirm' || path === '/api/bundle/redeem' ||
+          path === '/api/bundle/lookup' || path === '/api/bundle/watch' ||
           path === '/api/cart/checkout' || path === '/api/cart/confirm' ||
           path === '/api/cart/watch' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
@@ -3690,6 +4138,49 @@ export default {
 
       // What is owed, so a payout run is one page rather than a query. Paying
       // happens in a wallet; this only records that it happened.
+      // Proves the whole chain in one call: the key parses, Google accepts the
+      // JWT, and the calendar is actually shared with the service account.
+      // Each of those fails differently and all three look like "it is broken".
+      if (path === '/api/admin/calendar/test' && request.method === 'GET') {
+        if (!gcalConfigured(env)) {
+          return json(request, env, {
+            ok: false,
+            step: 'settings',
+            missing: ['GCAL_CLIENT_EMAIL', 'GCAL_PRIVATE_KEY', 'GCAL_CALENDAR_ID'].filter(function (k) { return !env[k]; })
+          });
+        }
+        let token;
+        try {
+          token = await gcalToken(env);
+        } catch (e) {
+          return json(request, env, {
+            ok: false, step: 'auth', error: (e && e.message) || 'could not sign in',
+            hint: 'Check GCAL_PRIVATE_KEY was pasted whole, including the BEGIN and END lines, ' +
+              'and that the Google Calendar API is enabled on the project.'
+          });
+        }
+        const res = await fetch(
+          GCAL_API + '/calendars/' + encodeURIComponent(env.GCAL_CALENDAR_ID),
+          { headers: { authorization: 'Bearer ' + token } });
+        const d = await res.json().catch(function () { return null; });
+        if (!res.ok) {
+          return json(request, env, {
+            ok: false, step: 'calendar', status: res.status,
+            error: (d && d.error && d.error.message) || 'could not read that calendar',
+            hint: 'Share the calendar with ' + env.GCAL_CLIENT_EMAIL +
+              ' and give it "Make changes to events".'
+          });
+        }
+        return json(request, env, {
+          ok: true,
+          calendar: d && (d.summary || env.GCAL_CALENDAR_ID),
+          timeZone: d && d.timeZone,
+          writesAs: env.GCAL_CLIENT_EMAIL,
+          note: 'Connect this same calendar in Calendly with conflict checking on, and a ' +
+            'session sold here takes itself out of your Calendly availability.'
+        });
+      }
+
       if (path === '/api/admin/invite/claims' && request.method === 'GET') {
         const auth = request.headers.get('Authorization') || '';
         if (!tokenMatches(auth, env.ADMIN_TOKEN)) {
@@ -5137,7 +5628,12 @@ export default {
             refund: true, booking: publicBooking(fresh)
           }, 409);
         }
-        return json(request, env, { ok: true, booking: publicBooking(fresh) });
+        // On the calendar now it is really paid for, which is also what takes
+        // the hour out of Calendly's availability. Never blocks the reply: a
+        // booking that is paid and not yet on the calendar is a minute's work
+        // to fix, and refusing the confirm would be refusing the money.
+        const cal = await calendarSync(env, 'booking', ref);
+        return json(request, env, { ok: true, booking: publicBooking(fresh), calendar: cal.ok });
       }
 
       // What is needed to actually do the work, asked once the booking is
@@ -5159,6 +5655,225 @@ export default {
         return json(request, env, { ok: true });
       }
 
+      // ── bundles ──
+      // Bought like any other item: a rate card, a hold that locks the price,
+      // a payment. What it buys is credits, redeemed into ordinary bookings.
+      if (path === '/api/bundle/types' && request.method === 'GET') {
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        const holder = wallet ? await perkTier(env, wallet) : null;
+        return json(request, env, {
+          bundles: bundleList().map(function (b) {
+            return Object.assign({}, b, { yours: bundleQuote(b, holder) });
+          }),
+          tiers: BUNDLE_TIERS,
+          validDays: BUNDLE_VALID_DAYS,
+          holder: !!holder,
+          tier: holder,
+          discountPct: discountPctFor(holder),
+          policy: BUNDLE_POLICY,
+          payTo: await treasuryFor(env, siteOf(url, null))
+        });
+      }
+
+      if (path === '/api/bundle/watch' && request.method === 'GET') {
+        return watchPayment(request, env, CHECKOUTS.bundle, String(url.searchParams.get('ref') || '').trim());
+      }
+
+      // Holds a bundle and locks its price. `slots` is optional: give it the
+      // times now and every session is scheduled before paying, leave it out
+      // and the credits are booked whenever suits. Both end up in the same
+      // place — a credit is a credit — so this is a timing choice, not two
+      // different products.
+      if (path === '/api/bundle/hold' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const bundle = bundleById(String(body.bundle || '').trim());
+        if (!bundle) return json(request, env, { error: 'unknown bundle' }, 400);
+        const type = bookingType(bundle.typeId);
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+
+        const name = String(body.name || '').trim().slice(0, 120);
+        const contact = String(body.contact || '').trim().slice(0, 200);
+        const brief = String(body.brief || '').trim().slice(0, 2000);
+        if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
+
+        // Scheduling up front is all-or-nothing on purpose. A partly scheduled
+        // bundle would have to explain which sessions are held and which are
+        // credits, and the buyer would have to keep track of both.
+        const slots = Array.isArray(body.slots) ? body.slots.map(Number).filter(Boolean) : [];
+        if (slots.length && slots.length !== bundle.qty) {
+          return json(request, env, { error: 'pick all ' + bundle.qty + ' times, or none and book them later' }, 400);
+        }
+        if (slots.length !== new Set(slots).size) {
+          return json(request, env, { error: 'two of those times are the same — pick ' + bundle.qty + ' different ones' }, 400);
+        }
+        for (const t of slots) {
+          if (t - Date.now() < MIN_LEAD_HOURS * 3600000) {
+            return json(request, env, { error: 'one of those times is too soon — pick times at least a day out' }, 400);
+          }
+        }
+
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        const holder = wallet ? await perkTier(env, wallet) : null;
+        const q = bundleQuote(bundle, holder);
+
+        const site = siteOf(url, body);
+        const payTo = await treasuryFor(env, site);
+        if (site && !payTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
+
+        const ref = bundleRef();
+        const reference = newReference();
+        const now = Date.now();
+        const holdUntil = now + BUNDLE_HOLD_MINUTES * 60000;
+        await env.DB.prepare(
+          'INSERT INTO bundles (ref, wallet, bundle_id, type_id, qty, base_usd, discount_pct, ' +
+          "total_usd, status, hold_until, name, contact, brief, created_at, reference, site_slug) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(ref, wallet, bundle.id, type.id, bundle.qty, q.base, q.discountPct,
+          q.total, holdUntil, name, contact, brief, now, reference, site).run();
+
+        // Each session holds its own hour through the same atomic guard a paid
+        // booking uses. If one of them loses a race the whole bundle is rolled
+        // back rather than sold short — somebody who picked four times and got
+        // three has not bought what they chose.
+        const row = { ref: ref, wallet: wallet, name: name, contact: contact, brief: brief, site_slug: site };
+        const scheduled = [];
+        for (const t of slots) {
+          const got = await redeemCredit(env, row, type, t, 'held', holdUntil);
+          if (!got) {
+            await env.DB.prepare("DELETE FROM bookings WHERE bundle_ref = ? AND status = 'held'").bind(ref).run();
+            await env.DB.prepare('DELETE FROM bundles WHERE ref = ?').bind(ref).run();
+            return json(request, env, { error: 'one of those times just went — pick your times again' }, 409);
+          }
+          scheduled.push({ ref: got, startsAt: t });
+        }
+
+        return json(request, env, {
+          ref: ref,
+          reference: reference,
+          bundle: bundle.id,
+          type: type.id,
+          qty: bundle.qty,
+          quote: q,
+          usdc: usdcUnits(q.total),
+          usdcMint: USDC_MINT,
+          payTo: payTo,
+          scheduled: scheduled,
+          // nothing scheduled yet means the credits are booked later
+          bookLater: !slots.length,
+          holdUntil: holdUntil,
+          serverNow: now,
+          policy: BUNDLE_POLICY
+        });
+      }
+
+      if (path === '/api/bundle/confirm' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const signature = String(body.signature || '').trim();
+        if (!ref || !signature) return json(request, env, { error: 'reference and signature are both needed' }, 400);
+
+        const b = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
+        if (b.status === 'paid') {
+          return json(request, env, {
+            ok: true, alreadyPaid: true,
+            bundle: publicBundle(b, await bundleCredits(env, b)),
+            sessions: await bundleSessions(env, ref)
+          });
+        }
+        if (b.status !== 'held' && b.status !== 'expired') {
+          return json(request, env, { error: 'that bundle is not awaiting payment' }, 409);
+        }
+        if (!env.TREASURY_WALLET) {
+          await logError(env, 'bundle.confirm', 'TREASURY_WALLET unset — refusing to confirm');
+          return json(request, env, { error: 'payments are not switched on yet' }, 503);
+        }
+        const payer = b.wallet || (await getSession(request, env).catch(function () { return null; }));
+        if (!payer) return json(request, env, { error: 'connect the wallet that paid' }, 400);
+
+        const st = await settlePayment(env, CHECKOUTS.bundle, b, signature, payer);
+        if (st.status === 'unpaid') return json(request, env, { error: st.error }, 402);
+        if (st.status === 'settling') return json(request, env, { pending: true }, 202);
+        if (st.status === 'paid') await markBundlePaid(env, ref, signature);
+
+        const fresh = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        return json(request, env, {
+          ok: st.status === 'paid',
+          bundle: publicBundle(fresh, await bundleCredits(env, fresh)),
+          sessions: await bundleSessions(env, ref)
+        });
+      }
+
+      // Spends one credit on an hour. The only thing the buyer was asked to
+      // keep is the reference, so the reference is all this asks for.
+      if (path === '/api/bundle/redeem' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim().toUpperCase();
+        const startsAt = Number(body.startsAt);
+        if (!ref) return json(request, env, { error: 'which bundle?' }, 400);
+
+        const b = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
+        if (b.status !== 'paid') return json(request, env, { error: 'that bundle is not paid for yet' }, 409);
+
+        const credits = await bundleCredits(env, b);
+        if (credits.expired) {
+          return json(request, env, { error: 'those credits expired on ' + new Date(b.expires_at).toISOString().slice(0, 10) }, 409);
+        }
+        if (credits.left < 1) return json(request, env, { error: 'every session in that bundle is booked' }, 409);
+
+        const type = bookingType(b.type_id);
+        if (!type) return json(request, env, { error: 'unknown booking type' }, 400);
+
+        if (type.mode === 'slot') {
+          if (!startsAt) return json(request, env, { error: 'pick a time' }, 400);
+          if (startsAt - Date.now() < MIN_LEAD_HOURS * 3600000) {
+            return json(request, env, { error: 'that time is too soon — pick one at least a day out' }, 400);
+          }
+          const open = await openSlots(env, type);
+          if (!open.some(function (sl) { return sl.starts === startsAt; })) {
+            return json(request, env, { error: 'that slot just went — pick another' }, 409);
+          }
+        }
+
+        // Confirmed, not held: the bundle it comes out of is already paid, so
+        // there is nothing for this session to wait on.
+        const got = await redeemCredit(env, b, type, startsAt, 'confirmed', null);
+        if (!got) return json(request, env, { error: 'that slot just went — pick another' }, 409);
+
+        const cal = await calendarSync(env, 'booking', got);
+        await alert(env, '🎟️ Bundle credit used — ' + b.ref + ' → ' + got + ' — ' + type.name +
+          (startsAt ? ' on ' + new Date(startsAt).toISOString() : '') +
+          '\n' + b.name + ' · ' + b.contact +
+          '\n' + (credits.left - 1) + ' of ' + b.qty + ' left' +
+          (cal.ok ? '' : '\n⚠️ not on the calendar: ' + (cal.error || cal.skipped)));
+
+        const fresh = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        return json(request, env, {
+          ok: true,
+          booking: publicBooking(await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(got).first()),
+          bundle: publicBundle(fresh, await bundleCredits(env, fresh)),
+          sessions: await bundleSessions(env, ref)
+        });
+      }
+
+      if (path === '/api/bundle/lookup' && request.method === 'GET') {
+        const ref = String(url.searchParams.get('ref') || '').trim().toUpperCase();
+        if (!ref) return json(request, env, { error: 'which bundle?' }, 400);
+        const b = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
+        const credits = await bundleCredits(env, b);
+        const type = bookingType(b.type_id);
+        return json(request, env, {
+          kind: 'bundle',
+          bundle: publicBundle(b, credits),
+          sessions: await bundleSessions(env, ref),
+          typeName: type ? type.name : b.type_id,
+          minutes: type ? type.minutes : null,
+          mode: type ? type.mode : null
+        });
+      }
+
       if (path === '/api/booking/lookup' && request.method === 'GET') {
         const ref = String(url.searchParams.get('ref') || '').trim();
         if (!ref) return json(request, env, { error: 'which booking?' }, 400);
@@ -5175,6 +5890,20 @@ export default {
               total: a.total_usd, status: a.status, approved: !!a.approved,
               hasCreative: !!(a.headline || a.image_url)
             }
+          });
+        }
+        // A bundle reference is still just a reference to whoever typed it,
+        // so the one box on the page finds either.
+        const p = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
+        if (p) {
+          const type = bookingType(p.type_id);
+          return json(request, env, {
+            kind: 'bundle',
+            bundle: publicBundle(p, await bundleCredits(env, p)),
+            sessions: await bundleSessions(env, p.ref),
+            typeName: type ? type.name : p.type_id,
+            minutes: type ? type.minutes : null,
+            mode: type ? type.mode : null
           });
         }
         return json(request, env, { error: 'no booking with that reference' }, 404);

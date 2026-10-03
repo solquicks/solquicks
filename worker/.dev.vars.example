@@ -20,3 +20,15 @@ STAKE_FEE_LAMPORTS=
 # Reflect, for the DeFi tab. Reads work without it at a lower rate limit;
 # building a deposit or withdrawal transaction needs it.
 REFLECT_API_KEY=
+
+# Google Calendar, so a paid booking lands on the calendar Calendly checks for
+# conflicts — which is what takes the hour out of Calendly's availability.
+# A SERVICE ACCOUNT, not OAuth: no consent screen, nothing to re-authorise.
+# Create one in Google Cloud, enable the Calendar API, download the JSON key,
+# then share your calendar with the service account's address giving it
+# "Make changes to events". From the JSON: client_email and private_key.
+# The private key is multi-line PEM — paste it whole; literal \n is handled.
+# Unset means bookings simply never reach a calendar; nothing else changes.
+GCAL_CLIENT_EMAIL=
+GCAL_PRIVATE_KEY=
+GCAL_CALENDAR_ID=

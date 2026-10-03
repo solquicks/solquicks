@@ -1987,6 +1987,77 @@
     .bk-inc { list-style: none; padding: 0; margin: 0 0 12px; }
     .bk-inc li { font-size: 0.84rem; color: var(--ink-soft); padding-left: 20px; position: relative; margin-bottom: 4px; line-height: 1.45; }
     .bk-inc li::before { content: '✓'; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+    /* A limit on what a booking covers. Deliberately not styled as an
+       inclusion: it sits apart from the ticked list so it cannot be skimmed
+       as another thing you get. */
+    .bk-note {
+      font-size: 0.8rem; line-height: 1.5; color: var(--ink-soft);
+      background: var(--cream); border-left: 3px solid var(--orange);
+      border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 0 0 12px;
+    }
+    /* ── bundles ── */
+    /* The bundle rate card belongs with the single services and must disappear
+       with them whenever a flow opens. Nine different places hide #bk-list, so
+       this follows it by selector rather than by nine matching calls that a
+       tenth flow would forget. */
+    #bk-list[hidden] ~ #bk-pack-head,
+    #bk-list[hidden] ~ #bk-packs { display: none; }
+    .bk-pack-head { margin: 26px 0 2px; }
+    .bk-packs { display: grid; gap: 12px; }
+    @media (min-width: 620px) { .bk-packs { grid-template-columns: 1fr 1fr; } }
+    .bk-pack {
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      box-shadow: var(--pop); padding: 14px 16px; text-align: left; position: relative;
+    }
+    .bk-pack-top { display: flex; align-items: baseline; gap: 8px; }
+    .bk-pack-name { font-family: 'Baloo 2', sans-serif; font-size: 1rem; font-weight: 800; color: var(--ink); flex: 1; }
+    .bk-pack-price {
+      font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 800;
+      color: var(--orange-deep); white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .bk-pack-each { font-size: 0.8rem; color: var(--ink-soft); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .bk-pack-save {
+      display: inline-block; margin-top: 8px; font-size: 0.72rem; font-weight: 800;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      background: var(--green); color: #fff; border-radius: 999px; padding: 3px 10px;
+    }
+    .bk-pack .bk-go { margin-top: 12px; padding: 9px 16px; font-size: 0.88rem; }
+    /* How the credits are taken: one or the other, never both */
+    .bk-choice { display: grid; gap: 10px; margin: 4px 0 14px; }
+    .bk-choice button {
+      appearance: none; cursor: pointer; text-align: left; width: 100%;
+      background: var(--card); border: 2px solid var(--line-col, #E7DFD2);
+      border-radius: var(--radius); padding: 12px 14px; font-family: inherit;
+    }
+    .bk-choice button.on { border-color: var(--orange); background: #fff; }
+    .bk-choice b { display: block; font-family: 'Baloo 2', sans-serif; font-size: 0.95rem; color: var(--ink); }
+    .bk-choice span { display: block; font-size: 0.82rem; color: var(--ink-soft); margin-top: 3px; line-height: 1.45; }
+    /* The running count while several times are being picked */
+    .bk-picked {
+      position: sticky; bottom: 0; z-index: 2;
+      background: var(--card); border: var(--line); border-radius: var(--radius);
+      box-shadow: var(--pop); padding: 10px 14px; margin-top: 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .bk-picked-n { font-family: 'Baloo 2', sans-serif; font-weight: 800; color: var(--ink); flex: 1; font-size: 0.9rem; }
+    .bk-picked .bk-go { width: auto; margin: 0; padding: 8px 18px; font-size: 0.85rem; }
+    .bk-slot.taken, .bk-slot.taken:hover { opacity: 0.35; cursor: not-allowed; }
+    /* The credits left on a bundle somebody looked up */
+    .bk-credits { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
+    .bk-credit {
+      width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+      font-weight: 800; font-size: 0.8rem; border: 2px solid var(--ink);
+      background: var(--orange); color: #fff;
+    }
+    .bk-credit.spent { background: transparent; color: var(--muted); border-color: #E7DFD2; }
+    .bk-sessions { list-style: none; padding: 0; margin: 0 0 14px; }
+    .bk-sessions li {
+      display: flex; gap: 8px; align-items: baseline; font-size: 0.85rem;
+      color: var(--ink-soft); padding: 7px 0; border-bottom: 1px solid #EFE8DC;
+    }
+    .bk-sessions li b { font-family: 'Baloo 2', sans-serif; color: var(--ink); font-weight: 800; }
+    .bk-sessions li em { margin-left: auto; font-style: normal; font-size: 0.74rem; color: var(--muted); }
+
     .bk-go {
       appearance: none; border: none; cursor: pointer; width: 100%;
       background: var(--orange); color: #fff;
@@ -2833,6 +2904,13 @@
       </div>
       <div class="bk-cart" id="bk-cart" hidden></div>
       <div class="bk-list" id="bk-list"></div>
+      <!-- Bundles sit under the single services: you decide what you want
+           first, and only then whether you want several of it. -->
+      <div class="bk-intro bk-pack-head" id="bk-pack-head" hidden>
+        <div class="bk-lead">Bundles</div>
+        <p class="bk-sub">Several of the same session, cheaper each. Lock all the times in now, or buy the credits and book as you go.</p>
+      </div>
+      <div class="bk-packs" id="bk-packs"></div>
       <div id="bk-flow" hidden></div>
     </div>
 
@@ -3461,6 +3539,7 @@
       // waiting for a wallet. Refresh only while the tab is actually showing.
       if (tab === 'book') {
         if (!bkData && typeof loadBooking === 'function') loadBooking();
+        if (!bkPacks && typeof loadBundles === 'function') loadBundles();
         if (typeof paintCart === 'function') paintCart();
       }
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
@@ -8570,7 +8649,8 @@
     function startPayPolling(ref, kind, onPaid) {
       stopPayPolling();
       const endpoint = kind === 'ad' ? '/api/banner/watch'
-        : kind === 'cart' ? '/api/cart/watch' : '/api/booking/watch';
+        : kind === 'cart' ? '/api/cart/watch'
+        : kind === 'bundle' ? '/api/bundle/watch' : '/api/booking/watch';
       tickPayClock();
       payClock = setInterval(tickPayClock, 1000);
       payPoll = setInterval(async function () {
@@ -8623,7 +8703,8 @@
       try {
         const sig = await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference);
         btn.textContent = 'Confirming…';
-        const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm' : '/api/booking/confirm';
+        const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm'
+          : ctx.kind === 'bundle' ? '/api/bundle/confirm' : '/api/booking/confirm';
         const res = await fetch(POINTS_API + endpoint, {
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' },
@@ -8866,8 +8947,8 @@
 
       const lookup = '<div class="bk-lookup">' +
         '<label for="bk-find">Already booked something?</label>' +
-        '<div class="bk-hint">Put your reference in to see it, or to finish sending a banner.</div>' +
-        '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-XXXXXX" spellcheck="false">' +
+        '<div class="bk-hint">Put your reference in to see it, book a session from a bundle, or finish sending a banner.</div>' +
+        '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-XXXXXX or PACK-XXXXX" spellcheck="false">' +
         '<button onclick="findBooking()">Find it</button></div>' +
         '<div class="bk-msg" id="bk-find-msg"></div></div>';
 
@@ -8876,7 +8957,7 @@
         // thing made and delivered, which is wrong for an hour on a call.
         const label = t.cta || (t.mode === 'enquiry' ? 'Ask about a date'
           : t.mode === 'async' ? 'Order this' : 'Pick a time');
-        const meta = t.meta || (t.mode === 'enquiry' ? 'In person · travel included'
+        const meta = t.meta || (t.mode === 'enquiry' ? 'In person · agreed before anything is paid'
           : t.mode === 'async' ? 'No calendar needed · made for you'
           : t.minutes + ' minutes · ' + (t.format || 'live'));
         // The worker works out which perk applies and sends the percentage
@@ -8896,6 +8977,9 @@
           '<ul class="bk-inc">' + t.includes.map(function (i) {
             return '<li>' + escapeHtml(i) + '</li>';
           }).join('') + '</ul>' +
+          // Under the list, not in it. A cap rendered as a ticked inclusion
+          // reads as something you get rather than something you do not.
+          (t.note ? '<p class="bk-note">' + escapeHtml(t.note) + '</p>' : '') +
           '<button class="bk-go' + (t.mode === 'enquiry' ? ' ghost' : '') +
           '" onclick="startBooking(\'' + t.id + '\')">' + label + '</button></div>';
       }).join('') +
@@ -8923,7 +9007,10 @@
         const d = await res.json();
         if (d.error) throw new Error(d.error);
         msg.textContent = '';
-        showFound(d, ref);
+        // A reference is just a reference to whoever typed it, so the worker
+        // answers with what it found and this picks the right screen.
+        if (d.kind === 'bundle') showBundle(d);
+        else showFound(d, ref);
       } catch (e) {
         msg.className = 'bk-msg bad';
         msg.textContent = e.message || 'Nothing found with that reference.';
@@ -9151,6 +9238,7 @@
       document.getElementById('bk-flow').hidden = true;
       document.getElementById('bk-list').hidden = false;
       bkPick = { type: null, startsAt: null };
+      packPick = null;
       paintCart();          // the basket survives going back; that is the point
       bkScrollTo('bk-list');
     }
@@ -9360,6 +9448,458 @@
           '<button class="bk-go" id="bk-brief-send" onclick="sendBrief(\'' + escapeHtml(d.ref) + '\')">Send these details</button>' +
           '<div class="bk-msg" id="bk-brief-msg"></div></div>') +
         '<button class="bk-go ghost" style="margin-top:14px" onclick="backToRateCard()">Book something else</button></div>';
+    }
+
+    // ── BUNDLES ──
+    // Several of the same session, bought at once and cheaper each. A bundle
+    // buys credits; a credit is redeemed into an ordinary booking that holds
+    // its own hour, so a bundle session and a single session are the same
+    // thing on the calendar.
+    //
+    // Two timings, chosen at checkout: lock every time in now, or keep the
+    // credits and book as you go. Both are the same product behind the scenes.
+    var bkPacks = null;
+    var packPick = null;   // { bundle, mode: 'now'|'later', slots: [ts] }
+
+    async function loadBundles() {
+      const box = document.getElementById('bk-packs');
+      if (!box) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/bundle/types', FoxPoints.token
+          ? { headers: { Authorization: 'Bearer ' + FoxPoints.token } } : {});
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        bkPacks = d;
+        renderBundles(d);
+      } catch (e) {
+        // A rate card that will not load must not leave an empty heading
+        // sitting there looking like the feature is broken.
+        box.innerHTML = '';
+        const head = document.getElementById('bk-pack-head');
+        if (head) head.hidden = true;
+      }
+    }
+
+    function renderBundles(d) {
+      const head = document.getElementById('bk-pack-head');
+      const box = document.getElementById('bk-packs');
+      if (!d.bundles || !d.bundles.length) { if (head) head.hidden = true; box.innerHTML = ''; return; }
+      if (head) head.hidden = false;
+
+      box.innerHTML = d.bundles.map(function (b) {
+        const yours = b.yours || { total: b.price, perSession: b.perSession };
+        const off = Math.round((1 - yours.total / b.fullPrice) * 100);
+        return '<div class="bk-pack">' +
+          '<div class="bk-pack-top"><div class="bk-pack-name">' + escapeHtml(b.name) + '</div>' +
+          '<div class="bk-pack-price">' +
+          (yours.total < b.price
+            ? '<span class="bk-was">$' + b.price.toLocaleString() + '</span>'
+            : '') +
+          '$' + money(yours.total) + '</div></div>' +
+          '<div class="bk-pack-each">$' + money(yours.perSession) + ' each · ' +
+          '<span style="text-decoration:line-through;color:var(--muted)">$' +
+          b.fullPrice.toLocaleString() + '</span> bought singly</div>' +
+          '<span class="bk-pack-save">Save $' + (b.fullPrice - yours.total).toLocaleString() +
+          ' · ' + off + '% off</span>' +
+          '<button class="bk-go" onclick="startBundle(\'' + b.id + '\')">Buy ' + b.qty + '</button>' +
+          '</div>';
+      }).join('') +
+        '<p class="bk-policy" style="grid-column:1/-1;text-align:center">' +
+        escapeHtml(d.policy.credits) + ' ' + escapeHtml(d.policy.expiry) +
+        (d.discountPct ? ' <strong>Your Moon Ranger discount is already in the prices above.</strong>' : '') +
+        '</p>';
+    }
+
+    /// Prices are dollars. Whole dollars read as whole dollars; anything with
+    /// cents keeps both, because "$187.5" is not a price.
+    function money(n) {
+      const v = Number(n) || 0;
+      return v % 1 === 0 ? v.toLocaleString() : v.toFixed(2);
+    }
+
+    function startBundle(id) {
+      const b = bkPacks && bkPacks.bundles.find(function (x) { return x.id === id; });
+      if (!b) return;
+      packPick = { bundle: b, mode: null, slots: [] };
+      document.getElementById('bk-list').hidden = true;
+      const flow = document.getElementById('bk-flow');
+      flow.hidden = false;
+
+      const yours = b.yours || { total: b.price, perSession: b.perSession };
+      const canSchedule = b.mode === 'slot';
+
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+        '<div class="bk-step">' + escapeHtml(b.name) + ' · $' + money(yours.total) + '</div>' +
+        '<p class="bk-sub">' + b.qty + ' sessions at $' + money(yours.perSession) +
+        ' each, instead of $' + b.unitPrice.toLocaleString() + '. ' +
+        escapeHtml(bkPacks.policy.expiry) + '</p>' +
+        (canSchedule
+          ? '<div class="bk-choice">' +
+            '<button id="pack-now" onclick="pickPackMode(\'now\')">' +
+            '<b>Pick all ' + b.qty + ' times now</b>' +
+            '<span>Every session goes in the diary before you pay, and the times are yours. ' +
+            'Best if you already know your schedule.</span></button>' +
+            '<button id="pack-later" onclick="pickPackMode(\'later\')">' +
+            '<b>Buy now, book as you go</b>' +
+            '<span>You get ' + b.qty + ' credits and book each session whenever suits, ' +
+            'any time in the next ' + b.validDays + ' days.</span></button>' +
+            '</div>'
+          // Nothing with a calendar to pick, so there is no choice to offer.
+          : '<p class="bk-hint">These are made and delivered rather than booked into an hour, ' +
+            'so there is nothing to schedule — you get ' + b.qty + ' to use whenever you need them.</p>') +
+        '<div id="pack-next"></div></div>';
+
+      if (!canSchedule) pickPackMode('later');
+      bkScrollTo('bk-flow');
+    }
+
+    function pickPackMode(mode) {
+      if (!packPick) return;
+      packPick.mode = mode;
+      packPick.slots = [];
+      const now = document.getElementById('pack-now');
+      const later = document.getElementById('pack-later');
+      if (now) now.classList.toggle('on', mode === 'now');
+      if (later) later.classList.toggle('on', mode === 'later');
+      if (mode === 'now') return packSlots();
+      renderPackForm();
+    }
+
+    /// Picking several hours at once. The calendar offers a start every half
+    /// hour but a session runs a full one, so choosing 10:00 rules out 10:30 —
+    /// those are greyed out as they are chosen rather than refused at the end,
+    /// which is the whole reason this is not just the single-slot picker.
+    async function packSlots() {
+      const b = packPick.bundle;
+      const box = document.getElementById('pack-next');
+      box.innerHTML = '<div id="pack-slot-list">Loading times…</div>';
+      try {
+        const res = await fetch(POINTS_API + '/api/booking/slots?type=' + b.typeId);
+        const d = await res.json();
+        packPick.open = d.slots || [];
+        renderPackSlots();
+      } catch (e) {
+        document.getElementById('pack-slot-list').textContent = 'Could not load available times.';
+      }
+    }
+
+    function packSlotBlocked(ts) {
+      const mins = packPick.bundle.minutes || 60;
+      return packPick.slots.some(function (t) { return t !== ts && Math.abs(t - ts) < mins * 60000; });
+    }
+
+    function renderPackSlots() {
+      const b = packPick.bundle;
+      const box = document.getElementById('pack-next');
+      const slots = packPick.open || [];
+      if (!slots.length) {
+        box.innerHTML = '<p class="bk-sub">Nothing open in the next month. Get in touch and we\'ll find times.</p>';
+        return;
+      }
+      const days = [];
+      const seen = {};
+      for (const sl of slots) {
+        const key = new Date(sl.starts).toDateString();
+        if (!seen[key]) { seen[key] = []; days.push({ key: key, when: sl.starts, items: seen[key] }); }
+        seen[key].push(sl);
+      }
+      const left = b.qty - packPick.slots.length;
+      box.innerHTML =
+        '<div class="bk-step">Pick ' + b.qty + ' times</div>' +
+        days.slice(0, 14).map(function (dd) {
+          return '<div class="bk-day">' + new Date(dd.when).toLocaleDateString(undefined,
+            { weekday: 'long', day: 'numeric', month: 'long' }) + '</div>' +
+            '<div class="bk-slots">' + dd.items.map(function (sl) {
+              const on = packPick.slots.indexOf(sl.starts) >= 0;
+              const blocked = !on && (packSlotBlocked(sl.starts) || left === 0);
+              return '<button class="bk-slot' + (on ? ' on' : '') + (blocked ? ' taken' : '') + '"' +
+                (blocked ? ' disabled' : '') +
+                ' onclick="togglePackSlot(' + sl.starts + ')">' +
+                new Date(sl.starts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) +
+                '</button>';
+            }).join('') + '</div>';
+        }).join('') +
+        '<p class="bk-hint" style="margin-top:10px">Times shown in your own timezone. ' +
+        'A session runs ' + (b.minutes || 60) + ' minutes, so picking one greys out the ones it overlaps. ' +
+        'No rush fee on a bundle, whichever times you choose.</p>' +
+        '<div class="bk-picked"><div class="bk-picked-n">' +
+        packPick.slots.length + ' of ' + b.qty + ' picked' +
+        (left ? '' : ' — all set') + '</div>' +
+        '<button class="bk-go" onclick="renderPackForm()"' + (left ? ' disabled' : '') + '>' +
+        (left ? 'Pick ' + left + ' more' : 'Continue') + '</button></div>' +
+        '<div class="bk-back-foot"><button class="bk-back" onclick="startBundle(\'' +
+        b.id + '\')">← Start again</button></div>';
+    }
+
+    function togglePackSlot(ts) {
+      const i = packPick.slots.indexOf(ts);
+      if (i >= 0) packPick.slots.splice(i, 1);
+      else if (packPick.slots.length < packPick.bundle.qty) packPick.slots.push(ts);
+      packPick.slots.sort(function (a, b) { return a - b; });
+      renderPackSlots();
+    }
+
+    function renderPackForm() {
+      const b = packPick.bundle;
+      const yours = b.yours || { total: b.price, perSession: b.perSession };
+      const box = document.getElementById('pack-next');
+      const when = packPick.slots.map(function (t) {
+        return new Date(t).toLocaleString(undefined,
+          { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      });
+
+      box.innerHTML =
+        (packPick.mode === 'now'
+          ? '<div class="bk-step">Your ' + b.qty + ' times</div>' +
+            '<ul class="bk-sessions">' + when.map(function (w, i) {
+              return '<li><b>' + (i + 1) + '</b>' + escapeHtml(w) + '</li>';
+            }).join('') + '</ul>' +
+            '<button class="bk-back" onclick="packSlots()">← Change times</button>'
+          : '') +
+        '<div class="bk-field"><label for="pack-name">Your name or project</label>' +
+        '<input id="pack-name" autocomplete="organization"></div>' +
+        '<div class="bk-field"><label for="pack-contact">How do I reach you?</label>' +
+        '<input id="pack-contact" placeholder="@handle, email, or Telegram" autocomplete="email"></div>' +
+        '<div class="bk-field"><label for="pack-brief">What do you need?</label>' +
+        '<textarea id="pack-brief" placeholder="Topic, guests, links, anything I should know"></textarea></div>' +
+        '<div class="bk-quote"><div class="bk-quote-row"><span>' + b.qty + ' × ' +
+        escapeHtml(b.name.replace(/^\d+×\s*/, '')) + '</span><b>$' + b.fullPrice.toLocaleString() + '</b></div>' +
+        '<div class="bk-quote-row"><span>Bundle discount</span><b>−$' +
+        (b.fullPrice - b.price).toLocaleString() + '</b></div>' +
+        (yours.total < b.price
+          ? '<div class="bk-quote-row"><span>Moon Ranger discount</span><b>−$' +
+            money(b.price - yours.total) + '</b></div>'
+          : '') +
+        '<div class="bk-quote-row total"><span>Total</span><b>$' + money(yours.total) + '</b></div></div>' +
+        '<button class="bk-go" id="pack-submit" onclick="submitBundle()">Continue to payment</button>' +
+        '<div class="bk-msg" id="pack-msg"></div>' +
+        '<p class="bk-policy"><strong>Credits.</strong> ' + escapeHtml(bkPacks.policy.credits) +
+        '<br><strong>Expiry.</strong> ' + escapeHtml(bkPacks.policy.expiry) +
+        '<br><strong>Cancellations.</strong> ' + escapeHtml(bkPacks.policy.cancellation) +
+        '<br><strong>Price.</strong> ' + escapeHtml(bkPacks.policy.currency) + '</p>';
+      bkScrollTo('bk-flow');
+    }
+
+    async function submitBundle() {
+      const btn = document.getElementById('pack-submit');
+      const msg = document.getElementById('pack-msg');
+      const b = packPick.bundle;
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+
+      const name = (document.getElementById('pack-name').value || '').trim();
+      const contact = (document.getElementById('pack-contact').value || '').trim();
+      const brief = (document.getElementById('pack-brief').value || '').trim();
+      if (!name || !contact) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = 'I need a name and a way to reach you.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const res = await fetch(POINTS_API + '/api/bundle/hold', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' },
+            FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
+          body: JSON.stringify(withSite({
+            bundle: b.id, name: name, contact: contact, brief: brief,
+            // Left out entirely when the credits are booked later: an empty
+            // list and no list mean the same thing to the worker, and sending
+            // neither keeps that true.
+            slots: packPick.mode === 'now' ? packPick.slots : undefined
+          }))
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        renderPayment(d, 'bundle', b.name, function (sig) { showBundleDone(d, sig); });
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'Something went wrong. Try again.';
+        btn.disabled = false;
+        btn.textContent = 'Continue to payment';
+      }
+    }
+
+    function showBundleDone(d, sig) {
+      const flow = document.getElementById('bk-flow');
+      flow.hidden = false;
+      document.getElementById('bk-list').hidden = true;
+      const b = packPick ? packPick.bundle : null;
+      flow.innerHTML = '<div class="bk-flow bk-done">' +
+        '<div class="bk-tick">🎟️</div>' +
+        '<div class="bk-lead">Bundle bought</div>' +
+        '<p class="bk-sub">' + (d.bookLater
+          ? d.qty + ' credits are yours. Book them whenever suits — keep the reference below, it is ' +
+            'the only thing you need.'
+          : 'All ' + d.qty + ' sessions are paid for and in the diary. I\'ll be in touch to confirm the details.') +
+        '</p>' +
+        '<div class="bk-ref">' + escapeHtml(d.ref) + '</div>' +
+        '<p class="bk-hint">Keep that reference.' +
+        (sig ? ' <a href="https://solscan.io/tx/' + encodeURIComponent(sig) + '" target="_blank" rel="noopener noreferrer">View receipt</a>' : '') +
+        '</p>' +
+        (d.bookLater
+          ? '<button class="bk-go" onclick="findBundle(\'' + escapeHtml(d.ref) + '\')">Book your first session</button>'
+          : '') +
+        '<button class="bk-go ghost" style="margin-top:14px" onclick="backToRateCard()">Book something else</button></div>';
+    }
+
+    /// A bundle somebody is coming back to. Reached from the same reference box
+    /// as everything else, because to whoever typed it a reference is just a
+    /// reference.
+    async function findBundle(ref) {
+      const flow = document.getElementById('bk-flow');
+      document.getElementById('bk-list').hidden = true;
+      flow.hidden = false;
+      flow.innerHTML = '<div class="bk-flow">Loading…</div>';
+      try {
+        const res = await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        showBundle(d);
+      } catch (e) {
+        flow.innerHTML = '<div class="bk-flow"><button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+          '<p class="bk-msg bad">' + escapeHtml(e.message || 'Nothing found with that reference.') + '</p></div>';
+      }
+    }
+
+    function showBundle(d) {
+      const flow = document.getElementById('bk-flow');
+      const c = d.bundle.credits || { qty: d.bundle.qty, used: 0, left: 0 };
+      const paid = d.bundle.status === 'paid';
+      flow.hidden = false;
+      document.getElementById('bk-list').hidden = true;
+
+      const pips = [];
+      for (let i = 0; i < c.qty; i++) {
+        pips.push('<div class="bk-credit' + (i < c.used ? ' spent' : '') + '">' +
+          (i < c.used ? '✓' : i + 1) + '</div>');
+      }
+
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="backToRateCard()">← All services</button>' +
+        '<div class="bk-step">' + escapeHtml(d.typeName) + ' bundle · ' + escapeHtml(d.bundle.ref) + '</div>' +
+        (paid
+          ? '<p class="bk-sub">' + c.left + ' of ' + c.qty + ' session' + (c.qty === 1 ? '' : 's') +
+            ' left to book' + (c.expiresAt
+              ? ', until ' + new Date(c.expiresAt).toLocaleDateString(undefined,
+                  { day: 'numeric', month: 'long', year: 'numeric' })
+              : '') + '.</p>'
+          : '<p class="bk-msg bad">This bundle is ' + escapeHtml(d.bundle.status) +
+            ' — it has not been paid for, so there are no credits on it yet.</p>') +
+        '<div class="bk-credits">' + pips.join('') + '</div>' +
+        (d.sessions && d.sessions.length
+          ? '<div class="bk-step">Booked</div><ul class="bk-sessions">' + d.sessions.map(function (b) {
+              return '<li><b>' + escapeHtml(b.ref) + '</b>' +
+                (b.startsAt
+                  ? escapeHtml(new Date(b.startsAt).toLocaleString(undefined,
+                      { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))
+                  : 'no time needed') +
+                '<em>' + escapeHtml(b.status) + '</em></li>';
+            }).join('') + '</ul>'
+          : '') +
+        (paid && c.left > 0 && !c.expired
+          ? (d.mode === 'slot'
+              ? '<button class="bk-go" onclick="redeemPick(\'' + escapeHtml(d.bundle.ref) + '\')">Book a session</button>'
+              : '<button class="bk-go" onclick="redeemCreditNow(\'' + escapeHtml(d.bundle.ref) + '\')">Use a credit</button>')
+          : '') +
+        (c.expired ? '<p class="bk-msg bad">These credits have expired. Get in touch and we will sort something out.</p>' : '') +
+        '<div class="bk-msg" id="pack-redeem-msg"></div>' +
+        '</div>';
+      bkScrollTo('bk-flow');
+    }
+
+    /// Spending one credit: the ordinary single-slot picker, pointed at the
+    /// bundle instead of at a new payment.
+    async function redeemPick(ref) {
+      const flow = document.getElementById('bk-flow');
+      flow.innerHTML = '<div class="bk-flow">' +
+        '<button class="bk-back" onclick="findBundle(\'' + escapeHtml(ref) + '\')">← Back to your bundle</button>' +
+        '<div class="bk-step">Pick a time</div><div id="redeem-slots">Loading times…</div></div>';
+      try {
+        const look = await (await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref))).json();
+        const res = await fetch(POINTS_API + '/api/booking/slots?type=' + look.bundle.type);
+        const d = await res.json();
+        const slots = d.slots || [];
+        const box = document.getElementById('redeem-slots');
+        if (!slots.length) {
+          box.innerHTML = '<p class="bk-sub">Nothing open in the next month. Get in touch and we\'ll find a time.</p>';
+          return;
+        }
+        const days = []; const seen = {};
+        for (const sl of slots) {
+          const key = new Date(sl.starts).toDateString();
+          if (!seen[key]) { seen[key] = []; days.push({ when: sl.starts, items: seen[key] }); }
+          seen[key].push(sl);
+        }
+        box.innerHTML = days.slice(0, 14).map(function (dd) {
+          return '<div class="bk-day">' + new Date(dd.when).toLocaleDateString(undefined,
+            { weekday: 'long', day: 'numeric', month: 'long' }) + '</div>' +
+            '<div class="bk-slots">' + dd.items.map(function (sl) {
+              return '<button class="bk-slot" onclick="redeemCreditNow(\'' + escapeHtml(ref) + '\',' + sl.starts + ',this)">' +
+                new Date(sl.starts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) +
+                '</button>';
+            }).join('') + '</div>';
+        }).join('') +
+          // A credit is already paid for, so the rush surcharge has nothing to
+          // apply to — worth saying, because every other slot list shows it.
+          '<p class="bk-hint" style="margin-top:10px">Times in your own timezone. ' +
+          'Already paid for, so no rush fee whichever you pick.</p>' +
+          '<div class="bk-msg" id="pack-redeem-msg"></div>';
+      } catch (e) {
+        const box = document.getElementById('redeem-slots');
+        if (box) box.textContent = 'Could not load available times.';
+      }
+    }
+
+    async function redeemCreditNow(ref, startsAt, el) {
+      const msg = document.getElementById('pack-redeem-msg');
+      if (el) { el.disabled = true; el.classList.add('on'); }
+      if (msg) { msg.className = 'bk-msg'; msg.textContent = 'Booking…'; }
+      try {
+        const res = await fetch(POINTS_API + '/api/bundle/redeem', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref: ref, startsAt: startsAt || undefined })
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        showBundleSessionDone(d, ref);
+      } catch (e) {
+        if (el) { el.disabled = false; el.classList.remove('on'); }
+        if (msg) { msg.className = 'bk-msg bad'; msg.textContent = e.message || 'That did not book.'; }
+      }
+    }
+
+    function showBundleSessionDone(d, ref) {
+      const flow = document.getElementById('bk-flow');
+      const left = d.bundle.credits ? d.bundle.credits.left : 0;
+      const prompt = BRIEF_PROMPTS[d.booking.type];
+      flow.innerHTML = '<div class="bk-flow bk-done">' +
+        '<div class="bk-tick">🦊</div>' +
+        '<div class="bk-lead">Booked</div>' +
+        '<p class="bk-sub">' +
+        (d.booking.startsAt
+          ? escapeHtml(new Date(d.booking.startsAt).toLocaleString(undefined,
+              { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })) +
+            ' — in the diary, nothing more to pay.'
+          : 'In hand, nothing more to pay.') +
+        ' ' + left + ' credit' + (left === 1 ? '' : 's') + ' left on ' + escapeHtml(ref) + '.</p>' +
+        '<div class="bk-ref">' + escapeHtml(d.booking.ref) + '</div>' +
+        (prompt
+          ? '<div class="bk-brief-box">' +
+            '<label for="bk-brief-after">One more thing, while you are here</label>' +
+            '<div class="bk-hint">' + escapeHtml(prompt) + '</div>' +
+            '<textarea id="bk-brief-after" rows="4"></textarea>' +
+            '<button class="bk-go" id="bk-brief-send" onclick="sendBrief(\'' + escapeHtml(d.booking.ref) + '\')">Send these details</button>' +
+            '<div class="bk-msg" id="bk-brief-msg"></div></div>'
+          : '') +
+        (left > 0
+          ? '<button class="bk-go" style="margin-top:14px" onclick="findBundle(\'' + escapeHtml(ref) + '\')">Book another</button>'
+          : '') +
+        '<button class="bk-go ghost" style="margin-top:10px" onclick="backToRateCard()">Done</button></div>';
+      bkScrollTo('bk-flow');
     }
 
     async function sendBrief(ref) {
@@ -10433,7 +10973,7 @@
       loadAnalytics();
       if (!analyticsTimer) analyticsTimer = setInterval(loadAnalytics, 300000);
     }
-    if (document.getElementById('panel-book').classList.contains('active')) loadBooking();
+    if (document.getElementById('panel-book').classList.contains('active')) { loadBooking(); loadBundles(); }
     if (document.getElementById('panel-swap').classList.contains('active')) loadSwap();
     if (document.getElementById('panel-store').classList.contains('active')) { loadStore(); loadCollectible(); }
     // Runs whatever tab is open: it is what decides whether Referrals is in

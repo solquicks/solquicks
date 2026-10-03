@@ -208,6 +208,20 @@ jobs:
         working-directory: worker
         run: node test/launch.test.mjs
 
+      # Deposits, withdrawals and the measured savings rate. Written at the
+      # same time as the Savings tab and never added here, so it has been
+      # running only when somebody remembered to run it by hand.
+      - name: Savings
+        working-directory: worker
+        run: node test/reflect.test.mjs
+
+      # Buying several sessions at once. The price ladder is asserted as an
+      # invariant — more sessions must never cost more each — because that is
+      # exactly the mistake the first rate card made.
+      - name: Bundles
+        working-directory: worker
+        run: node test/bundle.test.mjs
+
   site:
     name: Site
     runs-on: ubuntu-latest

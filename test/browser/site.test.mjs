@@ -109,7 +109,7 @@ function inviteState() {
   };
 }
 
-function workerAnswer(p, url) {
+function workerAnswer(p, url, body) {
   if (p === '/api/swap/tokens') return { tokens: [
     { mint: SOL, symbol: 'SOL', name: 'Solana', decimals: 9 },
     { mint: USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
@@ -238,7 +238,17 @@ function workerAnswer(p, url) {
           'Go-to-market strategy', 'Marketing advisory', 'Community building strategy',
           'Solana networking', 'Events planning'],
         meta: '60 minutes · one to one · we agree a time after you book',
-        cta: 'Book an hour' }
+        cta: 'Book an hour' },
+      { id: 'mc', name: 'MC or speaking', mode: 'enquiry', minutes: 0, price: 1500,
+        allDay: true, days: 2,
+        meta: 'In person · up to 2 days · flights and stay are on me',
+        blurb: 'I MC your event.',
+        includes: ['MCing, speaking slots and fireside chats',
+          'Every service I offer, for the whole appearance',
+          'My flights and accommodation \u2014 I arrange and pay for both',
+          'Date and venue agreed before anything is paid'],
+        note: 'Covers an appearance of up to 2 days. Anything longer needs its own package \u2014 ' +
+          'get in touch and we will put one together.' }
     ],
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
       rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
@@ -259,6 +269,79 @@ function workerAnswer(p, url) {
       quote: { base: 200, rush: false, rushPct: 0, discountPct: 0, total: 200 },
       usdc: 200000000, usdcMint: USDC, payTo: TREASURY,
       holdUntil: Date.now() + 20 * 60000, serverNow: Date.now(), policy: {} };
+  }
+  // ── bundles ──
+  // Two tiers of the same session, so the page's own "is the bigger one
+  // cheaper each" rendering can be read off the screen.
+  if (p === '/api/bundle/types') return {
+    bundles: [
+      { id: 'space-4', typeId: 'space', name: '4\u00d7 Hosted X Space', qty: 4, minutes: 60,
+        mode: 'slot', unitPrice: 200, fullPrice: 800, price: 600, bundlePct: 25,
+        perSession: 150, saves: 200, validDays: 365,
+        yours: { base: 600, fullPrice: 800, bundlePct: 25, discountPct: 0, total: 600, perSession: 150 } },
+      { id: 'space-10', typeId: 'space', name: '10\u00d7 Hosted X Space', qty: 10, minutes: 60,
+        mode: 'slot', unitPrice: 200, fullPrice: 2000, price: 1300, bundlePct: 35,
+        perSession: 130, saves: 700, validDays: 365,
+        yours: { base: 1300, fullPrice: 2000, bundlePct: 35, discountPct: 0, total: 1300, perSession: 130 } },
+      { id: 'custom-4', typeId: 'custom', name: '4\u00d7 Custom content', qty: 4, minutes: 0,
+        mode: 'async', unitPrice: 250, fullPrice: 1000, price: 750, bundlePct: 25,
+        perSession: 187.5, saves: 250, validDays: 365,
+        yours: { base: 750, fullPrice: 1000, bundlePct: 25, discountPct: 0, total: 750, perSession: 187.5 } }
+    ],
+    tiers: [{ qty: 4, pct: 25 }, { qty: 10, pct: 35 }],
+    validDays: 365, holder: false, tier: null, discountPct: 0,
+    policy: {
+      credits: 'A bundle buys credits, not fixed dates.',
+      expiry: 'Credits last 365 days from the day the bundle is paid for.',
+      holder: 'Hold any Moon Ranger and 30% comes off the bundle too.',
+      rush: 'No rush fee on a bundle credit.',
+      transfer: 'Credits are tied to the reference.',
+      cancellation: 'Cancel more than 48 hours ahead and the credit goes back.',
+      currency: 'Paid in USDC. The price is held for 20 minutes.'
+    },
+    payTo: TREASURY
+  };
+  if (p === '/api/bundle/hold') {
+    net.bundleHold = body;
+    return {
+      ref: 'PACK-AB12C', reference: 'REFPACK', bundle: body.bundle, type: 'space',
+      qty: body.bundle === 'space-10' ? 10 : 4,
+      quote: body.bundle === 'space-10'
+        ? { base: 1300, fullPrice: 2000, bundlePct: 35, discountPct: 0, total: 1300, perSession: 130 }
+        : { base: 600, fullPrice: 800, bundlePct: 25, discountPct: 0, total: 600, perSession: 150 },
+      usdc: (body.bundle === 'space-10' ? 1300 : 600) * 1000000, usdcMint: USDC, payTo: TREASURY,
+      scheduled: (body.slots || []).map((t, i) => ({ ref: 'BK-P' + i, startsAt: t })),
+      bookLater: !(body.slots && body.slots.length),
+      holdUntil: Date.now() + 20 * 60000, serverNow: Date.now(), policy: {}
+    };
+  }
+  if (p === '/api/bundle/watch') return { status: 'paid', signature: 'sigpack' };
+  if (p === '/api/bundle/lookup') {
+    const used = net.bundleUsed || 0;
+    return {
+      kind: 'bundle', typeName: 'Hosted X Space', minutes: 60, mode: 'slot',
+      bundle: {
+        ref: 'PACK-AB12C', bundleId: 'space-4', type: 'space', qty: 4,
+        baseUsd: 600, discountPct: 0, totalUsd: 600, status: 'paid',
+        credits: { qty: 4, used: used, left: 4 - used, expiresAt: Date.now() + 365 * 86400000, expired: false }
+      },
+      sessions: Array.from({ length: used }, (_, i) => ({
+        ref: 'BK-U' + i, type: 'space', mode: 'slot',
+        startsAt: Date.now() + (5 + i) * 86400000, minutes: 60, totalUsd: 0, status: 'confirmed'
+      }))
+    };
+  }
+  if (p === '/api/bundle/redeem') {
+    net.bundleUsed = (net.bundleUsed || 0) + 1;
+    const used = net.bundleUsed;
+    return {
+      ok: true,
+      booking: { ref: 'BK-NEW', type: 'space', mode: 'slot',
+        startsAt: body.startsAt, minutes: 60, totalUsd: 0, status: 'confirmed' },
+      bundle: { ref: 'PACK-AB12C', qty: 4, status: 'paid',
+        credits: { qty: 4, used: used, left: 4 - used, expiresAt: Date.now() + 365 * 86400000, expired: false } },
+      sessions: []
+    };
   }
   if (p === '/api/banner/rates') return {
     rates: [
@@ -288,6 +371,7 @@ function workerAnswer(p, url) {
       total: 250, status: 'paid', approved: false, hasCreative: false } };
     if (ref === 'FOX-BK0001') return { kind: 'booking', details: 'guests: @a',
       booking: { ref, type: 'space', status: 'paid', totalUsd: 200, startsAt: Date.now() + 5 * 86400000 } };
+    if (String(ref).startsWith('PACK-')) return workerAnswer('/api/bundle/lookup', url, body);
     return { error: 'no booking with that reference' };
   }
 
@@ -470,7 +554,7 @@ async function standIns(context) {
         net.lastQuote = u.searchParams.get('in');
         net.lastQuoteAmount = u.searchParams.get('amount');
       }
-      return json(route, workerAnswer(u.pathname, u));
+      return json(route, workerAnswer(u.pathname, u, JSON.parse(req.postData() || '{}')));
     }
     if (url.startsWith(RPC)) {
       const body = JSON.parse(req.postData() || '{}');
@@ -1063,6 +1147,183 @@ try {
       'Consulting and advisory for your project · An idea session focused on growth and revenue · ' +
       'Go-to-market strategy · Marketing advisory · Community building strategy · ' +
       'Solana networking · Events planning');
+  }
+
+  section('bundles: the rate card');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-pack', { timeout: 15000 });
+
+    const packs = await page.locator('.bk-pack').allTextContents();
+    eq('every bundle on offer is on the page', packs.length, 3);
+
+    const four = page.locator('.bk-pack', { hasText: '4× Hosted X Space' });
+    const ten = page.locator('.bk-pack', { hasText: '10× Hosted X Space' });
+    eq('the four-pack is there', await four.count(), 1);
+    eq('the ten-pack is there', await ten.count(), 1);
+
+    // The whole point of a bundle is the per-session price, so it has to be on
+    // the card rather than left for the buyer to divide.
+    const each4 = (await four.locator('.bk-pack-each').textContent()).replace(/\s+/g, ' ');
+    const each10 = (await ten.locator('.bk-pack-each').textContent()).replace(/\s+/g, ' ');
+    ok('the four-pack shows what each session costs', /\$150 each/.test(each4), each4);
+    ok('the ten-pack shows what each session costs', /\$130 each/.test(each10), each10);
+    ok('and both say what the same sessions cost singly',
+      /\$800/.test(each4) && /\$2,000/.test(each10), each4 + ' | ' + each10);
+
+    // This is the bug the whole feature was re-priced over: a bigger bundle
+    // that cost more each. If it ever comes back, it comes back on screen.
+    const n4 = Number(/\$([\d.]+) each/.exec(each4)[1]);
+    const n10 = Number(/\$([\d.]+) each/.exec(each10)[1]);
+    ok('buying ten is cheaper per session than buying four, on the page', n10 < n4,
+      `10× $${n10}/ea vs 4× $${n4}/ea`);
+
+    const save = (await ten.locator('.bk-pack-save').textContent()).replace(/\s+/g, ' ');
+    ok('the saving is stated in money and percent', /\$700/.test(save) && /35% off/.test(save), save);
+
+    // A price with halfpennies has to read as a price.
+    const custom = page.locator('.bk-pack', { hasText: '4× Custom content' });
+    const eachC = (await custom.locator('.bk-pack-each').textContent()).replace(/\s+/g, ' ');
+    ok('a fractional per-session price keeps its cents', /\$187\.50 each/.test(eachC), eachC);
+  }
+
+  section('bundles: lock every time in up front');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-pack', { timeout: 15000 });
+    await page.locator('.bk-pack', { hasText: '4× Hosted X Space' }).locator('button.bk-go').click();
+
+    await page.waitForSelector('#pack-now', { timeout: 10000 });
+    ok('the rate card is out of the way', await page.evaluate(() =>
+      getComputedStyle(document.getElementById('bk-packs')).display === 'none'));
+    ok('both timings are offered', await page.locator('#pack-later').count() === 1);
+
+    await page.click('#pack-now');
+    await page.waitForSelector('.bk-slot', { timeout: 10000 });
+    const counter = () => page.textContent('.bk-picked-n');
+    ok('it says how many are still needed', /0 of 4 picked/.test(await counter()));
+    ok('and will not continue yet',
+      await page.evaluate(() => document.querySelector('.bk-picked .bk-go').disabled));
+
+    // Only two slots are served by the mock, so four cannot be reached — which
+    // is exactly the state that must not let somebody through to payment.
+    // By index, not .first() twice: the list re-renders after each pick and
+    // the first free slot is still the one just chosen, so clicking it again
+    // un-picks it and the count goes back to nothing.
+    const free = await page.locator('.bk-slot:not([disabled])').count();
+    for (let i = 0; i < Math.min(free, 2); i++) {
+      await page.locator('.bk-slot:not([disabled])').nth(i).click();
+      await page.waitForTimeout(80);
+    }
+    ok('the count follows what was picked', /2 of 4 picked/.test(await counter()), await counter());
+    ok('and payment is still out of reach with times missing',
+      await page.evaluate(() => document.querySelector('.bk-picked .bk-go').disabled));
+  }
+
+  section('bundles: buy the credits and book later');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-pack', { timeout: 15000 });
+    await page.locator('.bk-pack', { hasText: '10× Hosted X Space' }).locator('button.bk-go').click();
+    await page.waitForSelector('#pack-later', { timeout: 10000 });
+    await page.click('#pack-later');
+    await page.waitForSelector('#pack-submit', { timeout: 10000 });
+
+    // No calendar at all on this path: that is what "book later" means.
+    eq('no times are asked for', await page.locator('.bk-slot').count(), 0);
+
+    const quote = (await page.textContent('.bk-quote')).replace(/\s+/g, ' ');
+    ok('the full price is shown', /\$2,000/.test(quote), quote);
+    ok('and the discount as its own line', /Bundle discount/.test(quote), quote);
+
+    await page.fill('#pack-name', 'Ten Spaces Ltd');
+    await page.fill('#pack-contact', '@tenspaces');
+    await page.click('#pack-submit');
+
+    await page.waitForSelector('#pay-wallet', { timeout: 10000 });
+    ok('it went to payment', await page.locator('#pay-wallet').count() === 1);
+    const asked = (await page.textContent('#bk-flow')).replace(/\s+/g, ' ');
+    ok('asking for the bundle price', /\$1,300|1300/.test(asked), asked.slice(0, 240));
+  }
+
+  section('bundles: coming back with the reference');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('#bk-find', { timeout: 15000 });
+    await page.fill('#bk-find', 'PACK-AB12C');
+    await page.click('.bk-find-row button');
+    await page.waitForSelector('.bk-credits', { timeout: 10000 });
+
+    // Credits are the one thing somebody comes back to check, so they are
+    // countable at a glance rather than written in a sentence.
+    eq('one mark per session in the bundle', await page.locator('.bk-credit').count(), 4);
+    eq('none spent yet', await page.locator('.bk-credit.spent').count(), 0);
+    const head = (await page.textContent('#bk-flow')).replace(/\s+/g, ' ');
+    ok('it says how many are left to book', /4 of 4 sessions left to book/.test(head), head.slice(0, 200));
+    ok('and when they run out', /until .*\d{4}/.test(head), head.slice(0, 300));
+
+    // Spending one.
+    await page.locator('#bk-flow button.bk-go', { hasText: 'Book a session' }).click();
+    await page.waitForSelector('#redeem-slots .bk-slot', { timeout: 10000 });
+    const hint = (await page.textContent('#redeem-slots')).replace(/\s+/g, ' ');
+    ok('a credit carries no rush fee, and says so', /no rush fee/i.test(hint), hint.slice(-160));
+
+    await page.locator('#redeem-slots .bk-slot').first().click();
+    await page.waitForSelector('.bk-done', { timeout: 10000 });
+    const done = (await page.textContent('.bk-done')).replace(/\s+/g, ' ');
+    ok('the session is booked', /Booked/.test(done), done.slice(0, 160));
+    ok('with nothing more to pay', /nothing more to pay/.test(done), done.slice(0, 220));
+    ok('and says what is left on the bundle', /3 credits left on PACK-AB12C/.test(done), done.slice(0, 260));
+    ok('the new booking has its own reference', /BK-NEW/.test(done), done.slice(0, 300));
+  }
+
+  section('bundles: a spent credit shows as spent');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('#bk-find', { timeout: 15000 });
+    await page.fill('#bk-find', 'PACK-AB12C');
+    await page.click('.bk-find-row button');
+    await page.waitForSelector('.bk-credits', { timeout: 10000 });
+    eq('the spent one is marked', await page.locator('.bk-credit.spent').count(), 1);
+    eq('the rest are not', await page.locator('.bk-credit:not(.spent)').count(), 3);
+    const booked = await page.locator('.bk-sessions li').allTextContents();
+    eq('and the session it bought is listed', booked.length, 1);
+    ok('with its status', /confirmed/.test(booked[0]), booked[0]);
+
+    // Leave the tab where the next section expects to find it. Clicking a nav
+    // button for the tab you are already on does not close an open flow, so a
+    // section that ends mid-flow hides the rate card from whatever runs next.
+    await page.evaluate(() => backToRateCard());
+    await page.waitForSelector('.bk-card', { timeout: 10000 });
+  }
+
+  section('the MC appearance: a flat fee with a stated cap');
+  {
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+    const mc = page.locator('.bk-card', { hasText: 'MC or speaking' });
+    eq('it is on the rate card', await mc.count(), 1);
+    eq('at one flat price', (await mc.locator('.bk-price').first().textContent()).trim(), '$1,500');
+
+    const meta = (await mc.locator('.bk-meta').first().textContent()).trim();
+    ok('the cap is visible before you click anything', /up to 2 days/.test(meta), meta);
+    ok('and it says whose travel it is', /on me/.test(meta), meta);
+
+    const lines = await mc.locator('.bk-inc li').allTextContents();
+    ok('no longer claims travel is billed to the client',
+      !lines.some((l) => /travel is included in the fee/i.test(l)), lines.join(' | '));
+    ok('says the flights and stay are the fox\u2019s own',
+      lines.some((l) => /flights and accommodation/i.test(l)), lines.join(' | '));
+
+    // A cap belongs under the list, not inside it: a ticked line reads as
+    // something you get rather than a limit on what you get.
+    const note = mc.locator('.bk-note');
+    eq('the cap has its own note', await note.count(), 1);
+    const noteText = (await note.textContent()).replace(/\s+/g, ' ');
+    ok('saying it covers up to 2 days', /up to 2 days/.test(noteText), noteText);
+    ok('and that longer needs its own package', /longer needs its own package/.test(noteText), noteText);
+    eq('and it is not a ticked inclusion',
+      await mc.locator('.bk-inc li', { hasText: 'up to 2 days' }).count(), 0);
   }
 
   section('booking: a basket survives wandering off and coming back');
