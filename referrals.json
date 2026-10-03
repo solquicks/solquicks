@@ -7,7 +7,8 @@
       "url": "https://talent.superteam.fun/join?scout=solquicks",
       "what": "The Solana ecosystem's talent platform. One profile, matched continuously with the teams that are hiring.",
       "youGet": "A profile that gets matched with active roles, the job board, and your interviews tracked in one place.",
-      "cta": "Join as talent"
+      "cta": "Join as talent",
+      "logo": "img/referrals/superteam.jpg"
     },
     {
       "name": "Sat Rush",
@@ -20,13 +21,15 @@
       "name": "Meteora",
       "tag": "Liquidity",
       "url": "https://app.meteora.ag/ref/HHZQDEP7YA",
-      "what": "Liquidity pools on Solana. Put a pair to work and earn a share of what trades through it."
+      "what": "Liquidity pools on Solana. Put a pair to work and earn a share of what trades through it.",
+      "logo": "img/referrals/meteora.jpg"
     },
     {
       "name": "Sanctum",
       "tag": "Staking",
       "url": "https://sanctum.so/app/r/HNW19G",
-      "what": "Liquid staking on Solana. Stake SOL for the yield and keep a token you can still use elsewhere."
+      "what": "Liquid staking on Solana. Stake SOL for the yield and keep a token you can still use elsewhere.",
+      "logo": "img/referrals/sanctum.jpg"
     },
     {
       "name": "Titan",
@@ -39,13 +42,15 @@
       "name": "Fomo",
       "tag": "Trading",
       "url": "https://fomo.family/r/quicks",
-      "what": "Social trading. Follow what the better traders are buying, and trade it in seconds."
+      "what": "Social trading. Follow what the better traders are buying, and trade it in seconds.",
+      "logo": "img/referrals/fomo.jpg"
     },
     {
       "name": "JungleFun",
       "tag": "Gacha",
       "url": "https://www.junglefun.io/gacha?r=AE-sDf11g9YyE5o7Js1GDR1SPDo7nE14j3xlN2DjtNxG",
-      "what": "Gacha packs of Solana NFTs, built by MonkeDAO and MagicBlock. Open a pack, see what you pull."
+      "what": "Gacha packs of Solana NFTs, built by MonkeDAO and MagicBlock. Open a pack, see what you pull.",
+      "logo": "img/referrals/junglefun.jpg"
     }
   ]
 }

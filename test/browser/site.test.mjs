@@ -2753,6 +2753,29 @@ try {
       ok(r.name + ': makes no empty promise',
         r.youGet === undefined || !!String(r.youGet).trim(), JSON.stringify(r.youGet));
     }
+    // Driven off the file, so a logo added later with a typo in its path is
+    // caught here rather than by whoever opens the page and sees a letter where
+    // a mark should be. The card falls back to an initial, which is a graceful
+    // failure and therefore an easy one to miss.
+    for (const r of shipped) {
+      if (!r.logo) continue;
+      ok(r.name + ': its mark is actually in the repo',
+        fs.existsSync(path.join(ROOT, r.logo)), r.logo);
+    }
+    const withMarks = shipped.filter((r) => r.logo).length;
+    eq('every one of them has a mark', withMarks, shipped.length);
+
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#ref-list .ref-logo')].every((e) => e.tagName !== 'IMG' || e.complete),
+      null, { timeout: 20000 }).catch(() => {});
+    const drawn = await page.$$eval('#ref-list .ref-card', (cards) => cards.map((c) => {
+      const img = c.querySelector('img.ref-logo');
+      return { name: c.querySelector('.ref-name').textContent.trim(),
+        img: !!img, loaded: !!(img && img.naturalWidth > 0) };
+    }));
+    ok('and every card draws it rather than a letter',
+      drawn.every((d) => d.img && d.loaded), JSON.stringify(drawn.filter((d) => !d.loaded)));
+
     const live = await page.evaluate(() => [...document.querySelectorAll('#ref-list .ref-go')]
       .map((a) => ({ href: a.getAttribute('href'), rel: a.getAttribute('rel') })));
     ok('each link is declared as the paid placement it is',
