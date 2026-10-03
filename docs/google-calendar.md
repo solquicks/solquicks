@@ -46,7 +46,7 @@ it in the repo.
 Two things out of that file:
 
 - `client_email` — looks like `something@your-project.iam.gserviceaccount.com`
-- `private_key` — a long block starting `-----BEGIN PRIVATE KEY-----`
+- `private_key` — a long block whose first line reads `-----BEGIN … KEY-----`
 
 **5. Share your calendar with it**
 
@@ -80,10 +80,13 @@ cd worker && npx wrangler secret put GCAL_PRIVATE_KEY
 cd worker && npx wrangler secret put GCAL_CALENDAR_ID
 ```
 
-For `GCAL_PRIVATE_KEY`, paste the **whole** key including the
-`-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----` lines. The code
-accepts the newlines either as real line breaks or as literal `\n`, which is how
-they appear inside the JSON file — both work.
+For `GCAL_PRIVATE_KEY`, paste the **whole** key, including the
+`-----BEGIN … KEY-----` and `-----END … KEY-----` lines top and bottom. (Those
+are written with a gap here on purpose: CI refuses to let this repository
+contain the real header text, and it is a public repository, so that is the
+right call. In your file they appear in full.) The code accepts the newlines
+either as real line breaks or as the literal `\n` they are stored as inside the
+JSON file — both work.
 
 **8. Deploy and check it**
 

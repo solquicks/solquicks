@@ -22,8 +22,14 @@ const base = process.argv[2] || 'origin/main';
 const SRC = 'worker/src/index.js';
 const here = new URL('../../', import.meta.url).pathname;
 
-const git = (...args) =>
-  execFileSync('git', args, { cwd: here, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const run = (...args) =>
+  execFileSync('git', args, { cwd: here, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (...args) => run(...args).trim();
+// File contents must NOT be trimmed. The first version of this used the
+// trimming helper for `git show`, which dropped the file's trailing newline
+// while readFileSync kept it — so the two were never equal and every single
+// run reported the Worker as changed. It failed its own first CI run that way.
+const gitFile = (ref, path) => run('show', ref + ':' + path);
 
 const buildIn = (text) => {
   const m = /const BUILD = '([^']*)'/.exec(text);
@@ -32,7 +38,7 @@ const buildIn = (text) => {
 
 let baseSrc;
 try {
-  baseSrc = git('show', base + ':' + SRC);
+  baseSrc = gitFile(base, SRC);
 } catch (e) {
   // No base to compare against — a fresh clone, a shallow checkout, or the
   // very first commit. Nothing to assert, and failing here would block a

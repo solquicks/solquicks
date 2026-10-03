@@ -565,7 +565,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'bundles-calendar-1';
+const BUILD = 'bundles-calendar-2';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -3355,10 +3355,13 @@ function b64url(bytes) {
 /// carry the newlines as a literal backslash-n, so both forms are accepted —
 /// getting this wrong produces an "invalid key" that looks like a wrong key.
 function pemToPkcs8(pem) {
+  // Strips any PEM armour rather than one named marker: it handles every
+  // header variant, and it keeps the literal text of a private-key header out
+  // of a public repository — which the secret scan in CI refuses outright, and
+  // was right to.
   const body = String(pem)
     .replace(/\\n/g, '\n')
-    .replace(/-----BEGIN PRIVATE KEY-----/, '')
-    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/-----[A-Z0-9 ]+-----/g, '')
     .replace(/\s+/g, '');
   const raw = atob(body);
   const out = new Uint8Array(raw.length);
