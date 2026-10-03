@@ -59,7 +59,7 @@ const SITE = 'http://127.0.0.1:' + server.address().port + '/';
 
 // ── stand-ins ────────────────────────────────────────────────────────────────
 const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQuote: null, emptyAccounts: 3, accounts: {}, simFail: false,
-  quoteFail: 0, siteDelay: 0, boardThin: true, players: 2,
+  quoteFail: 0, siteDelay: 0, boardThin: true, players: 2, bundlesDown: false,
   reflectQuotes: [], reflectBuilds: [], reflectDown: false, reflectUnpublished: false,
   reflectMeasured: false, savings: [],
   // what the connected wallet holds, by mint
@@ -273,6 +273,10 @@ function workerAnswer(p, url, body) {
   // ── bundles ──
   // Two tiers of the same session, so the page's own "is the bigger one
   // cheaper each" rendering can be read off the screen.
+  // What an un-migrated database answers: the table does not exist, so the
+  // route 500s. The page has to cope, because that is the state between
+  // deploying and migrating.
+  if (p === '/api/bundle/types' && net.bundlesDown) return { error: 'server error' };
   if (p === '/api/bundle/types') return {
     bundles: [
       { id: 'space-4', typeId: 'space', name: '4\u00d7 Hosted X Space', qty: 4, minutes: 60,
@@ -717,6 +721,7 @@ await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite
 await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
 await page.exposeFunction('net_boardThin', (v) => { net.boardThin = v; return v; });
 await page.exposeFunction('net_players', (n) => { net.players = n; return n; });
+await page.exposeFunction('net_bundles_down', (v) => { net.bundlesDown = !!v; return v; });
 await page.exposeFunction('net_invite', () => net.invite);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -1185,6 +1190,33 @@ try {
     const custom = page.locator('.bk-pack', { hasText: '4× Custom content' });
     const eachC = (await custom.locator('.bk-pack-each').textContent()).replace(/\s+/g, ' ');
     ok('a fractional per-session price keeps its cents', /\$187\.50 each/.test(eachC), eachC);
+  }
+
+  section('bundles: a database that has not been migrated yet');
+  {
+    // Deploying the Worker before running the migrations is a real state, and
+    // the one the owner will be in first. The bundle section has to disappear
+    // rather than leave an empty heading that reads like a broken feature —
+    // and nothing else on the tab may break with it.
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+
+    await page.evaluate(() => { net_bundles_down(true); bkPacks = null; return loadBundles(); });
+    await page.waitForTimeout(300);
+
+    eq('no bundle cards are rendered', await page.locator('.bk-pack').count(), 0);
+    ok('and the heading is gone, not left empty',
+      await page.evaluate(() => document.getElementById('bk-pack-head').hidden));
+    ok('the single services are untouched', (await page.locator('.bk-card').count()) > 0);
+    ok('and a single booking still starts', await page.evaluate(() => {
+      const b = document.querySelector('.bk-card button.bk-go');
+      return !!b && !b.disabled;
+    }));
+
+    // Back on, the way it will be once the migrations run.
+    await page.evaluate(() => { net_bundles_down(false); bkPacks = null; return loadBundles(); });
+    await page.waitForSelector('.bk-pack', { timeout: 10000 });
+    eq('and it comes back once the tables exist', await page.locator('.bk-pack').count(), 3);
   }
 
   section('bundles: lock every time in up front');
@@ -1806,24 +1838,36 @@ try {
   await bonkForWif();
   await page.click('.sw-protect button[data-protect="on"]');
 
-  section('Fox Points: a board of two, both of them mine');
+  section('Fox Points: the board opens as soon as two are earning');
   {
-    // Same rule as the swap and staking boards. Two names reads as nobody is
-    // here; two names that both belong to the site owner reads as nobody but
-    // him, which is worse than no board.
+    // This asserted the opposite until 2026-10-03: two names were hidden
+    // behind a count, written when both of them were the owner's own wallets.
+    // Two different people earning is a race, and hiding it tells the second
+    // one their points did not count.
     await page.evaluate(() => switchTab('leaderboard'));
     await page.evaluate(() => { net_players(2); return renderLeaderboard(); });
-    await page.waitForFunction(() => /earning so far/.test(document.getElementById('lb-table').textContent),
+    await page.waitForFunction(() => document.querySelectorAll('#lb-table .lb-table-row').length >= 2,
       null, { timeout: 10000 });
-    const thin = (await page.textContent('#lb-table')).replace(/\s+/g, ' ').trim();
-    ok('two players are reported as a count', /earning so far/.test(thin), thin);
-    ok('and nobody is named', !/…/.test(thin), thin);
+    eq('two wallets are both on the board', await page.locator('#lb-table .lb-table-row').count(), 2);
+    const two = (await page.textContent('#lb-table')).replace(/\s+/g, ' ').trim();
+    ok('with their points', /1,000/.test(two) && /900/.test(two), two);
+    ok('and not hidden behind a count', !/earning so far/.test(two), two);
+    ok('the leader is ranked first', /\ud83e\udd47/.test(two), two);
+
+    // One is still not a board — it is the owner looking at himself. The mock's
+    // first wallet is the connected one, so with a single player that entry IS
+    // the viewer and the copy is the invitation rather than the count.
+    await page.evaluate(() => { net_players(1); return renderLeaderboard(); });
+    await page.waitForFunction(() => document.querySelectorAll('#lb-table .lb-table-row').length === 0,
+      null, { timeout: 10000 });
+    const one = (await page.textContent('#lb-table')).replace(/\s+/g, ' ').trim();
+    ok('a single wallet is not a board', !/lb-table-row/.test(one) && one.length > 0, one);
+    ok('and it says something rather than going blank', /fox/i.test(one), one);
 
     await page.evaluate(() => { net_players(4); return renderLeaderboard(); });
-    await page.waitForFunction(() => document.querySelectorAll('#lb-table .lb-table-row').length >= 3,
+    await page.waitForFunction(() => document.querySelectorAll('#lb-table .lb-table-row').length >= 4,
       null, { timeout: 10000 });
-    ok('four players are listed by name',
-      (await page.locator('#lb-table .lb-table-row').count()) >= 3);
+    eq('four players are all listed', await page.locator('#lb-table .lb-table-row').count(), 4);
 
     await page.evaluate(() => { net_players(0); return renderLeaderboard(); });
     await page.waitForFunction(() => /Be the first fox/.test(document.getElementById('lb-table').textContent),

@@ -140,12 +140,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The BUILD check below compares this branch's worker against main,
+          # so the history has to be there to compare against.
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
       - name: Worker parses
         run: node --check worker/src/index.js
+
+      # A changed Worker must carry a changed BUILD marker, because that marker
+      # is the only way to tell a stale deploy from a current one. Two commits
+      # in October changed the booking prices without touching it, the Worker
+      # was never deployed, and /api/health reported a match while production
+      # quoted the old prices for days.
+      - name: Worker source changed means BUILD changed
+        run: |
+          git fetch --no-tags --depth=0 origin "${GITHUB_BASE_REF:-main}" 2>/dev/null || true
+          node worker/test/build-bumped.mjs "origin/${GITHUB_BASE_REF:-main}"
 
       # Every env.X the Worker reads must be declared somewhere: a [vars] entry or
       # binding in wrangler.toml, or a secret listed in .dev.vars.example. A

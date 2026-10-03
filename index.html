@@ -10925,18 +10925,21 @@
 
       rows.sort(function (a, b) { return b.points - a.points; });
 
-      // Two names on a board reads as nobody is here, and on this site both of
-      // them were mine — which reads as nobody but the owner, and is worse
-      // than showing no board at all. The swap and staking boards already say
-      // the number instead; so does this one, until there is a race.
-      const RACE_NEEDS = 3;
+      // A board of one is not a board — it is the owner looking at himself, and
+      // the swap and staking boards say the number instead for that reason.
+      //
+      // This used to need three, written when both entries on it were the
+      // owner's own wallets. That is no longer true: two different people
+      // earning is a race, and hiding it tells the second one their points did
+      // not count. Two is the floor now.
+      const RACE_NEEDS = 2;
       const others = rows.filter(function (r) { return !r.me; }).length;
       if (rows.length && rows.length < RACE_NEEDS) {
         el.innerHTML = '<div class="lb-log-empty">' +
           (others === 0
             ? 'Be the first fox on the board — connect a wallet and start earning.'
             : others + ' fox' + (others === 1 ? '' : 'es') + ' earning so far. ' +
-              'The board opens up once a few more join.') +
+              'The board opens up as soon as somebody else joins.') +
           '</div>';
         return;
       }
