@@ -418,7 +418,12 @@ async function standIns(context) {
       if (u.pathname === '/api/reflect/quote') {
         const b = JSON.parse(req.postData() || '{}');
         net.reflectQuotes.push(b);
-        return json(route, { side: b.side, inAmount: b.amount, outAmount: Math.floor(b.amount * 0.999) });
+        // Redeeming returns more than the token count, because the token is
+        // worth more than one dollar — that is the whole point of it. Depositing
+        // returns fewer tokens than dollars for the same reason. A stub that got
+        // this backwards made a correct page look wrong.
+        return json(route, { side: b.side, inAmount: b.amount,
+          outAmount: Math.floor(b.amount * (b.side === 'redeem' ? 1.01 : 0.99)) });
       }
       if (u.pathname === '/api/reflect/record') {
         net.savings.unshift(Object.assign({ ts: Date.now() }, JSON.parse(req.postData() || '{}')));
@@ -1882,6 +1887,61 @@ try {
       /\d+\.\d{2} USDC/.test(await page.textContent('#df-pos-worth')), await page.textContent('#df-pos-worth'));
     eq('which means a redeem quote for exactly what they hold',
       net.reflectQuotes.at(-1).amount, 100000000);
+
+    // Earnings are what it is worth now less what actually went in. Comparing
+    // the token count to its own value is the exchange rate, not earnings, and
+    // reported a profit the moment somebody deposited — before anything had
+    // happened. On a money page, a flattering number is the worst kind of wrong.
+    {
+      // Chosen so the two sums give different answers, which is the only way
+      // this test is worth anything: holding 100 USDC+ worth 101 USDC, against
+      // 90 USDC actually put in.
+      //   against what went in : 101 - 90 = 11.00 earned   ← right
+      //   against the token count: 101 - 100 = 1.00 earned ← the exchange rate
+      net.savings = [{ wallet: WALLET, side: 'in', amount: 90, ts: Date.now() - 86400000,
+        signature: 'a'.repeat(80) }];
+      await page.evaluate(() => paintDefiPosition());
+      await page.waitForFunction(() => !document.getElementById('df-pos-gain').hidden,
+        null, { timeout: 15000 });
+      const line = await page.textContent('#df-pos-gain');
+      ok('earnings are measured against what went in', /\+11\.00 earned/.test(line), line);
+      ok('and not against the token count, which is only the exchange rate',
+        !/\+1\.00 earned/.test(line), line);
+
+      // Withdrawals count against it, or somebody who took money out would be
+      // shown it again as profit.
+      net.savings = [{ wallet: WALLET, side: 'in', amount: 90, ts: Date.now() - 86400000, signature: 'a'.repeat(80) },
+                     { wallet: WALLET, side: 'out', amount: 40, ts: Date.now() - 3600000, signature: 'c'.repeat(80) }];
+      await page.evaluate(() => paintDefiPosition());
+      await page.waitForFunction(
+        () => /\+51\.00 earned/.test(document.getElementById('df-pos-gain').textContent),
+        null, { timeout: 15000 });
+      ok('and what was taken out is subtracted from it',
+        /\+51\.00 earned/.test(await page.textContent('#df-pos-gain')));
+
+      // Put in more than it is worth, and it has to say so rather than hide it.
+      net.savings = [{ wallet: WALLET, side: 'in', amount: 200, ts: Date.now() - 86400000,
+        signature: 'b'.repeat(80) }];
+      await page.evaluate(() => paintDefiPosition());
+      await page.waitForFunction(
+        () => /below what you put in/.test(document.getElementById('df-pos-gain').textContent),
+        null, { timeout: 15000 });
+      ok('being down is said plainly, not hidden',
+        /below what you put in/.test(await page.textContent('#df-pos-gain')));
+
+      // And when nothing was recorded, nothing is claimed. A deposit made
+      // before this site wrote any of it down is invisible here, and inventing
+      // a number for it would be guessing with somebody's money.
+      net.savings = [];
+      await page.evaluate(() => paintDefiPosition());
+      await page.waitForFunction(() => document.getElementById('df-pos-gain').hidden,
+        null, { timeout: 15000 });
+      ok('with no record of what went in, no gain or loss is claimed',
+        await page.locator('#df-pos-gain').isHidden());
+      // The position itself still shows — what they hold and what it is worth
+      // are both facts regardless.
+      ok('though what they hold is still shown', !(await page.locator('#df-position').isHidden()));
+    }
 
     // Nothing to show is better than a position belonging to nobody.
     net.tokens['USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS'] = 0;

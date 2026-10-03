@@ -1312,6 +1312,7 @@
     .df-pos-row b { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; color: var(--ink); }
     .df-pos-worth b { color: var(--green); }
     .df-pos-gain { margin-top: 7px; font-size: 0.8rem; font-weight: 700; color: var(--green); }
+    .df-pos-gain.down { color: var(--crimson); }
     .df-leg {
       background: var(--cream); border: 2px solid #E7DFD2; border-radius: 16px;
       padding: 14px 16px; transition: border-color 0.15s ease;
@@ -5252,14 +5253,48 @@
         const b = await r.json();
         if (!r.ok || typeof b.outAmount !== 'number') throw new Error('no quote');
         worthEl.textContent = usdcText(b.outAmount) + ' USDC';
-        const gain = b.outAmount - units;
-        if (gain > 0) {
-          gainEl.hidden = false;
-          gainEl.textContent = '+' + usdcText(gain) + ' USDC earned so far';
-        }
+
+        // Earnings are what it is worth now less what was actually put in.
+        //
+        // This used to subtract the token count from its own value, which is
+        // not earnings at all — it is the exchange rate. A deposit of 1 USDC
+        // buys 0.9916 USDC+ that redeems for 1 USDC, so that sum reported
+        // "+0.0084 earned" on the day somebody deposited, before anything had
+        // happened. Flattering, and wrong, on the one number that matters.
+        //
+        // What went in is only knowable from what this site recorded, so when
+        // there is no record there is no claim.
+        const net = await netDeposited();
+        if (net === null || net <= 0) { gainEl.hidden = true; return; }
+        const gain = b.outAmount - Math.round(net * Math.pow(10, USDC_DECIMALS));
+        gainEl.hidden = false;
+        gainEl.className = 'df-pos-gain' + (gain < 0 ? ' down' : '');
+        gainEl.textContent = gain === 0
+          ? 'Level with what you put in'
+          : (gain > 0 ? '+' + usdcText(gain) + ' earned' : usdcText(-gain) + ' below what you put in');
       } catch (e) {
         // Better to show nothing than a number that is not the number.
         worthEl.textContent = '—';
+      }
+    }
+
+    /// What this wallet has actually put in, from what the site recorded —
+    /// deposits less withdrawals. Null when there is nothing recorded, which is
+    /// not the same as zero: a deposit made before this was written down, or
+    /// from somewhere else, is invisible here and must not be reported as a
+    /// profit or a loss.
+    async function netDeposited() {
+      if (!Wallet.pubkey) return null;
+      try {
+        const r = await fetch(POINTS_API + '/api/reflect/history?wallet=' + encodeURIComponent(Wallet.pubkey));
+        const b = await r.json();
+        const rows = (b && b.rows) || [];
+        if (!rows.length) return null;
+        let net = 0;
+        for (const row of rows) net += (row.side === 'out' ? -1 : 1) * Number(row.amount || 0);
+        return net;
+      } catch (e) {
+        return null;
       }
     }
 
