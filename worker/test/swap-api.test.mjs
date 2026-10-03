@@ -821,8 +821,9 @@ section('the soulbound collectible');
   const quoteAs = async (who) =>
     (await call(env, 'GET', `/api/swap/quote?in=${SOL}&out=${BONK}&amount=1000000&slippage=50&wallet=` + who)).body;
 
-  eq('a collectible holder is quoted 0.15%', (await quoteAs(owner)).feeBps, 15);
-  eq('and told the standard rate, so the saving shows', (await quoteAs(owner)).fullFeeBps, 20);
+  // The collectible carries no fee perk any more — only Moon Rangers get one,
+  // so there is one thing to explain rather than two to rank against each other.
+  eq('a collectible holder pays the standard 0.2%', (await quoteAs(owner)).feeBps, 20);
   eq('which tier it is', (await quoteAs(owner)).tier, 'collectible');
   eq('nobody pays the full 0.2%', (await quoteAs(nobody)).feeBps, 20);
 

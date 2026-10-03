@@ -2812,8 +2812,6 @@
             <div class="bonding-bar"><div class="bonding-fill" id="collectible-fill" style="width:0"></div></div>
           </div>
           <ul class="mint-perks">
-            <li><strong>25% off swap fees</strong></li>
-            <li><strong>5% off Book The Fox</strong></li>
             <li><strong>250 Fox Points</strong>, once, when you mint</li>
             <li><strong>A rocket</strong> beside your wallet on the swap leaderboard</li>
           </ul>
@@ -8903,8 +8901,7 @@
       }).join('') +
         '<p class="bk-policy" style="text-align:center">' +
         escapeHtml(d.policy.rush) + ' ' + escapeHtml(d.policy.holder) +
-        (d.discountPct ? ' <strong>You hold ' +
-          (d.tier === 'ranger' ? 'a Ranger' : 'a collectible') + ', so ' + d.discountPct +
+        (d.discountPct ? ' <strong>You hold a Moon Ranger, so ' + d.discountPct +
           '% is already off every price below.</strong>' : '') + '</p>';
     }
 

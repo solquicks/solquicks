@@ -1631,7 +1631,9 @@ async function solFeeLamports(env, quote, bps) {
 // smaller cut of the same fee — Rangers are meant to stay the better thing to
 // hold, so a wallet with both is charged the Ranger rate.
 const HOLDER_SWAP_FEE_BPS = 10;
-const COLLECTIBLE_SWAP_FEE_BPS = 15;
+// The collectible carries no fee or price perk. Moon Rangers are the only
+// holders who get one, so there is one thing to explain rather than two that
+// have to be ranked against each other.
 const COLLECTIBLE_PRICE_SOL = 0.1;
 const COLLECTIBLE_POINTS = 250;
 // What the candy machine was created to hold, and the real ceiling — the chain
@@ -1642,7 +1644,6 @@ const COLLECTIBLE_CAP = 100000;
 function swapFeeBpsFor(tier) {
   // `true` is the old Ranger-or-not flag, still passed by older callers.
   if (tier === 'ranger' || tier === true) return HOLDER_SWAP_FEE_BPS;
-  if (tier === 'collectible') return COLLECTIBLE_SWAP_FEE_BPS;
   return SWAP_FEE_BPS;
 }
 
@@ -2525,12 +2526,11 @@ async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury)
 const RUSH_HOURS = 48;
 const RUSH_PCT = 50;
 const HOLDER_DISCOUNT_PCT = 30;
-const COLLECTIBLE_DISCOUNT_PCT = 5;
+
 
 /// What comes off a booking for this wallet. Rangers first, as everywhere else.
 function discountPctFor(tier) {
   if (tier === 'ranger' || tier === true) return HOLDER_DISCOUNT_PCT;
-  if (tier === 'collectible') return COLLECTIBLE_DISCOUNT_PCT;
   return 0;
 }
 const MIN_LEAD_HOURS = 24;
@@ -3887,8 +3887,6 @@ export default {
           cap: COLLECTIBLE_CAP,
           priceSol: COLLECTIBLE_PRICE_SOL,
           points: COLLECTIBLE_POINTS,
-          swapFeeBps: COLLECTIBLE_SWAP_FEE_BPS,
-          discountPct: COLLECTIBLE_DISCOUNT_PCT,
           holder: isWallet(who) ? await isCollectibleHolder(env, who) : false
         });
       }
@@ -4885,7 +4883,6 @@ export default {
           rushHours: RUSH_HOURS,
           rushPct: RUSH_PCT,
           holderDiscountPct: HOLDER_DISCOUNT_PCT,
-          collectibleDiscountPct: COLLECTIBLE_DISCOUNT_PCT,
           holder: !!holder,
           tier: holder,
           // What comes off for this wallet in particular, so the page does not

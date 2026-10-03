@@ -242,7 +242,7 @@ function workerAnswer(p, url) {
     ],
     policy: { cancellation: 'Cancel any time.', refunds: 'Full refund.', currency: 'Paid in USDC.',
       rush: 'Booked inside 48 hours costs more.', holder: 'Hold any Moon Ranger and 30% comes off.' },
-    rushHours: 48, rushPct: 50, holderDiscountPct: 30, collectibleDiscountPct: 5,
+    rushHours: 48, rushPct: 50, holderDiscountPct: 30,
     holder: false, tier: null, discountPct: 0,
     // A creator's site is quoted their wallet, the same way the worker does it.
     payTo: url.searchParams.get('site') === 'ripple'
@@ -320,7 +320,7 @@ function workerAnswer(p, url) {
     { mint: BONK, symbol: 'BONK', swaps: 9 },
     { mint: WIF, symbol: 'WIF', swaps: 2 }
   ] };
-  if (p === '/api/collectible') return { open: true, minted: 37, cap: 100000, priceSol: 0.1, points: 250, swapFeeBps: 15, discountPct: 7, holder: false };
+  if (p === '/api/collectible') return { open: true, minted: 37, cap: 100000, priceSol: 0.1, points: 250, holder: false };
   if (p === '/api/collectible/claim') return { points: 250, player: { points: 250 } };
   if (p === '/api/collection/sales') return { sales: [
     { mint: 'm1', name: 'Ranger #1', sol: 0.5, ts: Date.now() - 3600000, buyer: WALLET, seller: 'x' },
