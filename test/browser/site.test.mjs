@@ -1664,6 +1664,20 @@ try {
     // once it is open, and only the second one was covered. The first went
     // looking for a panel named after the hash, found nothing, threw, and left
     // the page with no panel showing at all — a refresh on Savings went blank.
+    // Every tab, not just this one. Landing on a tab runs its opening hook
+    // while the script is still being read, and anything it reaches for that
+    // is declared with const further down throws before the page is usable.
+    // Savings hit it; so did Store, on a different const.
+    for (const h of ['#swap', '#store', '#book', '#moon', '#cleanup', '#referrals', '#leaderboard']) {
+      const fresh = await context.newPage();
+      const thrown = [];
+      fresh.on('pageerror', (e) => thrown.push(e.message));
+      await fresh.goto(SITE + h, { waitUntil: 'domcontentloaded' });
+      await fresh.waitForTimeout(2500);
+      ok('landing on ' + h + ' throws nothing', thrown.length === 0, thrown.join(' | '));
+      await fresh.close();
+    }
+
     for (const h of ['#savings', '#defi']) {
       const fresh = await context.newPage();
       // Collected per page, because this one throws where the shared page does

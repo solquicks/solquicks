@@ -3462,7 +3462,13 @@
         if (typeof paintCart === 'function') paintCart();
       }
       if (tab === 'swap' && typeof loadSwap === 'function') loadSwap();
-      if (tab === 'store' && typeof loadStore === 'function') { loadStore(); loadCollectible(); }
+      // Deferred for the same reason Savings is: landing on #store runs this
+      // while the script is still being read, and loadCollectible reaches for
+      // MINT, which is declared further down. A function is hoisted and looks
+      // ready; the const it needs is not.
+      if (tab === 'store' && typeof loadStore === 'function') {
+        setTimeout(function () { loadStore(); loadCollectible(); }, 0);
+      }
       if (tab === 'referrals' && typeof loadReferrals === 'function') loadReferrals();
       // The rate is re-read on every open rather than once on load: it is a
       // variable rate and a number from an hour ago is not the number.
