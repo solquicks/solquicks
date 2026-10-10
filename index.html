@@ -6912,7 +6912,15 @@
     var swapQuoteAbort = null;   // the request in flight, so a stale one can be dropped
     var pickerSide = null;
     var pickerDebounce = null;
-    var swapBalances = { in: null, out: null }; // numbers, or null when unknown
+    // Numbers, or null when unknown — plus the mints they were read for. Without
+    // those, a balance read for the previous tokens looks like a balance for the
+    // current ones, and a check against it compares one token's amount against
+    // another token's holdings. Changing tokens, or changing them while a read
+    // is still in flight, both land there.
+    var swapBalances = { in: null, out: null, inMint: null, outMint: null };
+    // What a swap must leave behind when it is SOL being sold: a transaction
+    // cannot be paid for out of a balance the swap itself consumed.
+    var SWAP_SOL_RESERVE = 0.01;
     var swapHoldings = null;                     // the connected wallet's tokens, largest first
     var swapHoldingsFor = undefined;             // which wallet those holdings belong to
     var swapQuoteAt = 0;                         // when the price on screen was fetched
@@ -7582,7 +7590,7 @@
         loadSwapHistory();
       }
       if (!Wallet.pubkey) {
-        swapBalances = { in: null, out: null };
+        swapBalances = { in: null, out: null, inMint: null, outMint: null };
         el.textContent = ''; el.onclick = null; outEl.textContent = ''; pcts.hidden = true;
         paintAfterSwap();
         return;
@@ -7594,13 +7602,22 @@
       ]);
       // the pair or the wallet may have changed while those were in flight
       if (owner !== Wallet.pubkey || inMint !== swapPair.in.mint || outMint !== swapPair.out.mint) return;
-      swapBalances = { in: both[0], out: both[1] };
+      swapBalances = { in: both[0], out: both[1], inMint: inMint, outMint: outMint };
       el.textContent = both[0] === null ? '' : 'Balance ' + fmtAmount(both[0]) + ' ' + swapPair.in.symbol;
       el.style.cursor = both[0] ? 'pointer' : '';
       el.onclick = both[0] ? function () { setSwapPct(100); } : null;
       pcts.hidden = !both[0];
       outEl.textContent = both[1] === null ? '' : 'You have ' + fmtAmount(both[1]) + ' ' + swapPair.out.symbol;
       paintAfterSwap();
+      // The balance usually lands after the quote, so the button has to be
+      // re-decided here too — otherwise an affordable-looking button survives
+      // the moment we learn it is not.
+      const go = document.getElementById('sw-go');
+      if (go && swapQuote) {
+        const cannot = swapAffordable();
+        go.disabled = !!cannot;
+        go.textContent = cannot || ('Swap ' + swapPair.in.symbol + ' for ' + swapPair.out.symbol);
+      }
     }
 
     /// 25%, 50% or all of the balance. "All" of SOL leaves a little behind for
@@ -7609,7 +7626,7 @@
       const bal = swapBalances.in;
       if (!bal) return;
       let amount = bal * pct / 100;
-      if (swapPair.in.mint === SOL_MINT) amount = Math.min(amount, Math.max(0, bal - 0.01));
+      if (swapPair.in.mint === SOL_MINT) amount = Math.min(amount, Math.max(0, bal - SWAP_SOL_RESERVE));
       const d = swapPair.in.decimals;
       // rounded down, so it can never be more than is actually there
       amount = Math.floor(amount * Math.pow(10, d)) / Math.pow(10, d);
@@ -7626,7 +7643,10 @@
       const el = document.getElementById('sw-after');
       if (!line) return;
       const raw = swapInputTokens();
-      if (!swapQuote || swapBalances.in === null || swapBalances.out === null || !(raw > 0)) { line.hidden = true; return; }
+      // Same staleness trap as the affordability check: a balance read for the
+      // previous pair would be shown as this pair's.
+      const known = swapBalances.inMint === swapPair.in.mint && swapBalances.outMint === swapPair.out.mint;
+      if (!swapQuote || !known || swapBalances.in === null || swapBalances.out === null || !(raw > 0)) { line.hidden = true; return; }
       line.hidden = false;
       if (raw > swapBalances.in) {
         el.textContent = 'not enough ' + swapPair.in.symbol;
@@ -7837,6 +7857,40 @@
       }, wait);
     }
 
+    /// Whether the typed amount can actually be paid, and what to say if not.
+    ///
+    /// This did not exist, and its absence is what made a swap look broken. The
+    /// button stayed enabled for an amount the wallet did not hold, the wallet
+    /// refused to sign, and the message blamed "the swap plus network fees" —
+    /// which reads as a SOL problem to somebody holding plenty of SOL. Three
+    /// separate things had to be guessed at to work out that the input token
+    /// had simply run out.
+    ///
+    /// `null` means go ahead. A string is the reason not to, written to name
+    /// the token that is short.
+    function swapAffordable() {
+      const raw = swapInputTokens();
+      // Only a balance read for the token currently being sold can answer this.
+      // A read for a different mint is not a small inaccuracy — it is another
+      // token's number, and acting on it either blocks a payable swap or allows
+      // an unpayable one.
+      const bal = swapBalances.inMint === swapPair.in.mint ? swapBalances.in : null;
+      // Unknown is not the same as zero — no wallet connected, the read failed,
+      // or the tokens just changed. Refusing on an unknown blocks a swap that
+      // is perfectly payable.
+      if (bal === null || !(raw > 0)) return null;
+      if (raw > bal) {
+        return 'Not enough ' + swapPair.in.symbol + ' — you have ' + fmtAmount(bal);
+      }
+      // Selling SOL has to leave enough behind to pay for the transaction, or
+      // it cannot be sent at all. `setSwapPct` already reserves this; typing
+      // the number by hand bypassed that.
+      if (swapPair.in.mint === SOL_MINT && bal - raw < SWAP_SOL_RESERVE) {
+        return 'Leave at least ' + SWAP_SOL_RESERVE + ' SOL for network fees';
+      }
+      return null;
+    }
+
     async function quoteSwap(opts) {
       const auto = !!(opts && opts.auto);
       const tIn = swapPair.in;
@@ -7953,8 +8007,12 @@
         paintSwapPoints();
         paintAfterSwap();
         detail.hidden = false;
-        go.disabled = false;
-        go.textContent = 'Swap ' + tIn.symbol + ' for ' + tOut.symbol;
+        // The quote is good; whether it can be paid for is a separate question,
+        // and the button is where the answer belongs. Showing a price and then
+        // letting the wallet do the refusing is how this looked broken.
+        const cannot = swapAffordable();
+        go.disabled = !!cannot;
+        go.textContent = cannot || ('Swap ' + tIn.symbol + ' for ' + tOut.symbol);
 
         if (previous && swapShownOut < previous * (1 - PRICE_MOVED_PCT / 100)) {
           const drop = (1 - swapShownOut / previous) * 100;
@@ -8128,6 +8186,18 @@
           return;
         }
         refreshSwapBalance();
+      }
+
+      // Checked again here, not only on the button. Connecting a wallet is what
+      // first tells us the balance, and it happens on the click itself — so the
+      // button was painted before anything was known about what it could pay.
+      const cannot = swapAffordable();
+      if (cannot) {
+        msg.className = 'sw-msg bad';
+        msg.textContent = cannot + '.';
+        go.disabled = true;
+        go.textContent = cannot;
+        return;
       }
 
       go.disabled = true;
@@ -8487,7 +8557,18 @@
         return 'The price moved more than your slippage allowed, so the swap was cancelled to protect you. ' +
           'Nothing was taken. Try again, or raise max slippage.';
       }
-      if (/insufficient|0x1\b/i.test(m)) return 'Not enough balance to cover the swap plus network fees.';
+      if (/insufficient|0x1\b/i.test(m)) {
+        // This used to read "not enough balance to cover the swap plus network
+        // fees", which names the wrong thing twice: it suggests SOL, and it
+        // suggests fees, when the usual cause is simply running out of the
+        // token being sold. Say which token, and what is actually there.
+        const bal = swapBalances.in;
+        const sym = swapPair && swapPair.in ? swapPair.in.symbol : 'that token';
+        if (bal !== null && swapInputTokens() > bal) {
+          return 'Not enough ' + sym + ' — you have ' + fmtAmount(bal) + '. Nothing was taken.';
+        }
+        return 'Not enough ' + sym + ', or not enough SOL left for the network fee. Nothing was taken.';
+      }
       if (/blockhash|expired|timed out|timeout/i.test(m)) {
         return 'That took too long and expired before it landed. Nothing was swapped — try again.' +
           (swapProtect ? ' If it keeps happening, try with bot protection off.' : '');

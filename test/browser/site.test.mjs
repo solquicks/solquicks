@@ -66,7 +66,11 @@ const net = { worker: [], rpc: [], sender: [], built: null, lamports: 2e9, lastQ
   reflectMeasured: false, savings: [],
   // what the connected wallet holds, by mint
   tokens: { 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 500,
-            'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS': 0 },
+            'USDCSzr4fZ2se8RRRiFN8VBcvt8dLzHxuBfw7RZEkyS': 0,
+            // the fee-routing tests sell these, and the button now checks you
+            // actually hold what you are selling
+            'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5000000,
+            'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 1000 },
   // a real-shaped versioned transaction, so the page has to deserialize it
   reflectTx: null,
   invite: { ranger: false, invited: 6, traded: 2, earned: 2.4, available: 2.4, claimed: 0, claimable: false, invitedBy: null } };
@@ -721,6 +725,11 @@ const page = await context.newPage();
 await page.exposeFunction('net_setInvite', (patch) => { Object.assign(net.invite, patch); return net.invite; });
 await page.exposeFunction('net_quoteFail', (status) => { net.quoteFail = status; return status; });
 await page.exposeFunction('net_board_size', (n) => { net.boardSize = n; return n; });
+await page.exposeFunction('net_set_tokens', (t) => { net.tokens = t; return t; });
+await page.exposeFunction('net_set_lamports', (n) => { net.lamports = n; return n; });
+// So a section that changes the wallet's holdings can put back exactly what it
+// found, rather than guessing — a wrong guess breaks whatever runs next.
+await page.exposeFunction('net_get_wallet_state', () => ({ tokens: net.tokens, lamports: net.lamports }));
 await page.exposeFunction('net_players', (n) => { net.players = n; return n; });
 await page.exposeFunction('net_bundles_down', (v) => { net.bundlesDown = !!v; return v; });
 await page.exposeFunction('net_invite', () => net.invite);
@@ -1577,6 +1586,85 @@ try {
       await page.evaluate(() => typeof BOARD_OPENS_AT), 'number');
 
     await page.evaluate(() => { net_board_size(1); return loadSwapLeaderboard(); });
+  }
+
+  section('swap: a swap you cannot pay for is refused before the wallet sees it');
+  {
+    // The report that started this: "I tried to swap 1500 USDC for SOL and it
+    // did not work." Every server-side piece was healthy — the quote, the
+    // build, Sender, the transaction size. What was missing was any check that
+    // the wallet held the USDC. The button stayed enabled, the wallet refused
+    // to sign, and the message blamed "the swap plus network fees", which reads
+    // as a SOL problem to somebody holding plenty of SOL.
+    const before = await page.evaluate(() => net_get_wallet_state());
+
+    // Plenty of SOL for fees, and almost no USDC — exactly the state the real
+    // wallet was in.
+    await page.evaluate(() => {
+      net_set_tokens({ EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 0.086849 });
+      net_set_lamports(670173588);
+    });
+    await page.evaluate(() => { swapPair = { in: swapTokens.find((t) => t.symbol === 'USDC'), out: swapTokens.find((t) => t.symbol === 'SOL') }; paintPair(); });
+    await page.evaluate(() => refreshSwapBalance());
+    await page.waitForFunction(() => swapBalances.in !== null, null, { timeout: 10000 });
+
+    await page.fill('#sw-in-amount', '1500');
+    await page.evaluate(() => quoteSwap());
+    await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
+    await page.waitForTimeout(200);
+
+    const go = await page.evaluate(() => {
+      const b = document.getElementById('sw-go');
+      return { text: b.textContent.trim(), disabled: b.disabled };
+    });
+    ok('the button refuses it', go.disabled === true, JSON.stringify(go));
+    ok('and names the token that is short, not network fees',
+      /Not enough USDC/.test(go.text) && !/network fee/i.test(go.text), go.text);
+    ok('and says how much there actually is', /0\.0868/.test(go.text), go.text);
+
+    // Pressing it anyway must not reach the wallet.
+    const signsBefore = await page.evaluate(() => window.__wallet.signAndSend + window.__wallet.signOnly);
+    await page.evaluate(() => doSwap());
+    await page.waitForTimeout(300);
+    const signsAfter = await page.evaluate(() => window.__wallet.signAndSend + window.__wallet.signOnly);
+    eq('the wallet is never asked to sign it', signsAfter, signsBefore);
+    const msg = (await page.textContent('#sw-msg')).replace(/\s+/g, ' ').trim();
+    ok('and it says why in words', /Not enough USDC/.test(msg), msg);
+
+    // An amount it CAN afford is allowed straight through.
+    await page.fill('#sw-in-amount', '0.05');
+    await page.evaluate(() => quoteSwap());
+    await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
+    await page.waitForTimeout(200);
+    const okGo = await page.evaluate(() => {
+      const b = document.getElementById('sw-go');
+      return { text: b.textContent.trim(), disabled: b.disabled };
+    });
+    ok('an affordable amount is allowed', okGo.disabled === false, JSON.stringify(okGo));
+    ok('and the button offers the swap', /Swap USDC for SOL/.test(okGo.text), okGo.text);
+
+    // Selling SOL has to leave enough behind to pay for the transaction.
+    await page.evaluate(() => { swapPair = { in: swapTokens.find((t) => t.symbol === 'SOL'), out: swapTokens.find((t) => t.symbol === 'USDC') }; paintPair(); });
+    await page.evaluate(() => refreshSwapBalance());
+    await page.waitForFunction(() => swapBalances.in !== null, null, { timeout: 10000 });
+    await page.fill('#sw-in-amount', '0.6701');
+    await page.evaluate(() => quoteSwap());
+    await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
+    await page.waitForTimeout(200);
+    const solGo = await page.evaluate(() => {
+      const b = document.getElementById('sw-go');
+      return { text: b.textContent.trim(), disabled: b.disabled };
+    });
+    ok('selling nearly all your SOL is refused', solGo.disabled === true, JSON.stringify(solGo));
+    ok('because the fee has to come from somewhere', /network fees/.test(solGo.text), solGo.text);
+
+    // Put the wallet back exactly as it was found, and the pair with it.
+    await page.evaluate((b) => { net_set_tokens(b.tokens); net_set_lamports(b.lamports); }, before);
+    await page.evaluate(() => { swapPair = { in: swapTokens.find((t) => t.symbol === 'SOL'), out: swapTokens.find((t) => t.symbol === 'USDC') }; paintPair(); });
+    await page.evaluate(() => refreshSwapBalance());
+    await page.fill('#sw-in-amount', '1');
+    await page.evaluate(() => quoteSwap());
+    await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
   }
 
   section('swap: being busy does not become "No route"');
