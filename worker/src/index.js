@@ -3630,13 +3630,16 @@ async function calendarRemove(env, ref) {
 // Points bought with USDC, paid and verified exactly like a booking: the money
 // has to be on chain before a single point is credited.
 //
-// THE RATE IS THE WHOLE DECISION, and it is one number. Swapping earns 1 point
-// per dollar, capped at 500 a day, so a day of heavy swapping is 500 points. At
-// 10 points per dollar a buyer reaches that for $50 — dearer than nothing and
-// cheap enough to be worth buying, without making the people who earned theirs
-// look foolish. Raising it makes points easier to buy and earned points worth
-// less; lowering it does the reverse. Change POINTS_PER_USD and nothing else.
-const POINTS_PER_USD = 10;
+// THE RATE IS THE WHOLE DECISION, and it is one number. Set by the owner on
+// 2026-10-14: $5 buys 50,000 points, so points are deliberately abundant —
+// a big satisfying number rather than something scarce.
+//
+// Worth knowing rather than discovering: swapping earns 1 point per dollar and
+// caps at 500 a day, so $5 here is around 100 days of maxed-out swapping. The
+// leaderboard therefore ranks spending far above activity. That is a choice, not
+// an accident, and `swap_awards` still records what was earned separately if the
+// two are ever worth telling apart.
+const POINTS_PER_USD = 10000;
 
 // A floor, so the chain fee is never a large share of the purchase, and a
 // ceiling, because a single enormous purchase is far more likely to be a
@@ -3653,6 +3656,7 @@ const POINTS_PACKS = [
   { usd: 50, bonusPct: 20 },
   { usd: 100, bonusPct: 30 }
 ];
+// $5 → 50,000 · $20 → 220,000 · $50 → 600,000 · $100 → 1,300,000
 
 const POINTS_HOLD_MINUTES = HOLD_MINUTES;
 

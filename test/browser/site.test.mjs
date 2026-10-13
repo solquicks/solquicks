@@ -354,20 +354,20 @@ function workerAnswer(p, url, body) {
   }
   if (p === '/api/points/packs') return {
     packs: [
-      { usd: 5,   bonusPct: 0,  points: 50,   perDollar: 10 },
-      { usd: 20,  bonusPct: 10, points: 220,  perDollar: 11 },
-      { usd: 50,  bonusPct: 20, points: 600,  perDollar: 12 },
-      { usd: 100, bonusPct: 30, points: 1300, perDollar: 13 }
+      { usd: 5,   bonusPct: 0,  points: 50000,   perDollar: 10000 },
+      { usd: 20,  bonusPct: 10, points: 220000,  perDollar: 11000 },
+      { usd: 50,  bonusPct: 20, points: 600000,  perDollar: 12000 },
+      { usd: 100, bonusPct: 30, points: 1300000, perDollar: 13000 }
     ],
-    perDollar: 10, minUsd: 5, maxUsd: 500,
+    perDollar: 10000, minUsd: 5, maxUsd: 500,
     note: 'Points are a score. They are not money, they cannot be cashed out, ' +
       'and buying them does not buy anything else on this site.',
     payTo: TREASURY
   };
   if (p === '/api/points/buy') {
     const usd = body.usd;
-    const pack = [{ usd: 5, pts: 50 }, { usd: 20, pts: 220 }, { usd: 50, pts: 600 }, { usd: 100, pts: 1300 }]
-      .find((x) => x.usd === usd) || { usd, pts: usd * 10 };
+    const pack = [{ usd: 5, pts: 50000 }, { usd: 20, pts: 220000 }, { usd: 50, pts: 600000 }, { usd: 100, pts: 1300000 }]
+      .find((x) => x.usd === usd) || { usd, pts: usd * 10000 };
     net.pointsBuy = body;
     return { ref: 'PTS-AB12C', reference: 'REFPTS', usd, bonusPct: 0, points: pack.pts,
       usdc: usd * 1000000, usdcMint: USDC, payTo: TREASURY,
@@ -1221,7 +1221,7 @@ try {
   {
     await page.evaluate(() => { FoxPoints.token = 'test-session'; switchTab('store'); return loadPointsPacks(); });
     await page.waitForSelector('.pts-pack', { timeout: 15000 });
-    await page.locator('.pts-pack', { hasText: '600 pts' }).click();
+    await page.locator('.pts-pack', { hasText: '600,000 pts' }).click();
 
     await page.waitForSelector('#pay-wallet', { timeout: 10000 });
     const asked = (await page.textContent('#bk-flow')).replace(/\s+/g, ' ');
