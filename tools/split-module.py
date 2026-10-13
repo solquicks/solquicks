@@ -29,14 +29,29 @@ def banners(lines):
             out.append((n, m.group(1).strip()))
     return out
 
+def trailer_start(lines):
+    """Where app.js's generated tail begins — the exported setter and the export
+    list. The last real section would otherwise run to end of file and carry
+    them off into a feature module, taking every export with it."""
+    for n, l in enumerate(lines):
+        if l.startswith('export function __set(') or l.startswith('export {'):
+            # step back over the comment block immediately above it
+            k = n
+            while k > 0 and (lines[k-1].startswith('//') or not lines[k-1].strip()):
+                k -= 1
+            return k
+    return len(lines)
+
+
 def section_ranges(lines, wanted):
     bs = banners(lines)
+    stop = trailer_start(lines)
     ranges = []
     for i, (n, title) in enumerate(bs):
         for w in wanted:
             if title.upper().startswith(w.upper()):
-                end = bs[i + 1][0] if i + 1 < len(bs) else len(lines)
-                ranges.append((n, end, title))
+                end = bs[i + 1][0] if i + 1 < len(bs) else stop
+                ranges.append((n, min(end, stop), title))
     return sorted(ranges)
 
 DECL = re.compile(r'^(?:(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|(?:var|let|const)\s+([A-Za-z_$][\w$]*))')
@@ -121,11 +136,31 @@ def analyse(wanted):
 
     mine = set(top_names(moved))
     theirs = set(top_names(stays))
+    # plus everything already living in a feature module: a dependency on code
+    # that has already been split out is just as real, and invisible if only
+    # app.js is considered.
+    import glob as _g
+    for other in _g.glob(os.path.join(ROOT, 'js', '*.js')):
+        if os.path.basename(other) in ('app.js', 'main.js'): continue
+        osrc = io.open(other, encoding='utf-8').read()
+        theirs |= set(re.findall(r'(?:^|\n)(?:async\s+)?function\s+([A-Za-z_$][\w$]*)', osrc))
+        theirs |= set(re.findall(r'(?:^|\n)(?:var|let|const)\s+([A-Za-z_$][\w$]*)', osrc))
     moved_text, stays_text = '\n'.join(moved), '\n'.join(stays)
 
     needs = sorted((idents(moved_text) & theirs) - mine)       # import from app
     gives = sorted(n for n in mine if n in idents(stays_text)) # app imports back
-    return lines, rs, moved, stays, needs, gives
+
+    # An imported binding cannot be assigned to. A moved function that writes to
+    # a variable still living in app.js throws the moment it runs, and if the
+    # write sits inside a try/catch the whole feature just quietly takes its
+    # error path — which is exactly how the store came to report "stock
+    # unavailable". Anything the moved code writes to has to move with it.
+    body = strip_code(moved_text)
+    writes = set()
+    for n in needs:
+        if re.search(r'(?<![=!<>])\b' + re.escape(n) + r'\s*(?:=(?!=)|\+\+|--|\+=|-=)', body):
+            writes.add(n)
+    return lines, rs, moved, stays, needs, gives, sorted(writes)
 
 
 
@@ -211,18 +246,55 @@ if __name__ == '__main__':
     name = None if plan else args[0]
     wanted = args if plan else args[1:]
 
-    lines, rs, moved, stays, needs, gives = analyse(wanted)
+    lines, rs, moved, stays, needs, gives, writes = analyse(wanted)
     print('  sections: ' + ', '.join('%s (%d lines)' % (t, b - a) for a, b, t in rs))
     print('  moving %d lines, leaving %d' % (len(moved), len(stays)))
     print('  needs from app.js (%d): %s' % (len(needs), ', '.join(needs) or 'nothing'))
     print('  app.js needs back (%d): %s' % (len(gives), ', '.join(gives) or 'nothing'))
+    if writes:
+        print('  ALSO MOVES (the moved code writes to these): %s' % ', '.join(writes))
     if plan: sys.exit(0)
+
+    # Carry across the declarations the moved code writes to. They cannot stay
+    # behind and be imported, because an imported binding is read-only.
+    if writes:
+        carried = []
+        keep = []
+        for l in stays:
+            m2 = re.match(r'^(?:var|let|const)\s+([A-Za-z_$][\w$]*)\b', l)
+            if m2 and m2.group(1) in writes and l.rstrip().endswith(';'):
+                carried.append(l)
+            else:
+                keep.append(l)
+        if carried:
+            stays = keep
+            moved = carried + [''] + moved
+            needs = [n for n in needs if n not in writes]
+            gives = sorted(set(gives) | {n for n in writes
+                                         if re.search(r'\b' + re.escape(n) + r'\b', strip_code('\n'.join(stays)))})
 
     out = os.path.join(ROOT, 'js', name + '.js')
     head = ('// solquicks.com — %s.\n//\n'
             '// Split out of js/app.js unchanged; only the import line below is new,\n'
             '// and it was derived from what this code actually references.\n\n') % name
-    imp = ('import {\n' + ',\n'.join('  ' + n for n in needs) + "\n} from './app.js';\n\n") if needs else ''
+    # a name might live in a feature already split out, not in app.js
+    import glob as _glob
+    elsewhere = {}
+    for other in _glob.glob(os.path.join(ROOT, 'js', '*.js')):
+        base = os.path.basename(other)[:-3]
+        if base in ('app', 'main', name): continue
+        osrc = io.open(other, encoding='utf-8').read()
+        for nm in set(re.findall(r'(?:^|\n)(?:async\s+)?function\s+([A-Za-z_$][\w$]*)', osrc)) | \
+                  set(re.findall(r'(?:^|\n)(?:var|let|const)\s+([A-Za-z_$][\w$]*)', osrc)):
+            elsewhere.setdefault(nm, base)
+    from_app = [n for n in needs if n not in elsewhere]
+    by_mod = {}
+    for n in needs:
+        if n in elsewhere: by_mod.setdefault(elsewhere[n], []).append(n)
+    imp = ('import {\n' + ',\n'.join('  ' + n for n in from_app) + "\n} from './app.js';\n\n") if from_app else ''
+    for mod, ns in sorted(by_mod.items()):
+        imp += 'import {\n' + ',\n'.join('  ' + n for n in sorted(ns)) + "\n} from './%s.js';\n\n" % mod
+    needs = from_app
     io.open(out, 'w', encoding='utf-8').write(head + imp + '\n'.join(moved).strip('\n') + '\n'
             + (('\nexport {\n' + ',\n'.join('  ' + n for n in gives) + '\n};\n') if gives else ''))
 
@@ -243,6 +315,25 @@ if __name__ == '__main__':
     out_names = sorted((already | set(needs)) - gone)
     io.open(APP, 'w', encoding='utf-8').write(
         body + '\n\nexport {\n' + ',\n'.join('  ' + n for n in out_names) + '\n};\n')
+
+    # Other modules that imported a moved name FROM app.js must now take it from
+    # here. Leaving those behind is a stale import: the module still asks app.js
+    # for something it no longer has, and the page dies on load.
+    for other in _glob.glob(os.path.join(ROOT, 'js', '*.js')):
+        base = os.path.basename(other)
+        if base in ('app.js', 'main.js', name + '.js'): continue
+        osrc = io.open(other, encoding='utf-8').read()
+        m2 = re.search(r"import \{\n(.*?)\n\} from '\./app\.js';", osrc, re.S)
+        if not m2: continue
+        have = [x.strip().rstrip(',') for x in m2.group(1).split('\n') if x.strip()]
+        moved_out = [n for n in have if n in gone]
+        if not moved_out: continue
+        keep = [n for n in have if n not in gone]
+        repl = ("import {\n" + ',\n'.join('  ' + n for n in keep) + "\n} from './app.js';") if keep else ''
+        repl += ("\n\nimport {\n" + ',\n'.join('  ' + n for n in sorted(moved_out))
+                 + "\n} from './%s.js';" % name)
+        io.open(other, 'w', encoding='utf-8').write(osrc[:m2.start()] + repl.strip('\n') + osrc[m2.end():])
+        print('  %s now takes %s from %s.js' % (base, ', '.join(moved_out), name))
 
     # main.js learns about the new module
     mainp = os.path.join(ROOT, 'js', 'main.js')
