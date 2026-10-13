@@ -6903,7 +6903,30 @@
     var swapSpeed = (function () { try { return localStorage.getItem('sq.swap.speed') || 'normal'; } catch (e) { return 'normal'; } })();
     // On unless this visitor has turned it off. A protected swap is sent privately
     // so sandwich bots cannot trade around it, and costs 0.000005 SOL.
-    var swapProtect = (function () { try { return localStorage.getItem('sq.swap.protect') !== 'off'; } catch (e) { return true; } })();
+    // Bot protection needs a wallet that will sign WITHOUT sending, because the
+    // page itself posts the signed bytes to Sender. A mobile wallet's in-app
+    // browser handles that badly: Solflare signs, shows the swap as complete,
+    // and the promise never comes back to the page — so nothing is ever sent
+    // and the page waits for a signature that was never broadcast.
+    //
+    // With protection off the wallet signs AND sends, which is the path mobile
+    // wallets are built around. So it defaults off where sign-only is the risk,
+    // and stays a choice: anyone who turns it on is remembered.
+    var SWAP_SIGN_TIMEOUT_MS = 45000;
+    function signOnlyIsRisky() {
+      try {
+        // No hover and no fine pointer is a touch device, which in practice
+        // means a wallet's in-app browser rather than an extension.
+        return !(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+      } catch (e) { return false; }
+    }
+    var swapProtect = (function () {
+      try {
+        const saved = localStorage.getItem('sq.swap.protect');
+        if (saved) return saved !== 'off';
+      } catch (e) { /* storage unavailable; fall through to the default */ }
+      return !signOnlyIsRisky();
+    })();
     var swapTokenSeq = 0;
     var swapDebounce = null;
     var swapSeq = 0;
@@ -8231,14 +8254,27 @@
         }
         if (d.error) throw new Error(d.error);
 
-        go.textContent = 'Check your wallet…';
+        // Every step used to show "Check your wallet…", so a hang at signing, at
+        // sending and at confirming all looked identical — which is why a swap
+        // that never left the browser read the same as one waiting on the chain.
+        const step = function (t) { go.textContent = t; };
+        step('Check your wallet…');
         let sig;
         try {
           const extras = await swapFeeInstructions(d.feeTransfer);
           sig = swapProtect
-            ? await sendProtectedSwap(d.swapTransaction, d.lastValidBlockHeight, extras)
-            : await sendVersionedTx(await swapWithFee(d.swapTransaction, extras), d.lastValidBlockHeight);
+            ? await sendProtectedSwap(d.swapTransaction, d.lastValidBlockHeight, extras, step)
+            : await sendVersionedTx(await swapWithFee(d.swapTransaction, extras), d.lastValidBlockHeight, step);
         } catch (sendErr) {
+          // A wallet that never answered submitted nothing, so this must not be
+          // dressed up as "sent" — there is no signature to check and no swap
+          // to record. It gets the plain message below instead.
+          if (sendErr && sendErr.signTimedOut) {
+            msg.className = 'sw-msg bad';
+            msg.textContent = sendErr.message;
+            go.textContent = 'Swap';
+            return;                      // the finally re-enables the button
+          }
           // If it reached the network, the swap may well have landed — saying
           // "failed" when the money already moved is the worst outcome here.
           if (sendErr && sendErr.sentSignature) {
@@ -8320,7 +8356,8 @@
 
     /// Jupiter hands back a ready-made versioned transaction; all we do is get
     /// it signed and wait for the chain to agree.
-    async function sendVersionedTx(base64, lastValidBlockHeight) {
+    async function sendVersionedTx(base64, lastValidBlockHeight, step) {
+      step = step || function () {};
       const { Connection, VersionedTransaction, PublicKey } = w3();
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
@@ -8338,7 +8375,20 @@
         const res = await provider.w.signAndSendTransaction(tx);
         signature = signatureOf(res.signature || res);
       } else if (provider.kind === 'injected' && provider.w.signTransaction) {
-        const signed = await provider.w.signTransaction(tx);
+        // Sign-only here too, so the same watchdog applies: nothing has been
+        // submitted while we are waiting, so giving up is safe.
+        const signed = await Promise.race([
+          provider.w.signTransaction(tx),
+          new Promise(function (_, reject) {
+            setTimeout(function () {
+              const e = new Error('Your wallet did not send the signed swap back, so nothing ' +
+                'was submitted and nothing was taken. Try again.');
+              e.signTimedOut = true;
+              reject(e);
+            }, SWAP_SIGN_TIMEOUT_MS);
+          })
+        ]);
+        step('Sending…');
         signature = await connection.sendRawTransaction(signed.serialize(), { maxRetries: 3 });
       } else if (provider.kind === 'standard') {
         const feat = provider.w.features['solana:signAndSendTransaction'];
@@ -8353,6 +8403,7 @@
         throw new Error('This wallet cannot send transactions.');
       }
 
+      step('Confirming…');
       // confirm against the blockhash the transaction was built with, not a
       // fresh one fetched after sending
       try {
@@ -8463,8 +8514,11 @@
       return tx ? txBase64(tx) : base64;
     }
 
-    async function sendProtectedSwap(base64, lastValidBlockHeight, extras) {
+    /// `step` reports progress to the button, so a hang is attributable to the
+    /// stage it happened in rather than looking the same everywhere.
+    async function sendProtectedSwap(base64, lastValidBlockHeight, extras, step) {
       extras = extras || [];
+      step = step || function () {};
       const provider = Wallet.active;
       if (!provider) throw new Error('Connect a wallet first.');
       const sign = signOnlyFor(provider);
@@ -8476,7 +8530,24 @@
       }
       if (!tx) return sendVersionedTx(await swapWithFee(base64, extras), lastValidBlockHeight);
 
-      const signed = await sign(tx);
+      // A wallet that never answers used to leave the page waiting forever. The
+      // transaction is not sent until the bytes come back, so a timeout here is
+      // safe: nothing has left the wallet and nothing can land later.
+      const signed = await Promise.race([
+        sign(tx),
+        new Promise(function (_, reject) {
+          setTimeout(function () {
+            const e = new Error(
+              'Your wallet did not send the signed swap back, so nothing was submitted and ' +
+              'nothing was taken. This is what bot protection costs on a phone — it needs the ' +
+              'wallet to sign without sending, which mobile wallets often do not return. ' +
+              'Turn bot protection off and try again.');
+            e.signTimedOut = true;
+            reject(e);
+          }, SWAP_SIGN_TIMEOUT_MS);
+        })
+      ]);
+      step('Sending…');
       const signature = b58encode(w3().VersionedTransaction.deserialize(signed).signatures[0]);
       let binary = '';
       for (const b of signed) binary += String.fromCharCode(b);
@@ -8498,6 +8569,7 @@
         // already signed, so the same bytes through the normal route cannot land twice
         await rpc().sendRawTransaction(signed, { maxRetries: 3 });
       }
+      step('Confirming…');
 
       // Sender does not retry on its own; keep offering it until it lands
       let settled = false;

@@ -605,6 +605,9 @@ function testWallet(address) {
         version: '1.0.0', supportedTransactionVersions: ['legacy', 0],
         signTransaction: async (...inputs) => {
           window.__wallet.signOnly++;
+          // Set by a test to reproduce a wallet that approves and never
+          // returns: the promise simply never settles.
+          if (window.__wallet.neverAnswer) return new Promise(() => {});
           return inputs.map((i) => {
             const signed = new Uint8Array(i.transaction);
             signed.set(new Uint8Array(64).fill(2), 1);   // one signature, right after its count byte
@@ -1911,6 +1914,63 @@ try {
     eq('the tip is 5000 lamports', tip.lamports, 5000);
     eq('paid by the connected wallet', tip.from, WALLET);
     ok('what was sent is what the wallet signed', tip.signed);
+  }
+
+  section('swap: a wallet that approves and never answers');
+  {
+    // The real failure, reported 13 Oct: Solflare on a phone signs the swap,
+    // shows it as complete, and never hands the bytes back. Bot protection
+    // needs exactly that sign-without-send, so the page had nothing to submit
+    // and sat on "Check your wallet…" for good, waiting on a signature that
+    // was never broadcast. Nothing landed; nothing was taken.
+    // Remember how protection was set, so a later section that asserts the
+    // default is not left looking at this section's leftovers.
+    const protectBefore = await page.evaluate(() => swapProtect);
+    await page.evaluate(() => { setSwapProtect(true, false); window.__wallet.neverAnswer = true; });
+    await page.fill('#sw-in-amount', '1');
+    await page.evaluate(() => quoteSwap());
+    await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
+
+    // The watchdog is 45s in production; shortened so the suite does not wait.
+    await page.evaluate(() => { window.SWAP_SIGN_TIMEOUT_MS = 1200; });
+    const sentBefore = net.sender.length;
+    page.evaluate(() => doSwap()).catch(() => {});
+    await page.waitForFunction(() => {
+      const m = document.getElementById('sw-msg');
+      return m && m.textContent.trim().length > 0;
+    }, null, { timeout: 15000 });
+
+    const msg = (await page.textContent('#sw-msg')).replace(/\s+/g, ' ').trim();
+    ok('it gives up instead of hanging', msg.length > 0, msg);
+    ok('and says plainly that nothing was taken', /nothing was taken/i.test(msg), msg);
+    ok('and points at bot protection, which is what needs sign-without-send',
+      /bot protection/i.test(msg), msg);
+    ok('it does NOT claim the swap was sent', !/\bSent\b/.test(msg), msg);
+    ok('and offers no receipt link for a swap that never existed',
+      !/solscan/i.test(await page.innerHTML('#sw-msg')), msg);
+    eq('nothing reached Sender', net.sender.length, sentBefore);
+    ok('the button is usable again', await page.evaluate(() =>
+      !document.getElementById('sw-go').disabled));
+
+    await page.evaluate((p) => { window.__wallet.neverAnswer = false; setSwapProtect(p, false); }, protectBefore);
+  }
+
+  section('swap: bot protection is off by default on a phone');
+  {
+    // Sign-without-send is what strands a mobile wallet, so the setting that
+    // requires it does not start switched on there. It stays a choice: a saved
+    // preference wins either way.
+    const desktop = await page.evaluate(() => signOnlyIsRisky());
+    eq('this test browser looks like a desktop', desktop, false);
+
+    const asPhone = await page.evaluate(() => {
+      const real = window.matchMedia;
+      window.matchMedia = () => ({ matches: false });        // no hover, no fine pointer
+      const risky = signOnlyIsRisky();
+      window.matchMedia = real;
+      return risky;
+    });
+    eq('a touch device is treated as risky for sign-only', asPhone, true);
   }
 
   section('swap: a pair with no fee account pays in SOL');
