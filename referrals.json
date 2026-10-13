@@ -57,6 +57,15 @@
       "what": "Gacha packs of Solana NFTs, built by MonkeDAO and MagicBlock. Open a pack, see what you pull.",
       "youGet": "Packs you open yourself, with the odds published up front and the pulls yours to keep, sell or trade.",
       "logo": "img/referrals/junglefun.jpg"
+    },
+    {
+      "name": "D3 Frontier",
+      "tag": "Domains",
+      "url": "https://frontier.d3.com/?ref=mcwpyqyvpqr2l",
+      "what": "ICANN is adding over a thousand new internet extensions — .agent, .crypto, .btc and the rest. The last time the list grew was 2012. Frontier is where you earn priority on the names before they launch.",
+      "youGet": "10,000 points the moment you join, which go towards priority on the names you want. Priority, not a reservation — no name is guaranteed, and deposits sit in third-party vaults rather than with D3.",
+      "cta": "Join Frontier",
+      "logo": "img/partners/d3.jpg"
     }
   ]
 }
