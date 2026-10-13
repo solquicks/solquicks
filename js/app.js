@@ -1,3 +1,10 @@
+import {
+  cfFlip,
+  cfPick,
+  cfRender,
+  cfSetWager
+} from './flip.js';
+
 // solquicks.com — the whole front end.
 //
 // Moved out of index.html on 2026-10-14 exactly as it was, so this file can be
@@ -759,90 +766,6 @@ function renderDailyClaim() {
   btn.textContent = available
     ? 'Claim ' + amount + ' daily points'
     : 'Claimed today — back tomorrow';
-}
-
-// ── POINTS FLIP ──
-// Points only, and the outcome is decided by the server — nothing here
-// determines the result, it just shows it.
-const CF_WAGERS = [10, 50, 100, 500, 1000];
-let cfCall = 'heads';
-let cfWager = 10;
-let cfBusy = false;
-
-function cfPick(side) {
-  cfCall = side;
-  document.getElementById('cf-heads').classList.toggle('on', side === 'heads');
-  document.getElementById('cf-tails').classList.toggle('on', side === 'tails');
-}
-
-function cfRenderWagers() {
-  const wrap = document.getElementById('cf-wagers');
-  if (!wrap) return;
-  const balance = FoxPoints.total();
-  wrap.innerHTML = CF_WAGERS.map(function (w) {
-    const afford = balance >= w;
-    return '<button class="cf-wager' + (w === cfWager ? ' on' : '') + '"' +
-      (afford ? '' : ' disabled') +
-      ' onclick="cfSetWager(' + w + ')">' + w.toLocaleString() + '</button>';
-  }).join('');
-}
-
-function cfSetWager(w) { cfWager = w; cfRenderWagers(); }
-
-function cfRender() {
-  const card = document.getElementById('cf-card');
-  if (!card) return;
-  // signed-in only: the balance has to be one the server can verify
-  card.hidden = !(FoxPoints.token && FoxPoints.server);
-  if (card.hidden) return;
-  cfRenderWagers();
-  const go = document.getElementById('cf-go');
-  const canAfford = FoxPoints.total() >= cfWager;
-  go.disabled = cfBusy || !canAfford;
-  go.textContent = cfBusy ? 'Flipping…' : ('Flip ' + cfWager.toLocaleString());
-  if (!canAfford && !cfBusy) {
-    document.getElementById('cf-outcome').textContent = 'Not enough points for that wager.';
-  }
-}
-
-async function cfFlip() {
-  if (cfBusy) return;
-  cfBusy = true;
-  const coin = document.getElementById('cf-coin');
-  const out = document.getElementById('cf-outcome');
-  out.className = 'cf-outcome';
-  out.textContent = '';
-  coin.classList.add('spinning');
-  cfRender();
-
-  let r;
-  try {
-    r = await FoxPoints.api('/api/flip', { method: 'POST', body: { wager: cfWager, call: cfCall } });
-  } catch (e) {
-    r = { error: 'Could not reach the server.' };
-  }
-
-  // let the coin actually spin a moment, otherwise the result feels fake
-  await new Promise(function (res) { setTimeout(res, 700); });
-  coin.classList.remove('spinning');
-  cfBusy = false;
-
-  if (!r || r.error) {
-    out.textContent = (r && r.error) || 'Something went wrong.';
-    cfRender();
-    return;
-  }
-
-  if (r.player) FoxPoints.server = r.player;
-  coin.textContent = r.result === 'heads' ? '🪙' : '🌕';
-  out.className = 'cf-outcome ' + (r.won ? 'win' : 'lose');
-  out.textContent = r.won
-    ? 'It was ' + r.result + ' — you won ' + cfWager.toLocaleString() + '!'
-    : 'It was ' + r.result + ' — you lost ' + cfWager.toLocaleString() + '.';
-
-  FoxPoints.render();
-  cfRender();
-  renderLeaderboard();
 }
 
 // ── SPONSOR BANNER ──
@@ -7869,40 +7792,56 @@ if (document.getElementById('panel-store').classList.contains('active')) { loadS
 // the menu at all.
 loadReferrals();
 
+// Lets the entry module write this module's mutable state: a module namespace
+// is read-only from outside, so the live bindings on window need a door opened
+// deliberately from in here.
+export function __set(name, value) {
+  switch (name) {
+    case 'BOARD_OPENS_AT': BOARD_OPENS_AT = value; return;
+    case 'SWAP_SIGN_TIMEOUT_MS': SWAP_SIGN_TIMEOUT_MS = value; return;
+    case 'bkData': bkData = value; return;
+    case 'bkPacks': bkPacks = value; return;
+    case 'collectibleLoaded': collectibleLoaded = value; return;
+    case 'collection': collection = value; return;
+    case 'picked': picked = value; return;
+    case 'rangerList': rangerList = value; return;
+    case 'stakedAt': stakedAt = value; return;
+    case 'stakedMints': stakedMints = value; return;
+    case 'storeLoaded': storeLoaded = value; return;
+    case 'swapBalances': swapBalances = value; return;
+    case 'swapPair': swapPair = value; return;
+    case 'swapPrices': swapPrices = value; return;
+    case 'swapProtect': swapProtect = value; return;
+    case 'swapQuote': swapQuote = value; return;
+    case 'swapSlippage': swapSlippage = value; return;
+    case 'swapTokens': swapTokens = value; return;
+    default: throw new Error('not settable from outside: ' + name);
+  }
+}
 
-
-// ── THE PAGE'S PUBLIC SURFACE ──────────────────────────────────────────
-// This script is a module, so everything above is private to it. Two kinds
-// of caller still need names: the page's own onclick attributes, which can
-// only see globals, and the browser tests, which drive the page by calling
-// into it. Everything NOT listed here is now genuinely private, which is
-// the point of the exercise.
-//
-// The list is generated from the attributes in the page and the names the
-// tests use, so it describes what is actually depended on rather than what
-// somebody remembered to add.
-Object.assign(window, {
+export {
+  BOARD_OPENS_AT,
   FoxPoints,
   LAUNCHPAD,
   MINT,
   Privy,
   SENDER_TIP_ACCOUNTS,
   SOON_TABS,
+  SWAP_SIGN_TIMEOUT_MS,
   TOKEN_PROGRAM,
   Wallet,
   adCreativeFor,
   ago,
   anImgFallback,
   backToRateCard,
+  bkData,
+  bkPacks,
   burnSelected,
   buyPoints,
   cartCheckout,
   cartClear,
   cartDrop,
   cartPay,
-  cfFlip,
-  cfPick,
-  cfSetWager,
   chooseToken,
   clShow,
   claimDaily,
@@ -7913,7 +7852,9 @@ Object.assign(window, {
   closeEmpty,
   closeMenu,
   closeTokenPicker,
+  collectibleLoaded,
   collectibleMintIx,
+  collection,
   connectWallet,
   copyInviteLink,
   defi,
@@ -7948,7 +7889,9 @@ Object.assign(window, {
   pickPackMode,
   pickSlot,
   pickWeeks,
+  picked,
   quoteSwap,
+  rangerList,
   redeemCreditNow,
   redeemPick,
   refLogoMissing,
@@ -7977,12 +7920,22 @@ Object.assign(window, {
   signOnlyFor,
   signOnlyIsRisky,
   soonHtml,
+  stakedAt,
+  stakedMints,
   startAdBooking,
   startBooking,
   startBundle,
+  storeLoaded,
   submitAd,
   submitBooking,
   submitBundle,
+  swapBalances,
+  swapPair,
+  swapPrices,
+  swapProtect,
+  swapQuote,
+  swapSlippage,
+  swapTokens,
   switchTab,
   systemTransferIx,
   tabButton,
@@ -8002,27 +7955,4 @@ Object.assign(window, {
   useRecentPair,
   walletAccountsChanged,
   walletChipClick
-});
-
-// Mutable state needs a live binding, not a copy: a test that sets
-// swapPair must change the one this module reads, and a value this module
-// reassigns must be the one a test sees afterwards. A plain copy would
-// silently give each side its own.
-Object.defineProperty(window, 'BOARD_OPENS_AT', { get: () => BOARD_OPENS_AT, set: (v) => { BOARD_OPENS_AT = v; }, configurable: true });
-Object.defineProperty(window, 'SWAP_SIGN_TIMEOUT_MS', { get: () => SWAP_SIGN_TIMEOUT_MS, set: (v) => { SWAP_SIGN_TIMEOUT_MS = v; }, configurable: true });
-Object.defineProperty(window, 'bkData', { get: () => bkData, set: (v) => { bkData = v; }, configurable: true });
-Object.defineProperty(window, 'bkPacks', { get: () => bkPacks, set: (v) => { bkPacks = v; }, configurable: true });
-Object.defineProperty(window, 'collectibleLoaded', { get: () => collectibleLoaded, set: (v) => { collectibleLoaded = v; }, configurable: true });
-Object.defineProperty(window, 'collection', { get: () => collection, set: (v) => { collection = v; }, configurable: true });
-Object.defineProperty(window, 'picked', { get: () => picked, set: (v) => { picked = v; }, configurable: true });
-Object.defineProperty(window, 'rangerList', { get: () => rangerList, set: (v) => { rangerList = v; }, configurable: true });
-Object.defineProperty(window, 'stakedAt', { get: () => stakedAt, set: (v) => { stakedAt = v; }, configurable: true });
-Object.defineProperty(window, 'stakedMints', { get: () => stakedMints, set: (v) => { stakedMints = v; }, configurable: true });
-Object.defineProperty(window, 'storeLoaded', { get: () => storeLoaded, set: (v) => { storeLoaded = v; }, configurable: true });
-Object.defineProperty(window, 'swapBalances', { get: () => swapBalances, set: (v) => { swapBalances = v; }, configurable: true });
-Object.defineProperty(window, 'swapPair', { get: () => swapPair, set: (v) => { swapPair = v; }, configurable: true });
-Object.defineProperty(window, 'swapPrices', { get: () => swapPrices, set: (v) => { swapPrices = v; }, configurable: true });
-Object.defineProperty(window, 'swapProtect', { get: () => swapProtect, set: (v) => { swapProtect = v; }, configurable: true });
-Object.defineProperty(window, 'swapQuote', { get: () => swapQuote, set: (v) => { swapQuote = v; }, configurable: true });
-Object.defineProperty(window, 'swapSlippage', { get: () => swapSlippage, set: (v) => { swapSlippage = v; }, configurable: true });
-Object.defineProperty(window, 'swapTokens', { get: () => swapTokens, set: (v) => { swapTokens = v; }, configurable: true });
+};
