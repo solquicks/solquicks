@@ -229,6 +229,12 @@ jobs:
         working-directory: worker
         run: node test/reflect.test.mjs
 
+      # Money in, a balance out: a point must never be credited without a
+      # payment that is really on chain, for the right amount, and never twice.
+      - name: Buying points
+        working-directory: worker
+        run: node test/points-buy.test.mjs
+
       # Buying several sessions at once. The price ladder is asserted as an
       # invariant — more sessions must never cost more each — because that is
       # exactly the mistake the first rate card made.

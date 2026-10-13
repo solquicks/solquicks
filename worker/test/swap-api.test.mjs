@@ -391,6 +391,85 @@ section('the dollar estimate does not cost a Jupiter call every time');
   eq('so the next ask goes back to Jupiter rather than serving the blank', recovered.body.prices[WIF], 2);
 }
 
+section('a swap the browser never finished recording');
+{
+  // The failure this exists for, seen on 2026-10-09: the swap landed, the page
+  // never got to record it, and the site had no idea it happened — no points,
+  // missing from history, off the leaderboard. Recording ran only in the
+  // browser, after confirmation, so a closed tab lost it for good.
+  //
+  // The page now hands the signature over BEFORE confirming, and the scheduled
+  // sweep finishes the job on its own.
+  const env = freshEnv();
+  const me = wallet(21);
+  const sig = swapTx('Q'.repeat(88), me, {
+    spend: { mint: USDC, amount: 300 }, get: { mint: SOL, amount: 2 },
+    fee: { account: FEE[SOL], mint: SOL, amount: 0.004 }
+  });
+
+  const handed = await call(env, 'POST', '/api/swap/pending', { body: { signature: sig } });
+  eq('the signature is accepted', handed.status, 200);
+  eq('and queued', env._db.prepare('SELECT COUNT(*) AS n FROM pending_swaps').get().n, 1);
+
+  // The browser now does nothing at all — the tab is gone.
+  eq('nothing is recorded yet', env._db.prepare('SELECT COUNT(*) AS n FROM swaps').get().n, 0);
+  eq('and no points yet', env._db.prepare('SELECT COUNT(*) AS n FROM swap_awards').get().n, 0);
+
+  await runScheduled(env);
+
+  const row = env._db.prepare('SELECT * FROM swaps WHERE signature = ?').get(sig);
+  ok('the sweep recorded it', !!row, 'no swap row');
+  eq('against the wallet the chain names', row && row.wallet, me);
+  eq('sold what was actually sold', row && (row.in_symbol + ' ' + row.in_amount), 'USDC 300');
+  const award = env._db.prepare('SELECT * FROM swap_awards WHERE signature = ?').get(sig);
+  ok('and the points were awarded too', !!award && award.points > 0, JSON.stringify(award));
+  eq('to the same wallet', award && award.wallet, me);
+  eq('the queue is emptied', env._db.prepare('SELECT COUNT(*) AS n FROM pending_swaps').get().n, 0);
+
+  // Running again must not pay twice.
+  await runScheduled(env);
+  eq('one swap row, not two', env._db.prepare('SELECT COUNT(*) AS n FROM swaps').get().n, 1);
+  eq('one award, not two', env._db.prepare('SELECT COUNT(*) AS n FROM swap_awards').get().n, 1);
+}
+
+section('what the pending queue refuses and forgets');
+{
+  const env = freshEnv();
+  eq('nonsense is not a signature', (await call(env, 'POST', '/api/swap/pending', { body: { signature: 'x' } })).status, 400);
+  eq('nor is nothing', (await call(env, 'POST', '/api/swap/pending', { body: {} })).status, 400);
+  eq('nothing was queued', env._db.prepare('SELECT COUNT(*) AS n FROM pending_swaps').get().n, 0);
+
+  // A signature nobody can find is not an error — it may simply not have landed
+  // yet — but it must not sit in the queue for ever.
+  const ghost = 'Z'.repeat(88);
+  eq('an unknown signature is accepted', (await call(env, 'POST', '/api/swap/pending', { body: { signature: ghost } })).status, 200);
+  await runScheduled(env);
+  eq('it stays queued while it might still land',
+    env._db.prepare('SELECT COUNT(*) AS n FROM pending_swaps').get().n, 1);
+  eq('and the attempt is counted',
+    env._db.prepare('SELECT tries FROM pending_swaps WHERE signature = ?').get(ghost).tries, 1);
+  eq('nothing was recorded for it', env._db.prepare('SELECT COUNT(*) AS n FROM swaps').get().n, 0);
+
+  // Past the point where a blockhash could still be good, it is dropped.
+  env._db.prepare('UPDATE pending_swaps SET created_at = ? WHERE signature = ?')
+    .run(Date.now() - 3 * 3600000, ghost);
+  await runScheduled(env);
+  eq('a signature too old to land is forgotten',
+    env._db.prepare('SELECT COUNT(*) AS n FROM pending_swaps').get().n, 0);
+
+  // Somebody else's signature earns them nothing: the chain says whose it is.
+  const mine = wallet(22);
+  const theirs = swapTx('Y'.repeat(88), mine, {
+    spend: { mint: USDC, amount: 120 }, get: { mint: SOL, amount: 1 },
+    fee: { account: FEE[SOL], mint: SOL, amount: 0.002 }
+  });
+  await call(env, 'POST', '/api/swap/pending', { body: { signature: theirs } });
+  await runScheduled(env);
+  const award = env._db.prepare('SELECT * FROM swap_awards WHERE signature = ?').get(theirs);
+  eq('the points go to the wallet that signed it, not whoever posted it',
+    award && award.wallet, mine);
+}
+
 section('swap history');
 {
   const env = freshEnv();

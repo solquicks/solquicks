@@ -7708,6 +7708,24 @@
     // ── history ──
     /// Adds a swap to history. The chain may not have it the instant the wallet
     /// confirms, so "not found yet" is retried a few times before giving up.
+    /// Hands the signature to the worker the moment it exists, so a swap that
+    /// really happened gets recorded even if this page never gets to finish.
+    ///
+    /// Deliberately not awaited and deliberately silent: it must not slow the
+    /// swap down, and it must not be able to turn a successful swap into a
+    /// visible error. keepalive lets it survive the tab closing, which is the
+    /// case it exists for.
+    function registerPendingSwap(signature) {
+      try {
+        fetch(POINTS_API + '/api/swap/pending', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signature: signature }),
+          keepalive: true
+        }).catch(function () {});
+      } catch (e) { /* the sweep is a safety net, never a dependency */ }
+    }
+
     async function recordSwap(signature) {
       for (const wait of [0, 3000, 8000, 20000]) {
         if (wait) await new Promise(function (r) { setTimeout(r, wait); });
@@ -8404,6 +8422,7 @@
       }
 
       step('Confirming…');
+      registerPendingSwap(signature);
       // confirm against the blockhash the transaction was built with, not a
       // fresh one fetched after sending
       try {
@@ -8570,6 +8589,7 @@
         await rpc().sendRawTransaction(signed, { maxRetries: 3 });
       }
       step('Confirming…');
+      registerPendingSwap(signature);
 
       // Sender does not retry on its own; keep offering it until it lands
       let settled = false;

@@ -364,6 +364,8 @@ const RATE_RULES = [
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/bundle/types', '/api/bundle/lookup'], name: 'bundleread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/bundle/hold', '/api/bundle/confirm'], name: 'bundlewrite', by: 'ip', limit: 12, windowMs: 60000 },
+  { match: ['/api/points/packs'], name: 'pointsread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/points/buy', '/api/points/confirm'], name: 'pointsbuy', by: 'ip', limit: 12, windowMs: 60000 },
   // Spending a credit costs the caller nothing, so a reference worth guessing
   // at is the risk here rather than the money — kept deliberately tight.
   { match: ['/api/bundle/redeem'], name: 'bundleredeem', by: 'ip', limit: 10, windowMs: 60000 },
@@ -374,6 +376,9 @@ const RATE_RULES = [
   { match: ['/api/booking/watch', '/api/banner/watch', '/api/bundle/watch'], name: 'paywatch', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/quote'], name: 'swapquote', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/build'], name: 'swapbuild', by: 'ip', limit: 20, windowMs: 60000 },
+  // One row per swap somebody actually made, so this only needs to be generous
+  // enough for a person swapping quickly, not for anything automated.
+  { match: ['/api/swap/pending'], name: 'swappending', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top', '/api/swap/traded'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
@@ -565,7 +570,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'bundles-calendar-2';
+const BUILD = 'points-pending-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -2062,6 +2067,42 @@ async function inspectSwap(env, signature) {
 }
 
 /// What the wallet gave up in a swap, in dollars — the largest priced leg.
+/// Awards swap points for one signature. Lifted out of the request handler so
+/// the scheduled sweep can run the identical rules — the page used to be the
+/// only thing that could award, which meant closing the tab lost the points.
+///
+/// The wallet is NOT taken on trust: `swapValueUsd` refuses a signature the
+/// wallet did not sign, and the sweep reads the wallet off the chain anyway.
+async function awardSwapPointsFor(env, signature, wallet) {
+  const seen = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?')
+    .bind(signature).first();
+  if (seen) return { ok: true, awarded: 0, already: true };
+
+  const v = await swapValueUsd(env, signature, wallet);
+  if (!v.ok) return { ok: false, error: v.error };
+  if (v.usd < SWAP_POINTS_MIN_USD) {
+    return { ok: true, awarded: 0, tooSmall: true, usd: v.usd };
+  }
+
+  const dayStart = Date.now() - (Date.now() % 86400000);
+  const today = await env.DB.prepare(
+    'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
+  ).bind(wallet, dayStart).first();
+  const used = (today && today.n) || 0;
+  const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
+  const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
+
+  // The insert is the lock: two awards for one signature cannot both land, so
+  // the page and the sweep racing each other is harmless.
+  const wrote = await env.DB.prepare(
+    'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(signature) DO NOTHING'
+  ).bind(signature, wallet, v.usd, points, Date.now()).run();
+  if (wrote.meta.changes !== 1) return { ok: true, awarded: 0, already: true };
+  if (points > 0) await addPoints(env, wallet, 'swap', points);
+  return { ok: true, awarded: points, usd: v.usd, cappedOut: points === 0 && room === 0, room: room };
+}
+
 async function swapValueUsd(env, signature, wallet) {
   const s = await inspectSwap(env, signature);
   if (!s.ok) return s;
@@ -2281,6 +2322,66 @@ async function weeklySwapTop(env, start, limit) {
 /// Records every swap that paid a fee in the last stretch, read from the fee
 /// accounts themselves. The page records its own swaps as they happen, but a
 /// closed tab would otherwise leave a swap off the leaderboard.
+// How long a signature stays worth chasing. A swap that has not landed inside
+// this has expired — a blockhash is good for about a minute — so anything still
+// pending by now is never going to land.
+const PENDING_SWAP_TTL_MS = 2 * 3600000;
+const PENDING_SWAP_TRIES = 12;
+
+/// Finishes swaps the browser started and could not finish.
+///
+/// Recording used to happen only in the page, after confirmation: close the tab,
+/// lose signal, or hit a wallet that never answers, and a swap that really
+/// happened was invisible to this site forever — no points, missing from your
+/// history and off the leaderboard. One did exactly that on 2026-10-09.
+///
+/// The page now hands over the signature the moment it has one, before
+/// confirming, so this can finish the job on its own. Nothing here is taken on
+/// trust: the signature is just a lookup key, and the chain decides whether it
+/// is a swap at all and whose it is.
+async function settlePendingSwaps(env) {
+  if (!env.HELIUS_API_KEY) return;
+  const rows = await env.DB.prepare(
+    'SELECT signature, created_at, tries FROM pending_swaps ORDER BY created_at LIMIT 25'
+  ).all().catch(function () { return { results: [] }; });
+
+  for (const r of rows.results || []) {
+    const tooOld = Date.now() - r.created_at > PENDING_SWAP_TTL_MS;
+    const tooMany = (r.tries || 0) >= PENDING_SWAP_TRIES;
+
+    const done = await env.DB.prepare('SELECT signature FROM swaps WHERE signature = ?')
+      .bind(r.signature).first();
+    if (done) {
+      // the page got there first, or an earlier run did
+      await env.DB.prepare('DELETE FROM pending_swaps WHERE signature = ?').bind(r.signature).run();
+      continue;
+    }
+
+    if (tooOld || tooMany) {
+      await env.DB.prepare('DELETE FROM pending_swaps WHERE signature = ?').bind(r.signature).run();
+      continue;
+    }
+
+    await env.DB.prepare('UPDATE pending_swaps SET tries = tries + 1, last_try = ? WHERE signature = ?')
+      .bind(Date.now(), r.signature).run();
+
+    const rec = await recordSwap(env, r.signature).catch(function (e) {
+      return { ok: false, error: (e && e.message) || 'record failed' };
+    });
+    if (!rec || !rec.ok) continue;      // not landed yet; another run will try
+
+    // Recorded, so the points are owed too. The wallet comes off the chain,
+    // never from whoever posted the signature.
+    const s = await inspectSwap(env, r.signature).catch(function () { return null; });
+    if (s && s.ok && s.wallet) {
+      await awardSwapPointsFor(env, r.signature, s.wallet).catch(function (e) {
+        return logError(env, 'pending.award', (e && e.message) || e);
+      });
+    }
+    await env.DB.prepare('DELETE FROM pending_swaps WHERE signature = ?').bind(r.signature).run();
+  }
+}
+
 async function recordFeeAccountSwaps(env) {
   if (!env.HELIUS_API_KEY) return;
   // the treasury is where SOL-paid fees land, alongside booking and ad payments
@@ -3525,6 +3626,67 @@ async function calendarRemove(env, ref) {
 }
 
 
+// ── BUYING FOX POINTS ───────────────────────────────────────────────────────
+// Points bought with USDC, paid and verified exactly like a booking: the money
+// has to be on chain before a single point is credited.
+//
+// THE RATE IS THE WHOLE DECISION, and it is one number. Swapping earns 1 point
+// per dollar, capped at 500 a day, so a day of heavy swapping is 500 points. At
+// 10 points per dollar a buyer reaches that for $50 — dearer than nothing and
+// cheap enough to be worth buying, without making the people who earned theirs
+// look foolish. Raising it makes points easier to buy and earned points worth
+// less; lowering it does the reverse. Change POINTS_PER_USD and nothing else.
+const POINTS_PER_USD = 10;
+
+// A floor, so the chain fee is never a large share of the purchase, and a
+// ceiling, because a single enormous purchase is far more likely to be a
+// mistake than an intention.
+const POINTS_BUY_MIN_USD = 5;
+const POINTS_BUY_MAX_USD = 500;
+
+// Buying more at once earns a better rate. Written as a percentage on top
+// rather than a separate price, so the ladder cannot drift out of step with
+// POINTS_PER_USD the way the first bundle rate card did.
+const POINTS_PACKS = [
+  { usd: 5, bonusPct: 0 },
+  { usd: 20, bonusPct: 10 },
+  { usd: 50, bonusPct: 20 },
+  { usd: 100, bonusPct: 30 }
+];
+
+const POINTS_HOLD_MINUTES = HOLD_MINUTES;
+
+function pointsFor(usd, bonusPct) {
+  return Math.round(usd * POINTS_PER_USD * (1 + (bonusPct || 0) / 100));
+}
+
+function pointsPackList() {
+  return POINTS_PACKS.map(function (p) {
+    return {
+      usd: p.usd,
+      bonusPct: p.bonusPct,
+      points: pointsFor(p.usd, p.bonusPct),
+      perDollar: Math.round(pointsFor(p.usd, p.bonusPct) / p.usd * 10) / 10
+    };
+  });
+}
+
+/// The bonus that applies to an arbitrary amount: the best pack it reaches.
+function bonusForUsd(usd) {
+  let best = 0;
+  for (const p of POINTS_PACKS) if (usd >= p.usd) best = Math.max(best, p.bonusPct);
+  return best;
+}
+
+function pointsRef() {
+  const a = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let out = 'PTS-';
+  const bytes = crypto.getRandomValues(new Uint8Array(5));
+  for (const b of bytes) out += a[b % a.length];
+  return out;
+}
+
+
 // ── BUNDLES ─────────────────────────────────────────────────────────────────
 // Buying several of the same session at once, cheaper per session. A bundle is
 // bought like any other item on the rate card; what it buys is credits, and a
@@ -3785,6 +3947,12 @@ export default {
     // stop the health check from running
     ctx.waitUntil(refreshAnalytics(env).catch(function () {}));
     // record site swaps first, then pay out a closed week from complete numbers
+    // Swaps the browser could not finish come first: the fee-account scan below
+    // only ever sees swaps that paid a fee into a watched account, so a swap
+    // whose fee fell through touches nothing it looks at.
+    ctx.waitUntil(settlePendingSwaps(env).catch(function (e) {
+      return logError(env, 'pendingSwaps', e && e.message);
+    }));
     ctx.waitUntil(recordFeeAccountSwaps(env).then(function () { return awardWeeklySwapPrizes(env); }).catch(function (e) {
       return logError(env, 'swapWeekly', e && e.message);
     }));
@@ -3851,6 +4019,9 @@ export default {
       ctx.waitUntil(env.DB.prepare(
         "UPDATE bundles SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
       ).bind(Date.now()).run().catch(function () {}));
+      ctx.waitUntil(env.DB.prepare(
+        "UPDATE point_purchases SET status = 'expired' WHERE status = 'held' AND hold_until < ?"
+      ).bind(Date.now()).run().catch(function () {}));
 
 
 
@@ -3866,6 +4037,8 @@ export default {
           path === '/api/bundle/types' || path === '/api/bundle/hold' ||
           path === '/api/bundle/confirm' || path === '/api/bundle/redeem' ||
           path === '/api/bundle/lookup' || path === '/api/bundle/watch' ||
+          path === '/api/points/packs' || path === '/api/points/buy' ||
+          path === '/api/points/confirm' ||
           path === '/api/cart/checkout' || path === '/api/cart/confirm' ||
           path === '/api/cart/watch' ||
           path === '/api/banner/rates' || path === '/api/banner/live' ||
@@ -3873,6 +4046,7 @@ export default {
           path === '/api/banner/creative' || path === '/api/booking/watch' ||
           path === '/api/banner/watch' || path === '/api/swap/tokens' ||
           path === '/api/swap/quote' || path === '/api/swap/build' ||
+          path === '/api/swap/pending' ||
           path === '/api/swap/earned' || path === '/api/swap/search' ||
           path === '/api/swap/top' || path === '/api/swap/traded' ||
           path === '/api/swap/prices' || path === '/api/swap/failed' ||
@@ -4658,6 +4832,29 @@ export default {
           await logError(env, 'swap.holdings', (e && e.message) || e);
           return json(request, env, { error: 'could not read that wallet just now' }, 502);
         }
+      }
+
+      // Hands a signature over the moment the page has one, so the scheduled
+      // sweep can finish recording it whatever happens to the browser next.
+      //
+      // Nothing is trusted here and nothing is granted: the signature is only a
+      // lookup key, and the chain decides whether it is a swap and whose it is.
+      // The worst a stranger can do is make the worker look up a transaction.
+      if (path === '/api/swap/pending' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const signature = String(body.signature || '').trim();
+        // base58, and the length a real signature is — enough to keep nonsense
+        // out of the table without pretending this is a check on authenticity.
+        if (!/^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature)) {
+          return json(request, env, { error: 'that is not a signature' }, 400);
+        }
+        const already = await env.DB.prepare('SELECT signature FROM swaps WHERE signature = ?')
+          .bind(signature).first();
+        if (already) return json(request, env, { ok: true, already: true });
+        await env.DB.prepare(
+          'INSERT INTO pending_swaps (signature, created_at, tries) VALUES (?, ?, 0) ON CONFLICT DO NOTHING'
+        ).bind(signature, Date.now()).run();
+        return json(request, env, { ok: true });
       }
 
       if (path === '/api/swap/record' && request.method === 'POST') {
@@ -5658,6 +5855,96 @@ export default {
         return json(request, env, { ok: true });
       }
 
+      // ── buying points ──
+      if (path === '/api/points/packs' && request.method === 'GET') {
+        return json(request, env, {
+          packs: pointsPackList(),
+          perDollar: POINTS_PER_USD,
+          minUsd: POINTS_BUY_MIN_USD,
+          maxUsd: POINTS_BUY_MAX_USD,
+          // Said plainly, because it is the thing a buyer most needs to know
+          // and the thing a page like this is most tempted to leave out.
+          note: 'Points are a score. They are not money, they cannot be cashed out, ' +
+            'and buying them does not buy anything else on this site.',
+          payTo: await treasuryFor(env, siteOf(url, null))
+        });
+      }
+
+      // Points are credited to the wallet that is SIGNED IN, not to whoever
+      // sends the money, so the purchase has to start from a session.
+      if (path === '/api/points/buy' && request.method === 'POST') {
+        const wallet = await getSession(request, env).catch(function () { return null; });
+        if (!wallet) return json(request, env, { error: 'sign in first, so the points have somewhere to go' }, 401);
+
+        const body = await request.json().catch(function () { return {}; });
+        const usd = Math.round(Number(body.usd) * 100) / 100;
+        if (!(usd >= POINTS_BUY_MIN_USD) || !(usd <= POINTS_BUY_MAX_USD)) {
+          return json(request, env, {
+            error: 'pick an amount between $' + POINTS_BUY_MIN_USD + ' and $' + POINTS_BUY_MAX_USD
+          }, 400);
+        }
+        if (!env.TREASURY_WALLET) {
+          return json(request, env, { error: 'payments are not switched on yet' }, 503);
+        }
+
+        const bonusPct = bonusForUsd(usd);
+        const points = pointsFor(usd, bonusPct);
+        const ref = pointsRef();
+        const reference = newReference();
+        const now = Date.now();
+        await env.DB.prepare(
+          'INSERT INTO point_purchases (ref, wallet, usd, bonus_pct, points, status, hold_until, ' +
+          "created_at, reference) VALUES (?, ?, ?, ?, ?, 'held', ?, ?, ?)"
+        ).bind(ref, wallet, usd, bonusPct, points, now + POINTS_HOLD_MINUTES * 60000, now, reference).run();
+
+        return json(request, env, {
+          ref: ref, reference: reference, usd: usd, bonusPct: bonusPct, points: points,
+          usdc: usdcUnits(usd), usdcMint: USDC_MINT,
+          payTo: env.TREASURY_WALLET,
+          holdUntil: now + POINTS_HOLD_MINUTES * 60000, serverNow: now
+        });
+      }
+
+      if (path === '/api/points/confirm' && request.method === 'POST') {
+        const body = await request.json().catch(function () { return {}; });
+        const ref = String(body.ref || '').trim();
+        const signature = String(body.signature || '').trim();
+        if (!ref || !signature) return json(request, env, { error: 'reference and signature are both needed' }, 400);
+
+        const row = await env.DB.prepare('SELECT * FROM point_purchases WHERE ref = ?').bind(ref).first();
+        if (!row) return json(request, env, { error: 'no purchase with that reference' }, 404);
+        if (row.status === 'paid') {
+          return json(request, env, { ok: true, alreadyPaid: true, points: row.points,
+            player: await playerState(env, row.wallet) });
+        }
+
+        // The money is checked against the chain, for the exact amount, tagged
+        // with this purchase. Nothing here trusts the page.
+        const v = await verifyInvoice(env, row.wallet, signature, usdcUnits(row.usd),
+          'points:' + row.ref, env.TREASURY_WALLET);
+        if (!v.ok) return json(request, env, { error: v.error }, 402);
+
+        // The update is the lock: only the request that flips it off 'held'
+        // credits anything, so two confirms cannot pay twice.
+        const paid = await env.DB.prepare(
+          "UPDATE point_purchases SET status = 'paid', signature = ?, paid_at = ? " +
+          "WHERE ref = ? AND status IN ('held','expired')"
+        ).bind(signature, Date.now(), ref).run();
+        if (paid.meta.changes !== 1) {
+          const cur = await env.DB.prepare('SELECT status, points FROM point_purchases WHERE ref = ?').bind(ref).first();
+          return json(request, env, { ok: cur && cur.status === 'paid', alreadyPaid: true,
+            points: cur && cur.points, player: await playerState(env, row.wallet) });
+        }
+
+        await ensurePlayer(env, row.wallet);
+        await addPoints(env, row.wallet, 'purchase', row.points);
+        await alert(env, '🪙 Points bought — ' + row.ref + ' — $' + row.usd + ' for ' +
+          row.points + ' points\n' + row.wallet);
+
+        return json(request, env, { ok: true, points: row.points, usd: row.usd,
+          player: await playerState(env, row.wallet) });
+      }
+
       // ── bundles ──
       // Bought like any other item: a rate card, a hold that locks the price,
       // a payment. What it buys is credits, redeemed into ordinary bookings.
@@ -6188,41 +6475,21 @@ export default {
         const signature = String(body.signature || '').trim();
         if (!signature) return json(request, env, { error: 'which swap?' }, 400);
 
-        const seen = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?')
-          .bind(signature).first();
-        if (seen) return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
-
-        const v = await swapValueUsd(env, signature, wallet);
-        if (!v.ok) return json(request, env, { error: v.error }, 400);
-        if (v.usd < SWAP_POINTS_MIN_USD) {
+        const a = await awardSwapPointsFor(env, signature, wallet);
+        if (!a.ok) return json(request, env, { error: a.error }, 400);
+        if (a.tooSmall) {
           return json(request, env, {
             awarded: 0,
             note: 'Swaps under $' + SWAP_POINTS_MIN_USD + ' do not earn points.',
             player: await playerState(env, wallet)
           });
         }
-
-        const dayStart = Date.now() - (Date.now() % 86400000);
-        const today = await env.DB.prepare(
-          'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
-        ).bind(wallet, dayStart).first();
-        const used = (today && today.n) || 0;
-        const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
-        const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
-
-        const wrote = await env.DB.prepare(
-          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(signature) DO NOTHING'
-        ).bind(signature, wallet, v.usd, points, Date.now()).run();
-        if (wrote.meta.changes !== 1) {
-          return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
-        }
-        if (points > 0) await addPoints(env, wallet, 'swap', points);
+        if (a.already) return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
 
         return json(request, env, {
-          awarded: points,
-          usd: Math.round(v.usd * 100) / 100,
-          cappedOut: points === 0 && room === 0,
+          awarded: a.awarded,
+          usd: Math.round(a.usd * 100) / 100,
+          cappedOut: !!a.cappedOut,
           dailyCap: SWAP_POINTS_DAILY_CAP,
           player: await playerState(env, wallet)
         });
