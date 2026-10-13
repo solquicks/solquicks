@@ -1995,6 +1995,26 @@
       background: var(--cream); border-left: 3px solid var(--orange);
       border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 0 0 12px;
     }
+    /* ── buying points ── */
+    .pts-packs { display: grid; gap: 10px; margin: 14px 0 12px; }
+    @media (min-width: 560px) { .pts-packs { grid-template-columns: 1fr 1fr; } }
+    .pts-pack {
+      appearance: none; cursor: pointer; text-align: left; width: 100%; font-family: inherit;
+      background: var(--card); border: 2px solid #E7DFD2; border-radius: var(--radius);
+      padding: 12px 14px; display: flex; align-items: baseline; gap: 10px;
+    }
+    .pts-pack:hover:not(:disabled) { border-color: var(--orange); background: #fff; }
+    .pts-pack:disabled { opacity: 0.55; cursor: default; }
+    .pts-pack b {
+      font-family: 'Baloo 2', sans-serif; font-size: 1.05rem; color: var(--ink); font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+    .pts-pack span { font-size: 0.84rem; color: var(--ink-soft); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .pts-bonus {
+      font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+      background: var(--green); color: #fff; border-radius: 999px; padding: 2px 8px; margin-left: 6px;
+    }
+
     /* ── bundles ── */
     /* The bundle rate card belongs with the single services and must disappear
        with them whenever a flow opens. Nine different places hide #bk-list, so
@@ -2895,6 +2915,19 @@
           <div id="collectible-note" class="plushie-note"></div>
         </div>
       </div>
+
+      <!-- Fox Points, bought rather than earned. The card says what they are
+           and what they are not, because a score sold for money is the easiest
+           thing on this site to oversell. -->
+      <div class="product-card pts-card" id="pts-card" hidden>
+        <div class="product-info">
+          <div class="product-name">🪙 Fox Points</div>
+          <div class="product-desc">Top up your score. Paid in USDC, credited the moment the payment lands.</div>
+          <div class="pts-packs" id="pts-packs"></div>
+          <p class="mint-warning" id="pts-note"></p>
+          <div class="bk-msg" id="pts-msg"></div>
+        </div>
+      </div>
     </div>
 
     <!-- BOOK PANEL -->
@@ -3558,7 +3591,7 @@
       // MINT, which is declared further down. A function is hoisted and looks
       // ready; the const it needs is not.
       if (tab === 'store' && typeof loadStore === 'function') {
-        setTimeout(function () { loadStore(); loadCollectible(); }, 0);
+        setTimeout(function () { loadStore(); loadCollectible(); loadPointsPacks(); }, 0);
       }
       if (tab === 'referrals' && typeof loadReferrals === 'function') loadReferrals();
       // The rate is re-read on every open rather than once on load: it is a
@@ -8829,6 +8862,10 @@
 
     function startPayPolling(ref, kind, onPaid) {
       stopPayPolling();
+      // Buying points has no watch endpoint: it is confirmed by the wallet that
+      // paid, never by a stranger scanning for a reference, so there is nothing
+      // to poll for.
+      if (kind === 'points') return;
       const endpoint = kind === 'ad' ? '/api/banner/watch'
         : kind === 'cart' ? '/api/cart/watch'
         : kind === 'bundle' ? '/api/bundle/watch' : '/api/booking/watch';
@@ -8885,7 +8922,8 @@
         const sig = await sendUsdc(ctx.d.payTo, ctx.d.usdc, ctx.d.reference);
         btn.textContent = 'Confirming…';
         const endpoint = ctx.kind === 'ad' ? '/api/banner/confirm'
-          : ctx.kind === 'bundle' ? '/api/bundle/confirm' : '/api/booking/confirm';
+          : ctx.kind === 'bundle' ? '/api/bundle/confirm'
+          : ctx.kind === 'points' ? '/api/points/confirm' : '/api/booking/confirm';
         const res = await fetch(POINTS_API + endpoint, {
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' },
@@ -10292,6 +10330,92 @@
       document.getElementById('store-fill').style.width = '0';
     }
 
+    // ── BUYING FOX POINTS ──
+    // Paid the same way a booking is: the worker quotes it, the wallet pays in
+    // USDC, and the worker credits the points only once it has seen the money
+    // on chain. The page never credits anything.
+    var ptsPacks = null;
+
+    async function loadPointsPacks() {
+      const card = document.getElementById('pts-card');
+      if (!card) return;
+      try {
+        const res = await fetch(POINTS_API + '/api/points/packs', FoxPoints.token
+          ? { headers: { Authorization: 'Bearer ' + FoxPoints.token } } : {});
+        const d = await res.json();
+        if (d.error || !d.packs || !d.packs.length) throw new Error(d.error || 'no packs');
+        ptsPacks = d;
+        renderPointsPacks(d);
+        card.hidden = false;
+      } catch (e) {
+        // An unreachable rate card leaves no empty shell behind.
+        card.hidden = true;
+      }
+    }
+
+    function renderPointsPacks(d) {
+      document.getElementById('pts-packs').innerHTML = d.packs.map(function (p) {
+        return '<button class="pts-pack" onclick="buyPoints(' + p.usd + ')">' +
+          '<b>' + p.points.toLocaleString() + ' pts</b>' +
+          (p.bonusPct ? '<em class="pts-bonus">+' + p.bonusPct + '%</em>' : '') +
+          '<span>$' + p.usd + '</span></button>';
+      }).join('');
+      // Clicking offers to connect, so the prices are not hidden behind a step
+      // nobody has taken yet.
+      document.getElementById('pts-note').textContent = d.note;
+    }
+
+    async function buyPoints(usd) {
+      const msg = document.getElementById('pts-msg');
+      msg.className = 'bk-msg';
+      msg.textContent = '';
+      if (!FoxPoints.token) {
+        try { await connectWallet(); } catch (e) { /* closed the picker */ }
+        if (!FoxPoints.token) {
+          msg.className = 'bk-msg bad';
+          msg.textContent = 'Connect a wallet first, so the points have somewhere to go.';
+          return;
+        }
+      }
+      msg.textContent = 'Working…';
+      try {
+        const res = await fetch(POINTS_API + '/api/points/buy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + FoxPoints.token },
+          body: JSON.stringify({ usd: usd })
+        });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        msg.textContent = '';
+        // The same payment screen bookings and bundles use, so there is one
+        // place where money is asked for and one place it can go wrong.
+        document.getElementById('bk-flow').hidden = false;
+        switchTab('book');
+        document.getElementById('bk-list').hidden = true;
+        renderPayment(d, 'points', d.points.toLocaleString() + ' Fox Points',
+          function (sig) { showPointsDone(d, sig); });
+      } catch (e) {
+        msg.className = 'bk-msg bad';
+        msg.textContent = e.message || 'That did not work. Try again.';
+      }
+    }
+
+    function showPointsDone(d, sig) {
+      const flow = document.getElementById('bk-flow');
+      flow.hidden = false;
+      flow.innerHTML = '<div class="bk-flow bk-done">' +
+        '<div class="bk-tick">🪙</div>' +
+        '<div class="bk-lead">' + d.points.toLocaleString() + ' Fox Points</div>' +
+        '<p class="bk-sub">Added to your balance.</p>' +
+        '<div class="bk-ref">' + escapeHtml(d.ref) + '</div>' +
+        '<p class="bk-hint">Keep that reference.' +
+        (sig ? ' <a href="https://solscan.io/tx/' + encodeURIComponent(sig) + '" target="_blank" rel="noopener noreferrer">View receipt</a>' : '') +
+        '</p>' +
+        '<button class="bk-go ghost" style="margin-top:14px" onclick="switchTab(\'leaderboard\')">See your points</button>' +
+        '</div>';
+      FoxPoints.refresh();
+    }
+
     async function loadStore() {
       if (storeLoaded) return;
       try {
@@ -11156,7 +11280,7 @@
     }
     if (document.getElementById('panel-book').classList.contains('active')) { loadBooking(); loadBundles(); }
     if (document.getElementById('panel-swap').classList.contains('active')) loadSwap();
-    if (document.getElementById('panel-store').classList.contains('active')) { loadStore(); loadCollectible(); }
+    if (document.getElementById('panel-store').classList.contains('active')) { loadStore(); loadCollectible(); loadPointsPacks(); }
     // Runs whatever tab is open: it is what decides whether Referrals is in
     // the menu at all.
     loadReferrals();

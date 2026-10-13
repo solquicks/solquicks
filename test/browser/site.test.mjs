@@ -352,6 +352,27 @@ function workerAnswer(p, url, body) {
       sessions: []
     };
   }
+  if (p === '/api/points/packs') return {
+    packs: [
+      { usd: 5,   bonusPct: 0,  points: 50,   perDollar: 10 },
+      { usd: 20,  bonusPct: 10, points: 220,  perDollar: 11 },
+      { usd: 50,  bonusPct: 20, points: 600,  perDollar: 12 },
+      { usd: 100, bonusPct: 30, points: 1300, perDollar: 13 }
+    ],
+    perDollar: 10, minUsd: 5, maxUsd: 500,
+    note: 'Points are a score. They are not money, they cannot be cashed out, ' +
+      'and buying them does not buy anything else on this site.',
+    payTo: TREASURY
+  };
+  if (p === '/api/points/buy') {
+    const usd = body.usd;
+    const pack = [{ usd: 5, pts: 50 }, { usd: 20, pts: 220 }, { usd: 50, pts: 600 }, { usd: 100, pts: 1300 }]
+      .find((x) => x.usd === usd) || { usd, pts: usd * 10 };
+    net.pointsBuy = body;
+    return { ref: 'PTS-AB12C', reference: 'REFPTS', usd, bonusPct: 0, points: pack.pts,
+      usdc: usd * 1000000, usdcMint: USDC, payTo: TREASURY,
+      holdUntil: Date.now() + 20 * 60000, serverNow: Date.now() };
+  }
   if (p === '/api/banner/rates') return {
     rates: [
       { weeks: 1, price: 250, label: '1 week', startsAt: Date.now() + 86400000 },
@@ -1165,6 +1186,50 @@ try {
       'Consulting and advisory for your project · An idea session focused on growth and revenue · ' +
       'Go-to-market strategy · Marketing advisory · Community building strategy · ' +
       'Solana networking · Events planning');
+  }
+
+  section('buying points: the card');
+  {
+    await page.evaluate(() => { switchTab('store'); return loadPointsPacks(); });
+    await page.waitForSelector('#pts-card:not([hidden])', { timeout: 15000 });
+
+    const packs = await page.locator('.pts-pack').allTextContents();
+    eq('every pack is offered', packs.length, 4);
+    ok('each shows the points and the price',
+      packs.every((t) => /pts/.test(t) && /\$/.test(t)), JSON.stringify(packs));
+    ok('the better packs show their bonus', (await page.locator('.pts-bonus').count()) === 3);
+
+    // The thing a page selling a score is most tempted to leave out.
+    const note = (await page.textContent('#pts-note')).replace(/\s+/g, ' ');
+    ok('it says points are not money', /not money/i.test(note), note);
+    ok('and that they cannot be cashed out', /cashed out/i.test(note), note);
+    ok('and that they buy nothing else here', /does not buy anything else/i.test(note), note);
+
+    // Buying more is never worse value, read off the screen.
+    const per = packs.map((t) => {
+      const pts = Number(/([\d,]+) pts/.exec(t)[1].replace(/,/g, ''));
+      const usd = Number(/\$([\d.]+)/.exec(t)[1]);
+      return pts / usd;
+    });
+    for (let i = 1; i < per.length; i++) {
+      ok('pack ' + (i + 1) + ' is at least as good per dollar as pack ' + i,
+        per[i] >= per[i - 1], per[i] + ' vs ' + per[i - 1]);
+    }
+  }
+
+  section('buying points: it goes through the normal payment screen');
+  {
+    await page.evaluate(() => { FoxPoints.token = 'test-session'; switchTab('store'); return loadPointsPacks(); });
+    await page.waitForSelector('.pts-pack', { timeout: 15000 });
+    await page.locator('.pts-pack', { hasText: '600 pts' }).click();
+
+    await page.waitForSelector('#pay-wallet', { timeout: 10000 });
+    const asked = (await page.textContent('#bk-flow')).replace(/\s+/g, ' ');
+    ok('it asks for the right money', /50/.test(asked), asked.slice(0, 200));
+    ok('in USDC', /USDC/.test(asked), asked.slice(0, 200));
+    eq('and the worker was asked for that pack', net.pointsBuy.usd, 50);
+
+    await page.evaluate(() => backToRateCard());
   }
 
   section('bundles: the rate card');
