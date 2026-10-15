@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moon Rangers FPS — Leaderboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #07080f;
+      color: #e0e6f0;
+      font-family: 'Nunito', sans-serif;
+      min-height: 100vh;
+      padding: 0 0 60px;
+    }
+    header {
+      background: linear-gradient(135deg, #0d1020 0%, #12193a 100%);
+      border-bottom: 1px solid #1e2a4a;
+      padding: 28px 24px 20px;
+      text-align: center;
+    }
+    header h1 { font-family: 'Baloo 2', sans-serif; font-size: 2rem; font-weight: 800;
+                color: #7eb8ff; letter-spacing: 1px; }
+    header p  { color: #7a8fb0; font-size: 0.85rem; margin-top: 4px; }
+    header a  { color: #7eb8ff; text-decoration: none; font-weight: 700; }
+    header a:hover { text-decoration: underline; }
+
+    .tabs {
+      display: flex; justify-content: center; gap: 8px; padding: 20px 16px 0;
+      flex-wrap: wrap;
+    }
+    .tab {
+      background: #111827; border: 1px solid #1e2a4a; border-radius: 8px;
+      padding: 8px 22px; cursor: pointer; font: 600 13px 'Nunito', sans-serif;
+      color: #7a8fb0; transition: all 0.2s;
+    }
+    .tab.active, .tab:hover { background: #1a2a50; color: #7eb8ff; border-color: #3a5a9a; }
+
+    .board-wrap { max-width: 720px; margin: 24px auto 0; padding: 0 16px; }
+    .board-title { font-family: 'Baloo 2', sans-serif; font-size: 1.1rem; font-weight: 700;
+                   color: #7eb8ff; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { font-size: 11px; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.08em; color: #4a6080; padding: 0 12px 10px;
+               text-align: left; border-bottom: 1px solid #1a2a3a; }
+    thead th.right { text-align: right; }
+    tbody tr { transition: background 0.15s; }
+    tbody tr:hover { background: #0f1828; }
+    tbody td { padding: 11px 12px; font-size: 14px; border-bottom: 1px solid #111827; }
+    tbody td.right { text-align: right; color: #7eb8ff; font-weight: 700; }
+    .rank { width: 40px; color: #4a6080; font-weight: 700; }
+    .rank.top3 { color: #ffcc44; }
+    .name { font-weight: 600; }
+    .wallet { font-size: 11px; color: #4a6080; margin-top: 2px; font-family: monospace; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px;
+             border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+    .badge-holder { background: #1a3a2a; color: #44ff99; }
+    .badge-gold   { background: #3a2a0a; color: #ffcc44; }
+    #status { text-align: center; padding: 40px 16px; color: #4a6080; font-size: 14px; }
+    .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 24px; }
+    .pg-btn { background: #111827; border: 1px solid #1e2a4a; border-radius: 6px;
+              padding: 7px 16px; cursor: pointer; color: #7a8fb0; font: 600 13px 'Nunito', sans-serif; }
+    .pg-btn:hover, .pg-btn.active { background: #1a2a50; color: #7eb8ff; border-color: #3a5a9a; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🌙 Moon Rangers FPS — Leaderboard</h1>
+  <p>Top players by Fox Points · <a href="/games/moon-rangers/">▶ Play now</a></p>
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-period="all">All Time</button>
+  <button class="tab" data-period="weekly">This Week</button>
+  <button class="tab" data-period="daily">Today</button>
+</div>
+
+<div class="board-wrap">
+  <div class="board-title" id="board-title">All-Time Leaderboard</div>
+  <div id="status">Loading…</div>
+  <table id="lb-table" style="display:none">
+    <thead>
+      <tr>
+        <th class="rank">#</th>
+        <th>Player</th>
+        <th class="right">Fox Points</th>
+        <th class="right">Wins</th>
+        <th class="right">Kills</th>
+      </tr>
+    </thead>
+    <tbody id="lb-body"></tbody>
+  </table>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<script>
+  const WORKER = 'https://solquicks-points.solquicks-45c.workers.dev';
+  const PAGE   = 25;
+  let _period  = 'all';
+  let _page    = 0;
+  let _data    = [];
+
+  async function loadBoard(period = 'all', page = 0) {
+    _period = period; _page = page;
+    const status = document.getElementById('status');
+    const table  = document.getElementById('lb-table');
+    status.textContent = 'Loading…';
+    table.style.display = 'none';
+
+    const titles = { all: 'All-Time Leaderboard', weekly: 'This Week', daily: 'Today' };
+    document.getElementById('board-title').textContent = titles[period] ?? 'Leaderboard';
+
+    try {
+      const res  = await fetch(`${WORKER}/api/game/leaderboard?period=${period}&limit=200`);
+      const json = await res.json();
+      _data = json.rows ?? [];
+      renderPage(_page);
+    } catch (e) {
+      status.textContent = 'Could not load leaderboard. Try again later.';
+    }
+  }
+
+  function renderPage(page) {
+    const status = document.getElementById('status');
+    const table  = document.getElementById('lb-table');
+    const body   = document.getElementById('lb-body');
+
+    if (!_data.length) {
+      status.textContent = 'No results yet. Be the first to play!';
+      return;
+    }
+
+    const start  = page * PAGE;
+    const rows   = _data.slice(start, start + PAGE);
+
+    body.innerHTML = rows.map((r, i) => {
+      const rank     = start + i + 1;
+      const rankClass = rank <= 3 ? 'rank top3' : 'rank';
+      const rankIcon  = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
+      const wallet    = r.wallet ? `${r.wallet.slice(0,4)}…${r.wallet.slice(-4)}` : '';
+      const holderBadge = r.is_holder ? '<span class="badge badge-holder">Holder</span>' : '';
+      return `<tr>
+        <td class="${rankClass}">${rankIcon}</td>
+        <td>
+          <div class="name">${esc(r.display_name ?? wallet ?? 'Anonymous')}${holderBadge}</div>
+          ${wallet ? `<div class="wallet">${wallet}</div>` : ''}
+        </td>
+        <td class="right">${(r.points ?? 0).toLocaleString()}</td>
+        <td class="right">${(r.wins   ?? 0).toLocaleString()}</td>
+        <td class="right">${(r.kills  ?? 0).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+
+    status.style.display = 'none';
+    table.style.display  = 'table';
+
+    // Pagination
+    const totalPages = Math.ceil(_data.length / PAGE);
+    const pg = document.getElementById('pagination');
+    pg.innerHTML = '';
+    if (totalPages > 1) {
+      for (let p = 0; p < totalPages; p++) {
+        const btn = document.createElement('button');
+        btn.className = 'pg-btn' + (p === page ? ' active' : '');
+        btn.textContent = p + 1;
+        btn.addEventListener('click', () => renderPage(p));
+        pg.appendChild(btn);
+      }
+    }
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Tab clicks
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      loadBoard(tab.dataset.period, 0);
+    });
+  });
+
+  loadBoard('all', 0);
+</script>
+</body>
+</html>

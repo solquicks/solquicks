@@ -227,5 +227,94 @@ export async function handleGameRequest(path, request, env) {
     return gameJson({ match_id: matchId, awards });
   }
 
+  // GET /api/game/leaderboard?period=all|weekly|daily&limit=200 — leaderboard by Fox Points
+  if (path.startsWith('/api/game/leaderboard') && request.method === 'GET') {
+    const url    = new URL(request.url);
+    const period = url.searchParams.get('period') ?? 'all';
+    const limit  = Math.min(parseInt(url.searchParams.get('limit') ?? '200', 10), 500);
+    const creator = url.searchParams.get('creator') ?? 'solquicks';
+
+    let since = 0;
+    if (period === 'weekly') since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    if (period === 'daily')  since = Date.now() -     24 * 60 * 60 * 1000;
+
+    let rows;
+    if (since > 0) {
+      rows = await env.DB.prepare(`
+        SELECT gmp.wallet,
+               SUM(gmp.fp_awarded)  AS points,
+               SUM(CASE WHEN gm.winning_team = gmp.team THEN 1 ELSE 0 END) AS wins,
+               SUM(gmp.kills)       AS kills
+        FROM game_match_players gmp
+        LEFT JOIN game_matches gm ON gm.id = gmp.match_id
+        WHERE gmp.wallet IS NOT NULL AND gm.ended_at > ?
+        GROUP BY gmp.wallet
+        ORDER BY points DESC
+        LIMIT ?
+      `).bind(since, limit).all();
+    } else {
+      rows = await env.DB.prepare(`
+        SELECT wallet, fp_earned AS points, matches_won AS wins, total_kills AS kills
+        FROM game_players
+        ORDER BY fp_earned DESC
+        LIMIT ?
+      `).bind(limit).all();
+    }
+
+    return gameJson({ rows: rows.results ?? [] });
+  }
+
+  // GET /api/creator/config?id=xxx — per-creator game configuration
+  if (path.startsWith('/api/creator/config') && request.method === 'GET') {
+    const url       = new URL(request.url);
+    const creatorId = url.searchParams.get('id') ?? 'solquicks';
+
+    // Basic validation
+    if (!/^[a-z0-9_-]{1,40}$/.test(creatorId)) return gameJson({ error: 'invalid creator_id' }, 400);
+
+    const row = await env.DB.prepare(
+      'SELECT creator_id, display_name, accent_color, logo_url, leaderboard_url, points_label FROM game_creators WHERE creator_id = ? AND active = 1'
+    ).bind(creatorId).first();
+
+    if (!row) return gameJson({ error: 'creator not found' }, 404);
+    return gameJson(row);
+  }
+
+  // POST /api/game/share-reward — daily tweet bonus (25 FP, once per 22 h)
+  if (path === '/api/game/share-reward' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const wallet = String(body.wallet ?? '').trim();
+    if (!wallet || wallet.length < 32 || wallet.length > 44) return gameJson({ error: 'invalid wallet' }, 400);
+
+    const claimType = 'daily_tweet';
+    const creator   = String(body.creator_id ?? 'solquicks').slice(0, 40);
+    const pts       = 25;
+    const now       = Date.now();
+    const window    = 22 * 60 * 60 * 1000;
+
+    const last = await env.DB.prepare(
+      'SELECT claimed_at FROM game_share_claims WHERE wallet = ? AND claim_type = ? ORDER BY claimed_at DESC LIMIT 1'
+    ).bind(wallet, claimType).first();
+
+    if (last && now - last.claimed_at < window) {
+      return gameJson({ error: 'already_claimed', next_claim_in: Math.ceil((window - (now - last.claimed_at)) / 60000) + 'm' }, 429);
+    }
+
+    await env.DB.prepare(
+      'INSERT INTO game_share_claims (wallet, claim_type, points, creator_id, claimed_at) VALUES (?, ?, ?, ?, ?)'
+    ).bind(wallet, claimType, pts, creator, now).run();
+
+    await env.DB.prepare(
+      'INSERT INTO players (wallet, points, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(wallet) DO UPDATE SET points = points + ?, updated_at = ?'
+    ).bind(wallet, pts, now, now, pts, now).run();
+
+    await env.DB.prepare(
+      'INSERT INTO events (wallet, type, points, ts) VALUES (?, ?, ?, ?)'
+    ).bind(wallet, 'share_reward', pts, now).run();
+
+    const total = (await env.DB.prepare('SELECT points FROM players WHERE wallet = ?').bind(wallet).first())?.points ?? pts;
+    return gameJson({ ok: true, points_awarded: pts, total });
+  }
+
   return null; // not a game route — caller falls through to 404
 }
