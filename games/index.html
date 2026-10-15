@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Games — solquicks.com</title>
+  <meta name="description" content="Free browser games on solquicks.com. Play Moon Rangers FPS and earn Fox Points." />
+  <meta property="og:title" content="Games — solquicks.com" />
+  <meta property="og:description" content="Free browser games. Play and earn Fox Points." />
+  <meta property="og:url" content="https://solquicks.com/games/" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #D9E4EB;
+      --orange: #F0821E;
+      --orange-deep: #d96a0a;
+      --ink: #2E2440;
+      --muted: #7A6E8A;
+      --card: #fff;
+      --line: #E2D9EF;
+      --pop: 0 4px 24px rgba(46,36,64,0.10);
+      --radius: 18px;
+    }
+
+    body {
+      background: var(--bg);
+      font-family: 'Nunito', sans-serif;
+      color: var(--ink);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.9rem;
+      transition: color 0.15s;
+    }
+
+    .back-link:hover { color: var(--ink); }
+
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 8px 24px 60px;
+    }
+
+    .page-title {
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+
+    .page-sub {
+      color: var(--muted);
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 36px;
+    }
+
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .game-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1.5px solid var(--line);
+      box-shadow: var(--pop);
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .game-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 32px rgba(46,36,64,0.14);
+    }
+
+    .game-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: linear-gradient(135deg, #0a0a1a 0%, #1a1040 40%, #0d2040 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .game-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .game-thumb-fallback {
+      font-size: 3.5rem;
+      filter: drop-shadow(0 0 16px #4af);
+    }
+
+    .game-live-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--orange);
+      color: #fff;
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 3px 9px;
+      border-radius: 8px;
+    }
+
+    .game-body {
+      padding: 18px 20px 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .game-name {
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .game-desc {
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 700;
+      line-height: 1.5;
+      flex: 1;
+    }
+
+    .game-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .game-tag {
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      padding: 3px 9px;
+      border-radius: 8px;
+      text-transform: uppercase;
+    }
+
+    .game-fp {
+      margin-left: auto;
+      font-weight: 800;
+      font-size: 0.85rem;
+      color: var(--orange);
+    }
+
+    .play-btn {
+      display: block;
+      width: 100%;
+      background: var(--orange);
+      color: #fff;
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      text-align: center;
+      padding: 12px;
+      border-radius: 0 0 var(--radius) var(--radius);
+      letter-spacing: 0.04em;
+      transition: background 0.1s;
+    }
+
+    .game-card:hover .play-btn { background: var(--orange-deep); }
+
+    @media (max-width: 600px) {
+      main { padding: 8px 16px 48px; }
+      .page-title { font-size: 1.7rem; }
+      .games-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="back-link" href="/">← solquicks.com</a>
+  </header>
+  <main>
+    <h1 class="page-title">Games</h1>
+    <p class="page-sub">Play free, earn Fox Points.</p>
+
+    <div class="games-grid">
+      <a class="game-card" href="/games/moon-rangers/">
+        <div class="game-thumb">
+          <img src="/games/moon-rangers/preview.png" alt="Moon Rangers FPS" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+          <div class="game-thumb-fallback" style="display:none">🚀</div>
+          <div class="game-live-badge">Live</div>
+        </div>
+        <div class="game-body">
+          <div class="game-name">Moon Rangers FPS</div>
+          <div class="game-desc">5v5 hero shooter in your browser. Zero-G gunfights, 9 weapons, 5 hero classes. No download needed.</div>
+          <div class="game-meta">
+            <span class="game-tag">FPS</span>
+            <span class="game-tag">5v5</span>
+            <span class="game-fp">+25 FP / match</span>
+          </div>
+        </div>
+        <div class="play-btn">Play Now</div>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

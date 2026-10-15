@@ -44,6 +44,10 @@
     {
       "source": "/c/:slug",
       "destination": "/index.html"
+    },
+    {
+      "source": "/games/moon-rangers/(.*)",
+      "destination": "/games/moon-rangers/index.html"
     }
   ]
 }

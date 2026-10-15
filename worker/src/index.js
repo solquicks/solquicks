@@ -2,6 +2,8 @@
 // Points live here, not in the visitor's browser. Every award is decided
 // server-side; the client can only ask, never assert a balance.
 
+import { handleGameRequest } from './game/routes.js';
+
 const DAY_MS = 86400000;
 const STAKE_RATE_PER_DAY = 100;
 const SESSION_TTL_MS = 30 * DAY_MS;
@@ -6757,6 +6759,11 @@ export default {
 
         await addPoints(env, wallet, 'plushie', AWARDS.plushie);
         return json(request, env, { awarded: AWARDS.plushie, player: await playerState(env, wallet) });
+      }
+
+      if (path.startsWith('/api/game')) {
+        const gameRes = await handleGameRequest(path, request, env);
+        if (gameRes) return gameRes;
       }
 
       return json(request, env, { error: 'not found' }, 404);

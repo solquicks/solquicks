@@ -1171,6 +1171,8 @@
       flex-shrink: 0;
     }
     .lb-earn-row.soon { opacity: 0.55; }
+    .lb-earn-row--link { cursor: pointer; border-radius: 10px; transition: background 0.12s; }
+    .lb-earn-row--link:hover { background: var(--bg-deep); }
     .lb-soon-chip {
       font-size: 0.62rem;
       font-weight: 800;
@@ -2825,11 +2827,11 @@
           <div class="lb-earn-info"><div class="lb-earn-name">Win a coin flip</div><div class="lb-earn-sub">Double your wager — or lose it</div></div>
           <div class="lb-earn-pts">×2</div>
         </div>
-        <div class="lb-earn-row soon">
+        <a class="lb-earn-row lb-earn-row--link" href="/games/moon-rangers/" style="text-decoration:none;color:inherit;">
           <div class="lb-earn-icon">🎮</div>
-          <div class="lb-earn-info"><div class="lb-earn-name">Play the game<span class="lb-soon-chip">SOON</span></div><div class="lb-earn-sub">On-chain mini-game in the works</div></div>
+          <div class="lb-earn-info"><div class="lb-earn-name">Play Moon Rangers FPS</div><div class="lb-earn-sub">Free 5v5 hero shooter — live now</div></div>
           <div class="lb-earn-pts">+25</div>
-        </div>
+        </a>
         <div class="lb-earn-row soon">
           <div class="lb-earn-icon">🎰</div>
           <div class="lb-earn-info"><div class="lb-earn-name">Gacha machine<span class="lb-soon-chip">SOON</span></div><div class="lb-earn-sub">Pull for prizes</div></div>

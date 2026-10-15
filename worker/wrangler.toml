@@ -47,6 +47,7 @@ binding = "DB"
 database_name = "solquicks-points"
 database_id = "5084c600-ba8a-4c19-96f6-e795ee8c92c3"
 
+
 # Rate limits. Keyed by wallet where the caller is signed in, by IP otherwise.
 # The scarce resource is Helius credits — the free tier allows only 2 DAS
 # requests per second — so chain-reading routes are held well below that.
