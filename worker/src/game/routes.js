@@ -60,6 +60,14 @@ async function ensureTables(env) {
       skin_id     TEXT NOT NULL,
       acquired_at INTEGER NOT NULL,
       PRIMARY KEY (wallet, skin_id)
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS game_challenge_claims (
+      wallet        TEXT NOT NULL,
+      challenge_id  TEXT NOT NULL,
+      fp_awarded    INTEGER NOT NULL DEFAULT 0,
+      claimed_at    INTEGER NOT NULL,
+      period_key    TEXT NOT NULL,
+      PRIMARY KEY (wallet, challenge_id, period_key)
     )`)
   ]);
 }
@@ -314,6 +322,45 @@ export async function handleGameRequest(path, request, env) {
 
     const total = (await env.DB.prepare('SELECT points FROM players WHERE wallet = ?').bind(wallet).first())?.points ?? pts;
     return gameJson({ ok: true, points_awarded: pts, total });
+  }
+
+  // POST /api/game/challenge-complete — award FP for a completed challenge (once per day/week)
+  if (path === '/api/game/challenge-complete' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const wallet       = String(body.wallet       ?? '').trim();
+    const challenge_id = String(body.challenge_id ?? '').trim().slice(0, 40);
+    const fp           = Math.max(0, Math.min(100, parseInt(body.fp, 10) || 0));
+
+    if (!wallet || wallet.length < 32 || wallet.length > 44) return gameJson({ error: 'invalid wallet' }, 400);
+    if (!challenge_id) return gameJson({ error: 'missing challenge_id' }, 400);
+    if (fp <= 0)        return gameJson({ error: 'invalid fp' }, 400);
+
+    // Derive the current period key (daily = YYYY-MM-DD, weekly = YYYY-WNN)
+    const now  = Date.now();
+    const date = new Date(now);
+    const periodKey = challenge_id.startsWith('play_') // weekly challenge
+      ? `${date.getUTCFullYear()}-W${String(Math.ceil((date.getUTCDate() + new Date(date.getUTCFullYear(), 0, 1).getUTCDay()) / 7)).padStart(2, '0')}`
+      : `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+
+    try {
+      await env.DB.prepare(
+        'INSERT INTO game_challenge_claims (wallet, challenge_id, fp_awarded, claimed_at, period_key) VALUES (?, ?, ?, ?, ?)'
+      ).bind(wallet, challenge_id, fp, now, periodKey).run();
+    } catch (_) {
+      // PRIMARY KEY conflict means already claimed this period — silently ignore
+      return gameJson({ ok: false, reason: 'already_claimed' });
+    }
+
+    await env.DB.prepare(
+      'INSERT INTO players (wallet, points, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(wallet) DO UPDATE SET points = points + ?, updated_at = ?'
+    ).bind(wallet, fp, now, now, fp, now).run();
+
+    await env.DB.prepare(
+      'INSERT INTO events (wallet, type, points, ts) VALUES (?, ?, ?, ?)'
+    ).bind(wallet, `challenge_${challenge_id}`, fp, now).run();
+
+    const total = (await env.DB.prepare('SELECT points FROM players WHERE wallet = ?').bind(wallet).first())?.points ?? fp;
+    return gameJson({ ok: true, points_awarded: fp, total });
   }
 
   return null; // not a game route — caller falls through to 404
