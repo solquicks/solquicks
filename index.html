@@ -2958,6 +2958,30 @@
       <div class="ref-list" id="ref-list"></div>
     </div>
 
+    <!-- GAMES PANEL -->
+    <div id="panel-games" class="panel">
+      <p class="section-label">Games</p>
+      <div style="max-width:520px">
+        <a href="/games/moon-rangers/" style="display:block;text-decoration:none;background:linear-gradient(135deg,#0a0a1a 0%,#1a1040 50%,#0d2040 100%);border-radius:16px;overflow:hidden;border:1.5px solid rgba(100,170,255,0.18);box-shadow:0 4px 24px rgba(0,0,0,0.3);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.4)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 24px rgba(0,0,0,0.3)'">
+          <div style="position:relative;padding:28px 24px 0;display:flex;align-items:flex-start;gap:16px">
+            <div style="font-size:3rem;filter:drop-shadow(0 0 16px #4af)">🚀</div>
+            <div>
+              <div style="font-family:'Baloo 2',sans-serif;font-size:1.35rem;font-weight:800;color:#fff;margin-bottom:4px">Moon Rangers FPS</div>
+              <div style="color:rgba(180,200,255,0.7);font-size:0.88rem;font-weight:700;line-height:1.5">5v5 hero shooter in your browser. Zero-G gunfights, 9 weapons, 5 hero classes. No download needed.</div>
+            </div>
+            <div style="position:absolute;top:16px;right:16px;background:#F0821E;color:#fff;font-family:'Baloo 2',sans-serif;font-size:0.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:8px">Live</div>
+          </div>
+          <div style="display:flex;gap:10px;padding:16px 24px">
+            <span style="background:rgba(255,255,255,0.08);color:rgba(180,200,255,0.7);font-size:0.75rem;font-weight:800;letter-spacing:.05em;padding:3px 9px;border-radius:8px;text-transform:uppercase">FPS</span>
+            <span style="background:rgba(255,255,255,0.08);color:rgba(180,200,255,0.7);font-size:0.75rem;font-weight:800;letter-spacing:.05em;padding:3px 9px;border-radius:8px;text-transform:uppercase">5v5</span>
+            <span style="margin-left:auto;font-weight:800;font-size:0.85rem;color:#F0821E">+25 FP / match</span>
+          </div>
+          <div style="background:#F0821E;color:#fff;font-family:'Baloo 2',sans-serif;font-size:1rem;font-weight:800;text-align:center;padding:12px;letter-spacing:.04em">Play Now →</div>
+        </a>
+        <p style="margin-top:16px;color:var(--muted,#7A6E8A);font-size:0.85rem;font-weight:700;text-align:center">More games in development. Play early, earn Fox Points.</p>
+      </div>
+    </div>
+
     <!-- CLEANUP PANEL -->
     <!-- DEFI PANEL -->
     <div id="panel-defi" class="panel">
@@ -3731,11 +3755,11 @@
           'and on what terms, is still being worked out.'
       },
       {
-        tab: 'games', name: 'Games', icon: '◈',
-        note: 'Play, and win something worth having',
+        // Built — panel is written out in the HTML below.
+        tab: 'games', name: 'Games', icon: '◈', live: true,
+        note: 'Play free, earn Fox Points',
         lead: 'Games',
-        what: 'Games worth your time, with something real to win. There are a lot ' +
-          'of projects worth building this with and which ones is still open.'
+        what: ''
       },
       {
         tab: 'wishlist', name: 'Wishlist', icon: '✦',
