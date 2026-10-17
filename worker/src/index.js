@@ -572,7 +572,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'points-rate-50k';
+const BUILD = 'store-fallback-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -813,23 +813,64 @@ const ME_SYMBOL = 'moonrangers';
 const STORE_FEED = 'https://api.store.fun/api/v1/public/collections/quicks/full';
 const STORE_PRODUCT = 'quicks-plushie';
 
-async function storeProduct() {
-  const res = await fetch(STORE_FEED, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error('store ' + res.status);
-  const body = await res.json();
-  const list = (body && body.data && body.data.products) || [];
-  const p = list.find(function (x) { return x.slug === STORE_PRODUCT; }) || list[0];
-  if (!p) return null;
-  const quantity = Number(p.quantity) || 0;
-  const sold = Number(p.sales_count) || 0;
+// What to say about the plushie when store.fun will not answer.
+//
+// On 2026-10-17 their API began refusing anything that is not a browser —
+// "This API only accepts requests from the website", 403 — and a Worker calls
+// it server to server with no browser headers, so the whole card went to
+// "stock unavailable" while the plushie was plainly in stock. Sending an
+// Origin, a Referer and a browser User-Agent all still get 403, so there is
+// nothing to satisfy from here.
+//
+// These numbers are MAINTAINED BY HAND and will drift as the plushie sells.
+// That is tolerable only because the Buy button goes to store.fun, which
+// enforces real stock at the point of sale — the worst this can do is show a
+// count a little behind. Update `sold` when you notice, and delete the whole
+// fallback the moment the feed works again.
+const STORE_FALLBACK = {
+  name: 'quicks Plushie',
+  priceUsdc: 40,
+  quantity: 100,
+  sold: 8
+};
+
+function shapeProduct(name, priceUsdc, quantity, sold, saleEnded) {
+  quantity = Number(quantity) || 0;
+  sold = Number(sold) || 0;
   return {
-    name: p.name || null,
-    priceUsdc: Number(p.price) || null,
+    name: name || null,
+    priceUsdc: Number(priceUsdc) || null,
     quantity: quantity,
     sold: sold,
     available: Math.max(0, quantity - sold),
-    soldOut: !!p.sale_ended || (quantity > 0 && sold >= quantity)
+    soldOut: !!saleEnded || (quantity > 0 && sold >= quantity)
   };
+}
+
+/// The plushie, from store.fun when it will answer and from the hand-kept
+/// numbers above when it will not. Never throws and never returns null: a feed
+/// this site does not control must not be able to empty the shop.
+///
+/// `live` says which it was, so the caller can log a feed that is still down
+/// without the page having to care.
+async function storeProduct() {
+  try {
+    const res = await fetch(STORE_FEED, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('store ' + res.status);
+    const body = await res.json();
+    const list = (body && body.data && body.data.products) || [];
+    const p = list.find(function (x) { return x.slug === STORE_PRODUCT; }) || list[0];
+    if (!p) throw new Error('store feed has no products');
+    const out = shapeProduct(p.name, p.price, p.quantity, p.sales_count, p.sale_ended);
+    out.live = true;
+    return out;
+  } catch (e) {
+    const out = shapeProduct(STORE_FALLBACK.name, STORE_FALLBACK.priceUsdc,
+      STORE_FALLBACK.quantity, STORE_FALLBACK.sold, false);
+    out.live = false;
+    out.why = (e && e.message) || 'store feed unavailable';
+    return out;
+  }
 }
 // Bucket edges for a 436-piece collection. Whale is deliberately reachable —
 // the point is to show the shape of the holder base, not to flatter anyone.
@@ -4626,14 +4667,10 @@ export default {
         const hit = await cache.match(key);
         if (hit) return hit;
 
-        let product = null;
-        try {
-          product = await storeProduct();
-        } catch (e) {
-          await logError(env, 'store', (e && e.message) || e);
-          return json(request, env, { unavailable: true });
-        }
-        if (!product) return json(request, env, { unavailable: true });
+        const product = await storeProduct();
+        // Worth a line in the log every time the feed is still refusing us, so
+        // "the numbers are hand-kept" does not quietly become permanent.
+        if (!product.live) await logError(env, 'store.feed', product.why || 'using fallback');
         const res = json(request, env, { product: product });
         const cached = new Response(res.body, res);
         cached.headers.set('Cache-Control', 'public, max-age=600');

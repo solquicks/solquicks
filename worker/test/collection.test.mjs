@@ -115,9 +115,30 @@ section('how many plushies are left');
   const done = await call(freshEnv(), 'GET', '/api/store');
   eq('a finished run reads as sold out', done.body.product.soldOut + ' ' + done.body.product.available, 'true 0');
 
+  // store.fun locked their API to browser requests on 2026-10-17 — a Worker gets
+  // 403 whatever headers it sends — and the shop went to "stock unavailable"
+  // while the plushie was sitting in stock. A feed this site does not control
+  // must not be able to empty the shop.
   chain.store = () => null;   // the shop is down
   const down = await call(freshEnv(), 'GET', '/api/store');
-  eq('a shop outage says so quietly', down.status + ' ' + down.body.unavailable, '200 true');
+  eq('an outage still shows the plushie', down.status, 200);
+  ok('rather than reporting nothing', !down.body.unavailable, JSON.stringify(down.body).slice(0, 80));
+  eq('with the hand-kept numbers', down.body.product.sold + ' sold, ' + down.body.product.available + ' left', '8 sold, 92 left');
+  eq('and it is not sold out', down.body.product.soldOut, false);
+  eq('the price is still shown', down.body.product.priceUsdc, 40);
+  ok('and it is marked as not live, so the log can say so', down.body.product.live === false);
+
+  // A 403 is the specific thing that happened, so it is the specific thing
+  // asserted — not merely "any failure".
+  chain.store = () => new Response('{"success":false,"error":{"code":"FORBIDDEN"}}', { status: 403 });
+  const forbidden = await call(freshEnv(), 'GET', '/api/store');
+  eq('a 403 from the feed shows the plushie too', forbidden.body.product.available, 92);
+
+  // And when the feed comes back, the real numbers beat the fallback.
+  chain.store = () => feed(31, 100);
+  const back = await call(freshEnv(), 'GET', '/api/store');
+  eq('a working feed is preferred', back.body.product.sold + ' sold', '31 sold');
+  ok('and is marked live', back.body.product.live === true);
   chain.store = null;
 }
 
