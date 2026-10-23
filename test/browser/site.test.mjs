@@ -1735,6 +1735,27 @@ try {
     await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
   }
 
+  section('games: the tab the FPS shipped into');
+  {
+    // Games was a coming-soon page until Moon Rangers went live. The test that
+    // still expected one did not merely fail — it ABORTED the run, so every
+    // section after it, the referral cards included, stopped being checked at
+    // all: 505 of about 680 assertions, for a week.
+    await page.evaluate(() => switchTab('games'));
+    const panel = page.locator('#panel-games');
+    eq('the games tab opens', await panel.count(), 1);
+    eq('it is not a coming-soon page any more', await page.locator('#panel-games .soon-lead').count(), 0);
+    ok('it links to the game', await panel.locator('a[href="/games/moon-rangers/"]').count() >= 1);
+    const text = (await panel.textContent()).replace(/\s+/g, ' ');
+    ok('and names it', /Moon Rangers/.test(text), text.slice(0, 90));
+    ok('and says it is live rather than coming', /Live/.test(text) && !/still open/.test(text), text.slice(0, 90));
+
+    // Put the tab back: the swap sections that follow expect to find it open,
+    // and a section that wanders off breaks whatever runs next.
+    await page.evaluate(() => switchTab('swap'));
+    await page.waitForSelector('#panel-swap.active', { timeout: 10000 });
+  }
+
   section('swap: being busy does not become "No route"');
   {
     // The failure people were hitting: Jupiter throttles us, the worker said
@@ -3064,9 +3085,6 @@ try {
       ['wishlist', 'Wishlist', /without a card/],
       ['mine', 'Mine Bitcoin', /no rig, no electricity bill/],
       ['travel', 'Travel', /Flights and stays/],
-      // Deliberately generic: there are too many projects worth building this
-      // with to name one before it is decided.
-      ['games', 'Games', /still open/],
       // Money and chance in the same sentence: whatever the machine ends up
       // being, the page must not imply the odds are a surprise.
       ['gacha', 'Gacha', /odds will be written down before anyone spends/]
@@ -3250,11 +3268,6 @@ try {
     ok('a mark with no line yet still draws', /<img/.test(noLine), noLine);
     ok('and leaves no empty line behind it', !/<span>/.test(noLine), noLine);
 
-    // The two with nobody to name yet must not grow an empty credit box.
-    for (const tab of ['games']) {
-      await page.evaluate((t) => switchTab(t), tab);
-      eq(tab + ': has no partner line, having no partner', await page.locator('#panel-' + tab + ' .soon-with').count(), 0);
-    }
 
     // The badge is how anyone reaches the Launchpad, and it is on every page
     // of every site built from this template — which is the whole plan for

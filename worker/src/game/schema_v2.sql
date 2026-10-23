@@ -27,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_game_matches_creator ON game_matches(creator_id, 
 
 -- ── Match players ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS game_match_players (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   match_id   TEXT NOT NULL,
   wallet     TEXT,
   role       TEXT,
@@ -35,11 +36,11 @@ CREATE TABLE IF NOT EXISTS game_match_players (
   deaths     INTEGER NOT NULL DEFAULT 0,
   assists    INTEGER NOT NULL DEFAULT 0,
   points_earned INTEGER NOT NULL DEFAULT 0,
-  creator_id TEXT NOT NULL DEFAULT 'solquicks',
-  PRIMARY KEY (match_id, COALESCE(wallet, rowid))
+  creator_id TEXT NOT NULL DEFAULT 'solquicks'
 );
 CREATE INDEX IF NOT EXISTS idx_gmp_wallet    ON game_match_players(wallet);
 CREATE INDEX IF NOT EXISTS idx_gmp_creator   ON game_match_players(creator_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gmp_match_wallet ON game_match_players(match_id, wallet) WHERE wallet IS NOT NULL;
 
 -- ── In-game purchases ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS game_purchases (
