@@ -66,6 +66,15 @@
       "youGet": "10,000 points the moment you join, which go towards priority on the names you want. Priority, not a reservation — no name is guaranteed, and deposits sit in third-party vaults rather than with D3.",
       "cta": "Join Frontier",
       "logo": "img/partners/d3.jpg"
+    },
+    {
+      "name": "KAST",
+      "tag": "Spending",
+      "url": "https://app.kast.xyz/referral/LIKA7RSK",
+      "what": "A dollar account and a Visa card, run on stablecoins. Open a US or EU account from anywhere, hold digital dollars, and spend them at 150 million merchants across 170+ countries.",
+      "youGet": "Somewhere to hold and spend dollars without a US bank, cashback on what you spend, and 8% on an idle balance on the free tier. They call it a reward rather than interest, the current rate is introductory and changes in July 2027, and the higher cashback and 12% rate are paid memberships.",
+      "cta": "Open an account",
+      "logo": "img/referrals/kast.jpg"
     }
   ]
 }
