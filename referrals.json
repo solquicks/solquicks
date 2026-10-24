@@ -43,14 +43,6 @@
       "logo": "img/partners/titan.jpg"
     },
     {
-      "name": "Fomo",
-      "tag": "Trading",
-      "url": "https://fomo.family/r/quicks",
-      "what": "Social trading. Follow what the better traders are buying, and trade it in seconds.",
-      "youGet": "The positions good traders are actually taking, and the same trade in a couple of taps.",
-      "logo": "img/referrals/fomo.jpg"
-    },
-    {
       "name": "JungleFun",
       "tag": "Gacha",
       "url": "https://www.junglefun.io/gacha?r=AE-sDf11g9YyE5o7Js1GDR1SPDo7nE14j3xlN2DjtNxG",
@@ -75,6 +67,15 @@
       "youGet": "Somewhere to hold and spend dollars without a US bank, cashback on what you spend, and 8% on an idle balance on the free tier. They call it a reward rather than interest, the current rate is introductory and changes in July 2027, and the higher cashback and 12% rate are paid memberships.",
       "cta": "Open an account",
       "logo": "img/referrals/kast.jpg"
+    },
+    {
+      "name": "Doma",
+      "tag": "Domains",
+      "url": "https://app.doma.xyz/join/lz2d22p0cdtz6",
+      "what": "Domain names turned into tokens you can trade. Each name has a token with its own price and a buyout price that takes the domain itself.",
+      "youGet": "A market for names rather than a registrar: you can hold a share of a domain, or pay its buyout price and take the name outright. It is speculation — prices are quoted as multiples, many names are still on a bonding curve, and what you hold is only worth what the next person pays.",
+      "cta": "Look around",
+      "logo": "img/partners/doma.jpg"
     }
   ]
 }
