@@ -229,6 +229,12 @@ jobs:
         working-directory: worker
         run: node test/reflect.test.mjs
 
+      # A money feature drafted behind a flag. What matters is that it cannot
+      # go off by accident: launching creates a mint that cannot be unmade.
+      - name: Yieldcoin stays off
+        working-directory: worker
+        run: node test/yieldcoin.test.mjs
+
       # Money in, a balance out: a point must never be credited without a
       # payment that is really on chain, for the right amount, and never twice.
       - name: Buying points

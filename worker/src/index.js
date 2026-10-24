@@ -366,7 +366,7 @@ const RATE_RULES = [
   { match: ['/api/booking/hold', '/api/booking/confirm'], name: 'bookwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/bundle/types', '/api/bundle/lookup'], name: 'bundleread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/bundle/hold', '/api/bundle/confirm'], name: 'bundlewrite', by: 'ip', limit: 12, windowMs: 60000 },
-  { match: ['/api/points/packs'], name: 'pointsread', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/points/packs', '/api/yieldcoin'], name: 'pointsread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/points/buy', '/api/points/confirm'], name: 'pointsbuy', by: 'ip', limit: 12, windowMs: 60000 },
   // Spending a credit costs the caller nothing, so a reference worth guessing
   // at is the risk here rather than the money — kept deliberately tight.
@@ -561,6 +561,7 @@ async function healthCheck(env) {
   // "the booking never reached my calendar" and "the calendar is not set up"
   // look identical from outside.
   detail.calendar = gcalConfigured(env) ? 'configured' : 'off';
+  detail.yieldcoin = yieldcoinOn(env) ? 'on' : 'off';
 
   return { ok, detail };
 }
@@ -572,7 +573,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'store-fallback-1';
+const BUILD = 'yieldcoin-draft-off';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1270,6 +1271,62 @@ const JUP_RETRY_STATUS = [429, 500, 502, 503, 504];
 // USDC+ is index 0. Fixed here rather than taken from the page: the index
 // chooses which product somebody's money goes into, and that is not a decision
 // to accept from a query string.
+// ── YIELDCOIN (Reflect Create) — DRAFT, OFF ─────────────────────────────────
+// A branded dollar of our own: a token backed by collateral Reflect has
+// reviewed, which appreciates because the collateral earns, and whose interest
+// splits between us and the people holding it.
+//
+// NOT LIVE. Every route below refuses while YIELDCOIN is anything but "on",
+// and the switch is in wrangler.toml so turning it on is a deploy somebody
+// does on purpose rather than a branch that drifts into production.
+//
+// It is off for a specific reason, not caution in general. The collateral this
+// would sit on has not visibly earned anything: 1,043 readings of the USDC+
+// redemption rate between 2 and 24 October 2026 all came back 1.008428, which
+// is why /api/reflect/apy answers "no yield data" and the Savings tab shows no
+// rate. Issuing a coin with our name on it, on top of collateral we cannot
+// show is accruing, is the wrong way round. Reflect's own documentation puts
+// the burden squarely here: "your name is on the token, so disclosure of what
+// backs it sits with you", and "promise them a number and you absorb the
+// difference".
+//
+// Turn this on when, and only when, the rate question has an answer.
+function yieldcoinOn(env) {
+  return String(env.YIELDCOIN || '').toLowerCase() === 'on';
+}
+
+// What the coin would be. Here rather than in a request so the whole shape can
+// be read in one place and reviewed before anything is launched.
+const YIELDCOIN = {
+  symbol: 'FOXD',
+  name: 'Fox Dollar',
+  // Our share of the interest the collateral earns, in basis points. Reflect's
+  // own illustration is a fifth; this is deliberately less, because the point
+  // of a branded dollar here is that holding it beats holding USDC.
+  ourShareBps: 1000,
+  // Holders see the rest. Stated as a derived number so the two can never be
+  // written down inconsistently.
+  get holderShareBps() { return 10000 - this.ourShareBps; }
+};
+
+// The whole of what a holder is told, in one string, so there is one wording to
+// keep honest rather than several scattered through a page. Deliberately leads
+// with what it is not.
+function yieldcoinDisclosure() {
+  return [
+  'A Fox Dollar is not a deposit, not a bank account and not insured. It is a token ' +
+  'backed by collateral held in onchain contracts.',
+  'The yield is not fixed and is not promised. It is whatever the collateral earns, ' +
+  'less our share, and it can fall to nothing.',
+  'We take ' + (YIELDCOIN.ourShareBps / 100) + '% of the interest the collateral earns. ' +
+  'You keep the other ' + (YIELDCOIN.holderShareBps / 100) + '%. Nothing is taken from your balance.',
+  'Your money is never held by us. Deposits sit in the contracts, every movement is ' +
+  'signed by you, and redemption runs against the contracts directly.',
+  'If the collateral loses value, so does this. A basket spreads that risk but does ' +
+  'not remove it.'
+  ];
+}
+
 const REFLECT_INDEX = 0;
 const REFLECT_BASE = 'https://prod.api.reflect.money';
 // A hard ceiling on a single deposit. Not a protocol rule — a guard against a
@@ -4084,6 +4141,7 @@ export default {
           path === '/api/bundle/types' || path === '/api/bundle/hold' ||
           path === '/api/bundle/confirm' || path === '/api/bundle/redeem' ||
           path === '/api/bundle/lookup' || path === '/api/bundle/watch' ||
+          path === '/api/yieldcoin' ||
           path === '/api/points/packs' || path === '/api/points/buy' ||
           path === '/api/points/confirm' ||
           path === '/api/cart/checkout' || path === '/api/cart/confirm' ||
@@ -5896,6 +5954,82 @@ export default {
         await env.DB.prepare('UPDATE bookings SET details = ? WHERE ref = ?').bind(details, ref).run();
         await alert(env, '📝 Details for ' + ref + ' — ' + b.type_id + '\n' + b.name + ' · ' + b.contact + '\n' + details);
         return json(request, env, { ok: true });
+      }
+
+      // ── yieldcoin (DRAFT, off) ──
+      // Readable while off on purpose: the point of drafting it is that the
+      // shape and the wording can be reviewed before anything exists.
+      if (path === '/api/yieldcoin' && request.method === 'GET') {
+        return json(request, env, {
+          enabled: yieldcoinOn(env),
+          symbol: YIELDCOIN.symbol,
+          name: YIELDCOIN.name,
+          ourSharePct: YIELDCOIN.ourShareBps / 100,
+          holderSharePct: YIELDCOIN.holderShareBps / 100,
+          disclosure: yieldcoinDisclosure(),
+          // The reason it is off, served rather than buried in a comment, so
+          // anyone asking the API why gets the actual answer.
+          note: yieldcoinOn(env) ? null
+            : 'Not launched. The collateral this would sit on has not shown any yield ' +
+              'in 22 days of readings, and a coin with our name on it should not go out ' +
+              'on top of that.'
+        });
+      }
+
+      // Launching is one transaction and it cannot be undone, so it needs the
+      // flag AND the admin token. Neither alone is enough.
+      if (path === '/api/yieldcoin/launch' && request.method === 'POST') {
+        if (!tokenMatches(request.headers.get('Authorization'), env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not allowed' }, 403);
+        }
+        if (!yieldcoinOn(env)) {
+          return json(request, env, {
+            error: 'yieldcoin is off. Set YIELDCOIN to "on" in wrangler.toml and deploy, ' +
+              'which is meant to be a deliberate act rather than a request.'
+          }, 409);
+        }
+        if (!env.REFLECT_API_KEY) {
+          return json(request, env, { error: 'REFLECT_API_KEY is not set' }, 503);
+        }
+
+        const body = await request.json().catch(function () { return {}; });
+        // Refusing to guess: a mint is permanent and a wrong name or image is
+        // not something a second call can take back.
+        if (!body.imageUrl || !body.metadataUrl) {
+          return json(request, env, {
+            error: 'imageUrl and metadataUrl are both needed — upload them first with ' +
+              'POST /api/yieldcoin/upload, which returns them'
+          }, 400);
+        }
+        if (body.confirm !== YIELDCOIN.symbol) {
+          return json(request, env, {
+            error: 'send confirm: "' + YIELDCOIN.symbol + '" to launch. This creates a mint ' +
+              'that cannot be unmade.'
+          }, 400);
+        }
+
+        const r = await reflect(env, 'POST', '/integration/initialize/flow', {
+          symbol: YIELDCOIN.symbol,
+          name: YIELDCOIN.name,
+          image: body.imageUrl,
+          metadata: body.metadataUrl,
+          feeBps: YIELDCOIN.ourShareBps,
+          authority: env.TREASURY_WALLET
+        });
+        if (!r.ok) return json(request, env, { error: r.error }, r.status || 502);
+        await alert(env, '🪙 Yieldcoin launched — ' + YIELDCOIN.symbol + '\n' + JSON.stringify(r.body).slice(0, 300));
+        return json(request, env, { ok: true, result: r.body });
+      }
+
+      if (path === '/api/yieldcoin/upload' && request.method === 'POST') {
+        if (!tokenMatches(request.headers.get('Authorization'), env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not allowed' }, 403);
+        }
+        if (!yieldcoinOn(env)) return json(request, env, { error: 'yieldcoin is off' }, 409);
+        const body = await request.json().catch(function () { return {}; });
+        const r = await reflect(env, 'POST', '/integration/upload', body);
+        if (!r.ok) return json(request, env, { error: r.error }, r.status || 502);
+        return json(request, env, { ok: true, result: r.body });
       }
 
       // ── buying points ──

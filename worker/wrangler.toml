@@ -26,6 +26,14 @@ STAKING_ONCHAIN = "false"
 # to decide which callers are one of ours, so it is not only cosmetic.
 LAUNCH_ROOT = "solquicks.com"
 
+# Our own branded dollar, built on Reflect Create. "on" to enable; anything
+# else and every route refuses.
+#
+# Off because the collateral has not visibly earned: 1,043 readings of the
+# USDC+ redemption rate across 22 days all came back identical. A coin with our
+# name on it should not launch on top of collateral we cannot show is working.
+YIELDCOIN = "off"
+
 # health check every 30 minutes; alerts only when the state changes
 [triggers]
 crons = ["*/30 * * * *"]
