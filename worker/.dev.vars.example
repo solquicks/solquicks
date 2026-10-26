@@ -32,3 +32,8 @@ REFLECT_API_KEY=
 GCAL_CLIENT_EMAIL=
 GCAL_PRIVATE_KEY=
 GCAL_CALENDAR_ID=
+
+# Moon Rangers: the game server sends this as a Bearer token on
+# /api/game/match/start and /api/game/match/end. Unset means both refuse every
+# call, so no match is recorded and no kill is paid.
+SERVER_TO_WORKER_SECRET=

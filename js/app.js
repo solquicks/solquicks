@@ -298,7 +298,7 @@ const SOON_TABS = [
   {
     tab: 'mine', name: 'Mine Bitcoin', icon: '₿',
     partners: [
-      { name: 'Sat Rush', logo: 'img/partners/sat-rush.jpg',
+      { name: 'Sat Rush', logo: '/img/partners/sat-rush.jpg',
         what: 'Bitcoin mining you take part in by depositing, rather than by running hardware.' }
     ],
     note: 'Deposit USDC, earn Bitcoin',
@@ -312,9 +312,9 @@ const SOON_TABS = [
     // theirs to write — describing somebody else's business for them, on a
     // page that credits them, is not ours to guess at.
     partners: [
-      { name: 'Slabz', logo: 'img/partners/slabz.jpg',
+      { name: 'Slabz', logo: '/img/partners/slabz.jpg',
         what: 'Graded cards, sealed and held on chain — some of what the machine pulls from.' },
-      { name: 'Collector Crypt', logo: 'img/partners/collector-crypt.jpg',
+      { name: 'Collector Crypt', logo: '/img/partners/collector-crypt.jpg',
         what: 'Real trading cards, vaulted and tradeable as tokens, so a pull can be a card you could hold.' }
     ],
     note: 'Pull the handle, see what comes out',
@@ -326,7 +326,7 @@ const SOON_TABS = [
   {
     tab: 'travel', name: 'Travel', icon: '✈',
     partners: [
-      { name: 'Nomadz', logo: 'img/partners/nomadz.jpg',
+      { name: 'Nomadz', logo: '/img/partners/nomadz.jpg',
         what: 'Travel booked on chain, for people who already live out of a wallet.' }
     ],
     note: 'Book trips, powered by Nomadz',
@@ -344,7 +344,7 @@ const SOON_TABS = [
   {
     tab: 'wishlist', name: 'Wishlist', icon: '✦',
     partners: [
-      { name: 'sp3nd', logo: 'img/partners/sp3nd.jpg',
+      { name: 'sp3nd', logo: '/img/partners/sp3nd.jpg',
         what: 'Real-world checkout paid from a wallet, with no card in between.' }
     ],
     note: 'My Amazon wishlist, paid in crypto',
@@ -790,7 +790,7 @@ function renderDailyClaim() {
 
   if (!slot) {
     try {
-      const res = await fetch('banner.json', { cache: 'no-store' });
+      const res = await fetch('/banner.json', { cache: 'no-store' });
       const cfg = await res.json();
       const today = new Date().toISOString().slice(0, 10);
       if (cfg.active && (!cfg.active.until || cfg.active.until >= today)) slot = cfg.active;
@@ -1113,7 +1113,7 @@ const Privy = {
       const self = this;
       this.pending = new Promise(function (ok, fail) {
         const el = document.createElement('script');
-        el.src = 'vendor/privy.js';
+        el.src = '/vendor/privy.js';
         el.onload = function () {
           if (window.PrivySDK) ok(window.PrivySDK);
           else fail(new Error('Sign-in could not load. Reload and try again.'));
@@ -3952,7 +3952,7 @@ async function openSwapReceipt() {
     const img = new Image();
     img.onload = function () { resolve(img); };
     img.onerror = function () { resolve(null); };
-    img.src = 'avatar.png';
+    img.src = '/avatar.png';
   });
   if (avatar) {
     g.save(); g.beginPath(); g.arc(200, 225, 90, 0, Math.PI * 2); g.clip();
@@ -7134,7 +7134,7 @@ async function claimInvite() {
 async function loadReferrals() {
   let items = [];
   try {
-    const res = await fetch('referrals.json', { cache: 'no-store' });
+    const res = await fetch('/referrals.json', { cache: 'no-store' });
     const d = await res.json();
     items = Array.isArray(d.items) ? d.items.filter(function (r) { return r && r.name && r.url; }) : [];
   } catch (e) { /* no file, no tab */ }
@@ -7688,7 +7688,7 @@ let lbRoster = null;
 async function loadRoster() {
   if (lbRoster) return lbRoster;
   try {
-    const res = await fetch('leaderboard.json', { cache: 'no-store' });
+    const res = await fetch('/leaderboard.json', { cache: 'no-store' });
     const data = await res.json();
     lbRoster = Array.isArray(data.players) ? data.players : [];
   } catch (e) { lbRoster = []; }

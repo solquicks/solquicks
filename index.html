@@ -14,13 +14,15 @@
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com https://auth.privy.io; frame-src https://auth.privy.io;"/>
-  <link rel="icon" type="image/png" sizes="32x32" href="avatar.png"/>
-  <link rel="icon" type="image/png" sizes="16x16" href="avatar.png"/>
-  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png"/>
+  <!-- Root-absolute on purpose, here and throughout: /c/<slug> serves this same
+       file, and a relative path would resolve under /c/ and miss. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/avatar.png"/>
+  <link rel="icon" type="image/png" sizes="16x16" href="/avatar.png"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png"/>
   <!-- Installable: on a Seeker or any phone this can be added to the home
        screen and opens without browser chrome, which is most of what the
        dapp store listing wants anyway. -->
-  <link rel="manifest" href="manifest.webmanifest"/>
+  <link rel="manifest" href="/manifest.webmanifest"/>
   <meta name="theme-color" content="#F0821E"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
@@ -164,7 +166,7 @@
     <div class="profile-band">
       <div class="profile">
         <div class="avatar-wrap">
-          <img class="avatar" id="site-avatar" src="avatar.png" alt="solquicks"/>
+          <img class="avatar" id="site-avatar" src="/avatar.png" alt="solquicks"/>
           <div class="avatar-ring"></div>
         </div>
         <div class="handle" id="site-handle"><span>@</span>solquicks</div>
@@ -360,9 +362,9 @@
       <div class="product-card">
         <div class="product-img-wrap">
           <div class="product-badge">READY TO SHIP ✓</div>
-          <img class="carousel-img active" src="img/plushie-1.jpg" alt="quicks plushie front" loading="lazy" width="675" height="900"/>
-          <img class="carousel-img" src="img/plushie-2.jpg" alt="quicks plushie side" loading="lazy" width="675" height="900"/>
-          <img class="carousel-img" src="img/plushie-3.jpg" alt="quicks plushie back" loading="lazy" width="675" height="900"/>
+          <img class="carousel-img active" src="/img/plushie-1.jpg" alt="quicks plushie front" loading="lazy" width="675" height="900"/>
+          <img class="carousel-img" src="/img/plushie-2.jpg" alt="quicks plushie side" loading="lazy" width="675" height="900"/>
+          <img class="carousel-img" src="/img/plushie-3.jpg" alt="quicks plushie back" loading="lazy" width="675" height="900"/>
           <div class="carousel-dots">
             <span class="cdot active" onclick="goSlide(0)"></span>
             <span class="cdot" onclick="goSlide(1)"></span>
@@ -382,8 +384,8 @@
           </div>
           <a href="https://store.fun/quicks/quicks-plushie" target="_blank" rel="noopener" class="buy-btn">Buy Now →</a>
           <div class="run-by">
-            <span class="run-by-mark"><img src="img/partners/store-fun.jpg" alt="" loading="lazy"/>store.fun</span>
-            <span class="run-by-mark later"><img src="img/partners/nomu.jpg" alt="" loading="lazy"/>Nomu<span class="run-by-tag">Soon</span></span>
+            <span class="run-by-mark"><img src="/img/partners/store-fun.jpg" alt="" loading="lazy"/>store.fun</span>
+            <span class="run-by-mark later"><img src="/img/partners/nomu.jpg" alt="" loading="lazy"/>Nomu<span class="run-by-tag">Soon</span></span>
           </div>
           <p class="sw-foot" style="margin-top:10px">Fulfilled by <b>store.fun</b>, with <b>Nomu</b>
             to come. Paid in crypto, shipped to your door.</p>
@@ -393,7 +395,7 @@
       <div class="product-card" id="collectible-card" hidden>
         <div class="product-img-wrap">
           <div class="product-badge" id="collectible-badge">SOULBOUND</div>
-          <img class="product-photo" id="collectible-art" src="img/soulbound.jpg"
+          <img class="product-photo" id="collectible-art" src="/img/soulbound.jpg"
                alt="solquicks.com soulbound NFT" width="687" height="687" onerror="collectibleArtMissing(this)"/>
         </div>
         <div class="product-info">
@@ -745,8 +747,8 @@
         <div class="sw-msg" id="sw-msg"></div>
         <div class="sw-share-row"><button class="sw-sharelink" type="button" onclick="shareSwapLink()">Share this swap</button></div>
         <div class="run-by">
-          <span class="run-by-mark"><img src="img/partners/jupiter.jpg" alt="" loading="lazy"/>Jupiter</span>
-          <span class="run-by-mark later"><img src="img/partners/titan.jpg" alt="" loading="lazy"/>Titan<span class="run-by-tag">Soon</span></span>
+          <span class="run-by-mark"><img src="/img/partners/jupiter.jpg" alt="" loading="lazy"/>Jupiter</span>
+          <span class="run-by-mark later"><img src="/img/partners/titan.jpg" alt="" loading="lazy"/>Titan<span class="run-by-tag">Soon</span></span>
         </div>
         <p class="sw-foot">Routed by <b>Jupiter</b> across every Solana DEX, with <b>Titan</b>
           routing to come. Non-custodial — the swap happens in your own wallet.</p>
@@ -918,9 +920,9 @@
   <!-- Every site built on this template carries this, which is how the next
        creator finds it. It is the whole distribution plan, so it sits on every
        page rather than behind a menu. -->
-  <a class="powered" id="powered" href="launch.html">
+  <a class="powered" id="powered" href="/launch.html">
     <span class="powered-top">
-      <img class="powered-mark" src="avatar.png" alt="" width="28" height="28"/>
+      <img class="powered-mark" src="/avatar.png" alt="" width="28" height="28"/>
       <span class="powered-text">
         <span class="powered-by">Powered by</span>
         <span class="powered-name" id="powered-name"></span>

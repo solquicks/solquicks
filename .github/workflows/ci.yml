@@ -167,6 +167,12 @@ jobs:
       - name: Every setting the Worker reads is declared
         run: node worker/test/env-check.mjs
 
+      # Session wallet only, server-side challenge values, and match reports
+      # that pay a wallet once. Not part of the original Worker job.
+      - name: Game routes
+        working-directory: worker
+        run: node test/game.test.mjs
+
       # Runs the shipped verifyInvoice against nine payment shapes: exact,
       # overpaid and short USDC, SOL, wrong wallet, nothing received, not yet on
       # chain, and a replayed signature. No network, no dependencies.
