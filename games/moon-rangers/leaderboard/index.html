@@ -107,15 +107,21 @@
     const status = document.getElementById('status');
     const table  = document.getElementById('lb-table');
     status.textContent = 'Loading…';
+    status.style.display = '';
     table.style.display = 'none';
+    document.getElementById('pagination').innerHTML = '';
 
     const titles = { all: 'All-Time Leaderboard', weekly: 'This Week', daily: 'Today' };
     document.getElementById('board-title').textContent = titles[period] ?? 'Leaderboard';
 
     try {
-      const res  = await fetch(`${WORKER}/api/game/leaderboard?period=${period}&limit=200`);
+      // The worker returns at most 100 rows.
+      const res  = await fetch(`${WORKER}/api/game/leaderboard?period=${encodeURIComponent(period)}&limit=100`);
+      // An error answer is not an empty board; say so rather than inviting
+      // people to be the first to play.
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
-      _data = json.rows ?? [];
+      _data = Array.isArray(json?.rows) ? json.rows.filter(r => r && typeof r === 'object') : [];
       renderPage(_page);
     } catch (e) {
       status.textContent = 'Could not load leaderboard. Try again later.';
@@ -129,6 +135,8 @@
 
     if (!_data.length) {
       status.textContent = 'No results yet. Be the first to play!';
+      status.style.display = '';
+      table.style.display = 'none';
       return;
     }
 
@@ -139,17 +147,20 @@
       const rank     = start + i + 1;
       const rankClass = rank <= 3 ? 'rank top3' : 'rank';
       const rankIcon  = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
-      const wallet    = r.wallet ? `${r.wallet.slice(0,4)}…${r.wallet.slice(-4)}` : '';
-      const holderBadge = r.is_holder ? '<span class="badge badge-holder">Holder</span>' : '';
+      const w         = typeof r.wallet === 'string' ? r.wallet : '';
+      const wallet    = w ? `${w.slice(0,4)}…${w.slice(-4)}` : '';
+      const holderBadge = r.is_holder === true ? '<span class="badge badge-holder">Holder</span>' : '';
+      const name      = r.display_name || wallet || 'Anonymous';
+      const num       = v => (Number(v) || 0).toLocaleString();
       return `<tr>
         <td class="${rankClass}">${rankIcon}</td>
         <td>
-          <div class="name">${esc(r.display_name ?? wallet ?? 'Anonymous')}${holderBadge}</div>
-          ${wallet ? `<div class="wallet">${wallet}</div>` : ''}
+          <div class="name">${esc(name)}${holderBadge}</div>
+          ${wallet && r.display_name ? `<div class="wallet">${esc(wallet)}</div>` : ''}
         </td>
-        <td class="right">${(r.points ?? 0).toLocaleString()}</td>
-        <td class="right">${(r.wins   ?? 0).toLocaleString()}</td>
-        <td class="right">${(r.kills  ?? 0).toLocaleString()}</td>
+        <td class="right">${num(r.points)}</td>
+        <td class="right">${num(r.wins)}</td>
+        <td class="right">${num(r.kills)}</td>
       </tr>`;
     }).join('');
 
