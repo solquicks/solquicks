@@ -1,0 +1,57 @@
+# Workers Builds runs `npx wrangler preview` from the repository root on every
+# branch except main. That command does not look in worker/, so without a
+# config here it has no entry point and the check fails. Production deploys
+# keep using worker/wrangler.toml; keep the bindings below in step with it.
+#
+# `previews` is required by `wrangler preview`. It is empty on purpose: a
+# Preview does not inherit the bindings below, and it must not be given the
+# production D1 database.
+name = "solquicks-points"
+main = "worker/src/index.js"
+compatibility_date = "2025-09-23"
+workers_dev = true
+previews = { }
+
+[vars]
+ALLOWED_ORIGINS = "https://solquicks.com,https://www.solquicks.com"
+MOON_RANGERS_COLLECTION = "5QuB6vy8181PG9g9SiQD6U7TfvuF9hcP9tAjj5DH79oz"
+TREASURY_WALLET = "uPMPPQ3tEXWbAVaESSbERMHG9Yb2VvAq3XU6R5J8LUc"
+COLLECTIBLE_COLLECTION = "GHhygKTrAoPzdFABab4SRErtTcZVfrbhxtpNDWJHLJwW"
+STAKING_ONCHAIN = "false"
+LAUNCH_ROOT = "solquicks.com"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "solquicks-points"
+database_id = "5084c600-ba8a-4c19-96f6-e795ee8c92c3"
+
+[[ratelimits]]
+name = "RL_AUTH"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+[[ratelimits]]
+name = "RL_CHAIN"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
+[[ratelimits]]
+name = "RL_WRITE"
+namespace_id = "1003"
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[[ratelimits]]
+name = "RL_READ"
+namespace_id = "1004"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
