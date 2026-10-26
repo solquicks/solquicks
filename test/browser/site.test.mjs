@@ -1842,7 +1842,7 @@ try {
         out[src] = r.status;
       }
       return out;
-    }, manifest.body.icons.map((i) => i.src).concat(['icons/apple-touch-icon.png']));
+    }, manifest.body.icons.map((i) => i.src).concat(['/icons/apple-touch-icon.png']));
     ok('every icon it points at exists', Object.values(icons).every((c) => c === 200), JSON.stringify(icons));
   }
 
@@ -3160,7 +3160,7 @@ try {
       ok(tab + ': ' + name + ' shows its mark', shown.there);
       ok(tab + ': and the file behind it really loads', shown.loaded, JSON.stringify(shown));
       ok(tab + ': served from our own repo, not somebody else\'s host',
-        /^img\/partners\//.test(shown.src || ''), shown.src);
+        /^\/img\/partners\//.test(shown.src || ''), shown.src);
       // The name is right beside it, so reading the logo out as well would say
       // everything twice.
       eq(tab + ': and is not read out twice to a screen reader', shown.alt, '');
@@ -3233,7 +3233,7 @@ try {
       eq('the one that does not route yet is marked', row[1].later, true);
       eq('and says so in words, not just in grey', (row[1].tag || '').trim(), 'Soon');
       ok('both marks load', row.every((m) => m.loaded), JSON.stringify(row));
-      ok('both from our own repo', row.every((m) => /^img\/partners\//.test(m.src || '')), JSON.stringify(row));
+      ok('both from our own repo', row.every((m) => /^\/img\/partners\//.test(m.src || '')), JSON.stringify(row));
       // The sentence underneath is what actually explains it, and it stays.
       const foot = (await page.textContent('#panel-swap .sw-foot')).replace(/\s+/g, ' ');
       ok('the line underneath still says it in full',
@@ -3349,7 +3349,7 @@ try {
     eq('and on a desktop too', (await clears()).join(','), '');
 
     // It has to go to the Launchpad from whatever page you were on.
-    eq('it points at the Launchpad', await page.locator('#powered').getAttribute('href'), 'launch.html');
+    eq('it points at the Launchpad', await page.locator('#powered').getAttribute('href'), '/launch.html');
 
     // A link straight to one of them has to work: these get shared before the
     // page behind them exists, which is rather the point of having them.
@@ -3541,8 +3541,54 @@ try {
     // Only the calls this page makes, not the ones the main site made earlier
     // in the run — those correctly carry no site at all.
     const fromHere = net.worker.length;
+    // Every request the page makes to this site, by path. /c/<slug> is a
+    // rewrite to index.html, so a relative asset path resolves under /c/ and
+    // gets the page back instead of the image, script or JSON it asked for.
+    const ownPaths = [];
+    const onRequest = (req) => {
+      const u = new URL(req.url());
+      if (u.origin + '/' === SITE) ownPaths.push(u.pathname);
+    };
+    page.on('request', onRequest);
     await page.goto(SITE + 'c/ripple', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.documentElement.dataset.creator === 'ripple', null, { timeout: 20000 });
+    await page.waitForLoadState('load');
+    // The ones only fetched later, on a click, are asked for here so they are
+    // in the list too.
+    await page.evaluate(async () => {
+      await Promise.allSettled([loadReferrals(), renderLeaderboard()]);
+    });
+    await page.waitForTimeout(300);
+    page.off('request', onRequest);
+    const underC = ownPaths.filter((p) => p.startsWith('/c/') && p !== '/c/ripple');
+    eq('nothing the creator page loads resolves under /c/', underC.join(', '), '');
+    ok('and it did load the site\'s own files', ['/css/site.css', '/js/main.js', '/avatar.png', '/referrals.json']
+      .every((p) => ownPaths.includes(p)), ownPaths.join(', '));
+
+    // Some paths are only used on a click (the sign-in script, the share
+    // card's avatar, partner marks), so the source is checked as well: no
+    // relative URL in the page, in its scripts, or in the logos the referral
+    // file hands to an <img>. Module imports ('./app.js') resolve against the
+    // script's own URL and are fine. A #hash is not a path.
+    const relative = /^(?![a-z][a-z0-9+.-]*:|\/|#|\.\/|$)/i;
+    const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const attrs = [...html.matchAll(/\s(?:src|href|poster|action)="([^"]*)"/g)]
+      .map((m) => m[1]).filter((v) => relative.test(v) && !v.includes('${'));
+    eq('index.html has no relative src or href', attrs.join(', '), '');
+    const scripts = fs.readdirSync(path.join(ROOT, 'js')).filter((f) => f.endsWith('.js'));
+    const literals = [];
+    for (const f of scripts) {
+      const src = fs.readFileSync(path.join(ROOT, 'js', f), 'utf8');
+      for (const m of src.matchAll(/['"`]([a-z0-9_-]+(?:\/[\w.\/-]*)?\.(?:json|png|jpe?g|webp|gif|svg|html|webmanifest|js|css))(?:[?#][^'"`]*)?['"`]/gi)) {
+        // A download's file name, not a URL.
+        if (m[1] === 'solquicks-swap.png') continue;
+        literals.push(f + ': ' + m[1]);
+      }
+    }
+    eq('the scripts name no file by a relative path', literals.join(', '), '');
+    const logos = JSON.parse(fs.readFileSync(path.join(ROOT, 'referrals.json'), 'utf8')).items
+      .map((r) => r.logo).filter((l) => l && relative.test(l));
+    eq('referrals.json gives no relative logo', logos.join(', '), '');
 
     eq('the page is theirs', await page.title(), 'Ripple | @ripple');
     eq('their handle is at the top', (await page.textContent('#site-handle')).trim(), '@ripple');
