@@ -43,7 +43,7 @@ const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got
 const section = (s) => console.log('\n── ' + s + ' ──');
 
 // ── the site, served as files ────────────────────────────────────────────────
-const TYPES = { '.html': 'text/html', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   // /c/<slug> is a creator's site, which is index.html deciding it is theirs.
