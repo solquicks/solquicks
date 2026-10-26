@@ -80,3 +80,68 @@ Both are reasoned through in
 [dependabot-2026-10-01.md](dependabot-2026-10-01.md); nothing has changed.
 A dismissed alert re-opens by itself if a patched version is ever published,
 so neither depends on anybody remembering to look.
+
+## Later the same day: zod (GHSA-mrhx-c7xc-m3w5) — no reachable fix
+
+Two more alerts appeared after the fixes above were pushed, again the same
+advisory twice because the same tree exists in both directories.
+
+*"Zod can exhaust memory while validating oversized constrained
+collections"* — CWE-770, CVSS `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H`. Note
+what that vector does and does not say: availability only, with no
+confidentiality or integrity impact. It is a memory-exhaustion denial of
+service.
+
+GitHub rates it **high** and gives the vulnerable range as `< 4.6.6`, with no
+separate 3.x range. Both trees resolve **zod 3.25.76**, which is the last
+stable 3.x release — everything published after it on that line is a canary.
+So the only version that satisfies the advisory is zod 4, a major bump.
+
+### Why a plain override is worse than the bug
+
+Six packages depend on zod across the tree, and five of them exclude 4.x:
+
+| dependent | declares |
+|---|---|
+| `abitype` (peer) | `^3 >=3.22.0` |
+| `x402`, `x402-fetch` | `^3.24.2` |
+| `@coinbase/cdp-sdk` | `^3.25.76` |
+| `@reown/appkit-wallet` | `3.22.4` (exact) |
+| `porto` | `^4.1.5` |
+
+Only `porto` is already on the 4.x line, and its copy — 4.6.5 here, 4.6.2 in
+`program/migration` — is genuinely one patch bump from safe. So an override
+scoped to that one subtree looked like the answer:
+
+```json
+"porto": { "zod": "^4.6.7" }
+```
+
+It is not. npm applies the inner constraint globally rather than only inside
+`porto`, and `npm ls zod --all` then reports the whole tree invalid:
+
+```
+zod@3.22.4  invalid: "^4.6.7" from node_modules/@reown/appkit-wallet
+zod@3.25.76 invalid: "^4.6.7" from node_modules/abitype,
+            "^4.6.7" from node_modules/@coinbase/cdp-sdk, ...
+```
+
+That would drag `abitype`, `viem`, `x402` and `@coinbase/cdp-sdk` onto a major
+they do not support, to close a DoS hole. Reverted.
+
+### Exposure
+
+The same as the rest of this file, and it matters more here because this
+advisory is availability-only. Both directories are one-shot CLI scripts, run
+by hand, on the owner's machine, against the owner's own files. Neither serves
+traffic and neither accepts untrusted input, so there is nobody to exhaust the
+memory of but the person running the script. Nothing imports `zod` directly;
+it arrives through `@ardrive/turbo-sdk`'s x402 payment support, which these
+uploads do not use — they are funded with SOL and AR.
+
+These two belong with bigint-buffer and elliptic: `no_bandwidth`, no fix to
+apply. **They are still open** — dismissing an alert is a write to GitHub and
+this session was not permitted to make it, so the dismissal is the owner's to
+do, on the Dependabot page, with this file as the reason. A dismissed alert
+re-opens on its own if a 3.x patch is ever published, so nothing here depends
+on anyone remembering to check later.
