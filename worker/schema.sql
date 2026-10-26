@@ -300,3 +300,40 @@ CREATE TABLE IF NOT EXISTS point_purchases (
   paid_at INTEGER,
   reference TEXT);
 CREATE INDEX IF NOT EXISTS point_purchases_wallet ON point_purchases(wallet);
+
+-- Moon Rangers (migrations/004-game-tables.sql). One row per match the game
+-- server reported; the first match/end fixes the result.
+CREATE TABLE IF NOT EXISTS game_match_records (
+  id TEXT PRIMARY KEY,
+  map TEXT,
+  mode TEXT NOT NULL DEFAULT 'tdm',
+  winning_team TEXT,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER);
+
+-- One row per player per match. The primary key is the lock that stops a
+-- replayed match/end paying anyone twice. ended_at is copied from the match so
+-- the period leaderboards need no join.
+CREATE TABLE IF NOT EXISTS game_match_awards (
+  match_id TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  team TEXT NOT NULL,
+  hero TEXT,
+  kills INTEGER NOT NULL DEFAULT 0,
+  deaths INTEGER NOT NULL DEFAULT 0,
+  won INTEGER NOT NULL DEFAULT 0,
+  fp_awarded INTEGER NOT NULL DEFAULT 0,
+  ended_at INTEGER NOT NULL,
+  PRIMARY KEY (match_id, wallet));
+CREATE INDEX IF NOT EXISTS game_match_awards_ended ON game_match_awards(ended_at);
+CREATE INDEX IF NOT EXISTS game_match_awards_wallet ON game_match_awards(wallet);
+
+-- Challenges and the daily share bonus, once per wallet per period. period_key
+-- is YYYY-MM-DD for a daily, YYYY-Www (ISO week) for a weekly.
+CREATE TABLE IF NOT EXISTS game_challenge_claims (
+  wallet TEXT NOT NULL,
+  challenge_id TEXT NOT NULL,
+  fp_awarded INTEGER NOT NULL DEFAULT 0,
+  claimed_at INTEGER NOT NULL,
+  period_key TEXT NOT NULL,
+  PRIMARY KEY (wallet, challenge_id, period_key));

@@ -1,3 +1,7 @@
+-- SUPERSEDED — do not apply. No worker route reads any table defined here; the
+-- game schema is in worker/schema.sql and migrations/004-game-tables.sql.
+-- Kept for reference only.
+--
 -- Moon Rangers FPS — additive DB migrations v2
 -- Apply to production with: npx wrangler d1 execute solquicks-points --file=worker/src/game/schema_v2.sql
 -- ADDITIVE ONLY: no DROP, ALTER COLUMN, or RENAME — only ADD COLUMN and CREATE TABLE IF NOT EXISTS.

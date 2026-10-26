@@ -411,6 +411,9 @@ const RATE_RULES = [
   { match: ['/api/invite/bind', '/api/invite/claim'], name: 'invitewrite', by: 'wallet', limit: 10, windowMs: 60000 },
   { match: ['/api/banner/hold', '/api/banner/confirm', '/api/banner/creative'], name: 'adwrite', by: 'ip', limit: 12, windowMs: 60000 },
   { match: ['/api/leaderboard', '/api/banner/stats'], name: 'read', by: 'ip', limit: 60, windowMs: 60000 },
+  { match: ['/api/game/leaderboard'], name: 'gameboard', by: 'ip', limit: 60, windowMs: 60000 },
+  // Each claim is once per period anyway; this only stops anyone hammering it.
+  { match: ['/api/game/points', '/api/game/challenge-complete', '/api/game/share-reward'], name: 'gameplayer', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
   // Guessing a code is infeasible (32^10), so this is not the thing standing
   // between an attacker and the points — it just stops anyone hammering it.
@@ -572,7 +575,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'store-fallback-1';
+const BUILD = 'game-routes-1';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -4107,7 +4110,8 @@ export default {
           path.startsWith('/api/reflect/') ||
           path === '/api/collectible' || path === '/api/collectible/claim' ||
           path === '/api/nonce' || path === '/api/session' ||
-          path === '/api/banner/event' || path === '/api/banner/stats') {
+          path === '/api/banner/event' || path === '/api/banner/stats' ||
+          path === '/api/game/leaderboard') {
         if (await rateLimited(request, env, path, null)) return tooMany(request, env);
       }
 
@@ -6321,6 +6325,18 @@ export default {
         return json(request, env, { token, expires, player: await playerState(env, wallet) });
       }
 
+      // ── the game ──
+      // Ahead of the session gate on purpose: the leaderboard is public, and
+      // match/start and match/end authenticate the game server with its own
+      // secret. Each game route enforces its own auth (see game/routes.js); the
+      // ones that touch a player's points still require a session.
+      if (path.startsWith('/api/game/')) {
+        const gameRes = await handleGameRequest(path, request, env, {
+          json, getSession, ensurePlayer, addPoints, isWallet, badgesFor, rateLimited, tooMany
+        });
+        return gameRes || json(request, env, { error: 'not found' }, 404);
+      }
+
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
@@ -6796,11 +6812,6 @@ export default {
 
         await addPoints(env, wallet, 'plushie', AWARDS.plushie);
         return json(request, env, { awarded: AWARDS.plushie, player: await playerState(env, wallet) });
-      }
-
-      if (path.startsWith('/api/game')) {
-        const gameRes = await handleGameRequest(path, request, env);
-        if (gameRes) return gameRes;
       }
 
       return json(request, env, { error: 'not found' }, 404);

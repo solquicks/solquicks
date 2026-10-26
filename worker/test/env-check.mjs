@@ -3,10 +3,14 @@
 // undefined in production and nothing says so. LAUNCH_ROOT sat under [triggers]
 // for exactly that reason, surviving only because the code had a fallback.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const here = new URL('..', import.meta.url);
-const src = readFileSync(new URL('src/index.js', here), 'utf8');
+// Every module, not just index.js: the game routes read their own secret.
+const src = readdirSync(new URL('src/', here), { recursive: true })
+  .filter((f) => f.endsWith('.js'))
+  .map((f) => readFileSync(new URL('src/' + f, here), 'utf8'))
+  .join('\n');
 const toml = readFileSync(new URL('wrangler.toml', here), 'utf8');
 const example = readFileSync(new URL('.dev.vars.example', here), 'utf8');
 
