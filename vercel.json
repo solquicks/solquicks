@@ -38,16 +38,28 @@
           "value": "public, max-age=86400, stale-while-revalidate=604800"
         }
       ]
+    },
+    {
+      "source": "/games/moon-rangers/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     }
   ],
   "rewrites": [
     {
       "source": "/c/:slug",
       "destination": "/index.html"
-    },
+    }
+  ],
+  "redirects": [
     {
-      "source": "/games/moon-rangers/(.*)",
-      "destination": "/games/moon-rangers/index.html"
+      "source": "/c/:slug/",
+      "destination": "/c/:slug",
+      "permanent": true
     }
   ]
 }
