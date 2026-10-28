@@ -8,8 +8,11 @@
   <meta property="og:title" content="Games — solquicks.com" />
   <meta property="og:description" content="Free browser games. Play and earn Fox Points." />
   <meta property="og:url" content="https://solquicks.com/games/" />
-  <meta property="og:image" content="https://solquicks.com/avatar.png" />
-  <meta name="twitter:card" content="summary" />
+  <meta property="og:image" content="https://solquicks.com/games/moon-rangers/preview.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="675" />
+  <meta property="og:image:alt" content="Moon Rangers FPS: the neon Moon City map, seen in-game" />
+  <meta name="twitter:card" content="summary_large_image" />
   <link rel="canonical" href="https://solquicks.com/games/" />
   <link rel="icon" href="/avatar.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -94,13 +97,17 @@
       color: inherit;
       display: flex;
       flex-direction: column;
-      transition: transform 0.15s, box-shadow 0.15s;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
 
-    .game-card:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 8px 32px rgba(46,36,64,0.14);
+    .game-card:hover,
+    .game-card:focus-visible {
+      transform: translateY(-4px);
+      border-color: var(--orange);
+      box-shadow: 0 12px 36px rgba(240,130,30,0.22), 0 4px 24px rgba(46,36,64,0.10);
     }
+
+    .game-card:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; }
 
     .game-thumb {
       width: 100%;
@@ -117,6 +124,75 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
+      display: block;
+      transition: transform 0.45s ease, filter 0.45s ease;
+    }
+
+    /* soft fade at the bottom so the caption reads on any frame */
+    .game-thumb::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(10,10,26,0.75) 0%, rgba(10,10,26,0) 45%);
+      pointer-events: none;
+    }
+
+    .game-card:hover .game-thumb img,
+    .game-card:focus-visible .game-thumb img {
+      transform: scale(1.06);
+      filter: saturate(1.15) brightness(1.05);
+    }
+
+    .game-thumb-caption {
+      position: absolute;
+      left: 12px;
+      bottom: 10px;
+      z-index: 1;
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      opacity: 0.9;
+    }
+
+    .game-thumb-play {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 1;
+      width: 58px;
+      height: 58px;
+      margin: -29px 0 0 -29px;
+      border-radius: 50%;
+      background: var(--orange);
+      box-shadow: 0 6px 20px rgba(240,130,30,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .game-thumb-play::before {
+      content: "";
+      margin-left: 5px;
+      border-left: 18px solid #fff;
+      border-top: 11px solid transparent;
+      border-bottom: 11px solid transparent;
+    }
+
+    .game-card:hover .game-thumb-play,
+    .game-card:focus-visible .game-thumb-play { opacity: 1; transform: scale(1); }
+
+    @media (hover: none) {
+      .game-thumb-play { opacity: 0.92; transform: scale(1); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .game-card, .game-thumb img, .game-thumb-play { transition: none; }
+      .game-card:hover, .game-card:focus-visible { transform: none; }
+      .game-card:hover .game-thumb img, .game-card:focus-visible .game-thumb img { transform: none; }
     }
 
     .game-thumb-fallback {
@@ -124,7 +200,7 @@
       filter: drop-shadow(0 0 16px #4af);
     }
 
-    .game-live-badge {
+    .game-badge {
       position: absolute;
       top: 10px;
       right: 10px;
@@ -137,6 +213,7 @@
       text-transform: uppercase;
       padding: 3px 9px;
       border-radius: 8px;
+      z-index: 1;
     }
 
     .game-body {
@@ -180,11 +257,12 @@
       text-transform: uppercase;
     }
 
-    .game-fp {
+    .game-soon {
       margin-left: auto;
       font-weight: 800;
-      font-size: 0.85rem;
-      color: var(--orange);
+      font-size: 0.8rem;
+      color: var(--orange-deep);
+      text-align: right;
     }
 
     .play-btn {
@@ -222,17 +300,19 @@
     <div class="games-grid">
       <a class="game-card" href="/games/moon-rangers/">
         <div class="game-thumb">
-          <img src="/games/moon-rangers/preview.png" alt="Moon Rangers FPS" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+          <img src="/games/moon-rangers/preview.webp" width="960" height="540" alt="In-game view of the neon Moon City map in Moon Rangers FPS" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
           <div class="game-thumb-fallback" style="display:none">🚀</div>
-          <div class="game-live-badge">Live</div>
+          <div class="game-badge">Free to play</div>
+          <div class="game-thumb-play" aria-hidden="true"></div>
+          <div class="game-thumb-caption">In-game · Moon City</div>
         </div>
         <div class="game-body">
           <div class="game-name">Moon Rangers FPS</div>
-          <div class="game-desc">5v5 hero shooter in your browser. Zero-G gunfights, 9 weapons, 5 hero classes. No download needed.</div>
+          <div class="game-desc">Hero shooter in your browser. Zero-G gunfights, 2 maps, 9 roles to pick from. No download needed. Play solo against bots today.</div>
           <div class="game-meta">
             <span class="game-tag">FPS</span>
-            <span class="game-tag">5v5</span>
-            <span class="game-fp">+25 FP / match</span>
+            <span class="game-tag">vs bots</span>
+            <span class="game-soon">Online 5v5 coming soon</span>
           </div>
         </div>
         <div class="play-btn">Play Now</div>
