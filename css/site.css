@@ -204,6 +204,8 @@
     .nav-trigger:hover { background: var(--orange-soft); }
     .nav-trigger[aria-expanded="true"] { background: var(--orange); border-color: var(--ink); color: #fff; }
     .nav-current { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Names the menu button for screen readers on phones, where .nav-current is hidden. */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     .nav-caret { flex-shrink: 0; transition: transform 0.18s ease; }
     .nav-trigger[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
     @media (prefers-reduced-motion: reduce) { .nav-caret { transition: none; } }
