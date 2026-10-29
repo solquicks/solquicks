@@ -38,4 +38,16 @@ section('reported swap failures do not count as an outage');
   eq('and the log did not grow', env._db.prepare('SELECT COUNT(*) AS n FROM error_log').get().n, n0);
 }
 
+
+section('paths that do not exist (I11)');
+{
+  const env = freshEnv();
+  for (const p of ['/nope', '/wp-login.php', '/.git/config']) {
+    const r = await call(env, 'GET', p);
+    eq(p + ' is not found, not "sign in"', r.status, 404);
+  }
+  const r = await call(env, 'GET', '/api/nope');
+  eq('an unknown /api path still does not reveal what exists to a stranger', r.status, 401);
+}
+
 finish();

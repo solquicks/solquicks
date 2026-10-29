@@ -6724,6 +6724,12 @@ export default {
         return gameRes || json(request, env, { error: 'not found' }, 404);
       }
 
+      // Nothing outside /api lives on this worker. Saying "not signed in" to
+      // a path that does not exist sent people (and scanners) the wrong way
+      // (I11). Unknown /api paths still answer 401 to a stranger, which is
+      // deliberate: it does not reveal which session routes exist.
+      if (!path.startsWith('/api/')) return json(request, env, { error: 'not found' }, 404);
+
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
