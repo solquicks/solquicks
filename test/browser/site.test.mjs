@@ -43,13 +43,19 @@ const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got
 const section = (s) => console.log('\n── ' + s + ' ──');
 
 // ── the site, served as files ────────────────────────────────────────────────
+// The clean URLs (/fees, /launch) are plain rewrites in vercel.json. They are
+// read from there rather than copied here, so the test serves exactly what
+// Vercel is told to serve.
+const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+const CLEAN = Object.fromEntries((VERCEL.rewrites || [])
+  .filter((r) => !/[:(]/.test(r.source)).map((r) => [r.source, r.destination]));
 const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   // /c/<slug> is a creator's site, which is index.html deciding it is theirs.
   // Vercel is configured to rewrite the same way.
   const creator = /^\/c\/[a-z0-9-]{3,32}\/?$/.test(rel);
-  const file = path.join(ROOT, rel === '/' || creator ? 'index.html' : rel);
+  const file = path.join(ROOT, rel === '/' || creator ? 'index.html' : (CLEAN[rel] || rel));
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
@@ -1735,6 +1741,37 @@ try {
     await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
   }
 
+  section('clean URLs: /fees and /launch, with the .html links still working');
+  {
+    const rw = VERCEL.rewrites || [];
+    for (const name of ['fees', 'launch']) {
+      ok('vercel.json rewrites /' + name + ' to /' + name + '.html',
+        rw.some((r) => r.source === '/' + name && r.destination === '/' + name + '.html'));
+      ok('and does not redirect the old /' + name + '.html away',
+        !(VERCEL.redirects || []).some((r) => r.source === '/' + name + '.html'));
+      for (const url of [name, name + '.html']) {
+        const res = await fetch(SITE + url);
+        const body = await res.text();
+        ok('/' + url + ' opens the page', res.status === 200 && /<title>/.test(body), 'status ' + res.status);
+      }
+    }
+    ok('vercel.json does not turn on cleanUrls site-wide', VERCEL.cleanUrls !== true);
+    const sitemap = fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8');
+    ok('the sitemap lists the Launchpad by its clean URL', /<loc>https:\/\/solquicks\.com\/launch<\/loc>/.test(sitemap));
+    eq('and no .html address at all', (sitemap.match(/<loc>[^<]*\.html<\/loc>/g) || []).join(','), '');
+  }
+
+  section('games page: the line under the title');
+  {
+    // Read from the file rather than opened in a tab: this section only checks
+    // wording, and a page stuck waiting on its fonts must not abort the run.
+    const html = fs.readFileSync(path.join(ROOT, 'games/index.html'), 'utf8');
+    eq('it reads exactly as approved',
+      ((html.match(/<p class="page-sub">([^<]*)<\/p>/) || [])[1] || '').trim(), 'Play for free, earn Fox Points.');
+    ok('and the old wording is gone', !/Play free, earn/.test(html));
+    ok('and holders are not mentioned anywhere on it', !/holder/i.test(html));
+  }
+
   section('games: the tab the FPS shipped into');
   {
     // Games was a coming-soon page until Moon Rangers went live. The test that
@@ -1749,6 +1786,9 @@ try {
     const text = (await panel.textContent()).replace(/\s+/g, ' ');
     ok('and names it', /Moon Rangers/.test(text), text.slice(0, 90));
     ok('and says it is live rather than coming', /Live/.test(text) && !/still open/.test(text), text.slice(0, 90));
+    eq('its menu note matches the games page',
+      await page.locator('.nav-item[data-tab="games"] .nav-item-note').first().textContent(),
+      'Play for free, earn Fox Points');
 
     // Put the tab back: the swap sections that follow expect to find it open,
     // and a section that wanders off breaks whatever runs next.
@@ -2785,7 +2825,7 @@ try {
     // Solana's top fifty. The page must show what is traded here first.
     const fees = await context.newPage();
     fees.on('pageerror', (e) => pageErrors.push('[fees] ' + e.message));
-    await fees.goto(SITE + 'fees.html', { waitUntil: 'domcontentloaded' });
+    await fees.goto(SITE + 'fees', { waitUntil: 'domcontentloaded' });
     await fees.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
 
     // Every mint is a real token mint; no fee account exists yet except USDC's.
@@ -3349,7 +3389,7 @@ try {
     eq('and on a desktop too', (await clears()).join(','), '');
 
     // It has to go to the Launchpad from whatever page you were on.
-    eq('it points at the Launchpad', await page.locator('#powered').getAttribute('href'), '/launch.html');
+    eq('it points at the Launchpad, by its clean URL', await page.locator('#powered').getAttribute('href'), '/launch');
 
     // A link straight to one of them has to work: these get shared before the
     // page behind them exists, which is rather the point of having them.
@@ -3654,8 +3694,8 @@ try {
     await page.goto(SITE + 'c/nobody', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => /No site at this address/.test(document.body.textContent), null, { timeout: 20000 });
     ok('an unclaimed address says so rather than showing mine', true);
-    ok('and points them at the Launchpad',
-      /launch\.html/.test(await page.evaluate(() => document.body.innerHTML)));
+    ok('and points them at the Launchpad, by its clean URL',
+      /\/launch"/.test(await page.evaluate(() => document.body.innerHTML)));
 
     await page.goto(SITE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });

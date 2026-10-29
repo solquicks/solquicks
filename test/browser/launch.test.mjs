@@ -20,9 +20,16 @@ const TYPES = { '.html': 'text/html', '.png': 'image/png', '.json': 'application
   '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon', '.jpg': 'image/jpeg',
   '.js': 'text/javascript' };
 
+// The clean URLs (/fees, /launch) are plain rewrites in vercel.json. They are
+// read from there rather than copied here, so the test serves exactly what
+// Vercel is told to serve.
+const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+const CLEAN = Object.fromEntries((VERCEL.rewrites || [])
+  .filter((r) => !/[:(]/.test(r.source)).map((r) => [r.source, r.destination]));
+
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);
+  const file = path.join(ROOT, rel === '/' ? 'index.html' : (CLEAN[rel] || rel));
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
@@ -265,7 +272,8 @@ const pv = {
 
 try {
   section('the pitch, and getting in');
-  await page.goto(SITE + 'launch.html', { waitUntil: 'domcontentloaded' });
+  // The clean URL is the one people are given; launch.html is checked below.
+  await page.goto(SITE + 'launch', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelectorAll('#earns .earn').length > 0, null, { timeout: 10000 });
 
   ok('it says what you get before it asks for anything',
@@ -719,7 +727,7 @@ try {
 
     eq('the provider was asked for, and told where to send them back',
       await page.evaluate(() => sessionStorage.getItem('__oauth_asked')),
-      'google ' + SITE + 'launch.html');
+      'google ' + SITE + 'launch');
     eq('and the code it returned was handed straight back to Privy',
       await page.evaluate(() => sessionStorage.getItem('__oauth_used')), 'good-code st-42 google');
 

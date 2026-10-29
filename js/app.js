@@ -337,7 +337,7 @@ const SOON_TABS = [
   {
     // Built — its panel is markup in index.html, not a generated card.
     tab: 'games', name: 'Games', icon: '◈', live: true,
-    note: 'Play free, earn Fox Points',
+    note: 'Play for free, earn Fox Points',
     lead: 'Games',
     what: ''
   },
@@ -616,7 +616,7 @@ const whoseSite = (async function () {
       '<div class="soon-tag">Nothing here yet</div>' +
       '<div class="soon-lead">No site at this address</div>' +
       '<p class="soon-what">This name has not been claimed. ' +
-      '<a href="https://' + SITE_ROOT + '/launch.html">Launch your own website</a>.</p></div>';
+      '<a href="https://' + SITE_ROOT + '/launch">Launch your own website</a>.</p></div>';
     document.body.appendChild(cover);
     return null;
   } catch (e) {

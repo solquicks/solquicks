@@ -53,6 +53,14 @@
     {
       "source": "/c/:slug",
       "destination": "/index.html"
+    },
+    {
+      "source": "/fees",
+      "destination": "/fees.html"
+    },
+    {
+      "source": "/launch",
+      "destination": "/launch.html"
     }
   ],
   "redirects": [

@@ -861,9 +861,11 @@ Read live from your dashboard on 2026-10-01:
    Apple each need their own OAuth credentials configured inside Privy, which
    is their setup flow, not ours.
 3. **Where Google/Apple send them back**: the wizard uses
-   `https://solquicks.com/launch.html`. Privy only needs the domain
-   allowlisted (step 1), but if the dashboard asks for exact return URLs,
-   that is the one.
+   whichever address the page was opened at: `https://solquicks.com/launch`
+   (the clean URL, linked everywhere since 2026-10-29) or the old
+   `https://solquicks.com/launch.html`, which still works. Privy only needs
+   the domain allowlisted (step 1), but if the dashboard asks for exact return
+   URLs, list both.
 
 Nothing server-side uses Privy, so there is nothing of that kind to set. If
 that changes, it goes in with `npx wrangler secret put PRIVY_APP_SECRET` and
