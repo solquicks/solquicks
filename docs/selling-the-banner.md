@@ -1,16 +1,32 @@
 # Selling the banner slot
 
-The strip at the top of solquicks.com. Sold by hand for now — the point is to
-find out what it's worth before building an auction around it.
+The strip at the top of solquicks.com. The point for now is to find out what
+it's worth before building an auction around it.
 
 ## Price
 
-**$250 / week.** Change it whenever — the point is having a number to quote
-when someone asks on stream.
+Bookings on the site use this table (set in `BANNER_RATES` in
+`worker/src/index.js`). The per-week price drops with longer bookings and
+stops at $215:
+
+| Length   | Total   | Per week |
+|----------|---------|----------|
+| 1 week   | $300    | $300     |
+| 2 weeks  | $540    | $270     |
+| 3 weeks  | $750    | $250     |
+| 1 month  | $960    | $240     |
+| 3 months | $2,800  | $215     |
+| 6 months | $5,600  | $215     |
+| 1 year   | $11,200 | $215     |
+
+Quote the same prices for a slot sold by hand, so nobody pays more or less
+depending on how they asked.
 
 ## Booking one
 
-Edit `banner.json`, commit, push. Live in about a minute.
+Bookings made on the site (Book tab -> Advertising space) fill the slot on
+their own. `banner.json` `active` is the manual override for a slot sold by
+hand, off the site: edit it, commit, push. Live in about a minute.
 
 ```json
 "active": {
@@ -26,27 +42,32 @@ Edit `banner.json`, commit, push. Live in about a minute.
 `image` fills a wide 3:1 hero, so ask for artwork around 1200x400. Without one
 the emoji is used on a gradient.
 
-`until` is the safety net: the slot reverts to your own promos the day after,
-so a finished campaign can never quietly keep running. `image` is optional —
-without it the `emoji` is used. Everything except `until` shows immediately.
+`until` is the safety net: the day after, the slot goes back to advertising
+itself, so a finished campaign can never quietly keep running. `image` is
+optional — without it the `emoji` is used. Everything except `until` shows immediately.
 
 ## When nothing is booked
 
-The slot rotates through `house` — your plushie and Moon Rangers — and shows
-"This spot is for hire". It is never empty, because an empty ad slot reads as
-"nobody wants to advertise here".
+The slot stays empty of ads until someone pays. There are no house promos:
+`house` in `banner.json` is an empty list and stays that way. Instead the
+unsold slot advertises itself — it is tagged "Available", reads "Your
+advertising space here" and "Book this space", and clicking it opens the
+Advertising space card on the Book tab.
 
-Add more house promos by appending to the `house` array. They rotate daily.
+Nothing goes in the slot just to fill it. It shows a paid ad, or it shows
+that it is for sale.
 
 ## Ground rules worth keeping
 
+- **$300 for one week, $250 a week at 3 weeks**, as in the table above.
 - **Paid placements are labelled "Sponsored"** and use `rel="sponsored"`.
   That is both the honest thing and what search engines expect of paid links.
-- **You approve the creative before it goes live.** You are publishing it under
+- **quicks approves every ad before it goes live.** You are publishing it under
   your name to an audience that trusts you; a scam in your banner costs more
   than the slot earns. Decide in advance what you will not run — token
   presales, unaudited protocols, anything you would not personally vouch for.
-- **Take payment before it goes up.** No escrow exists here; it is a handshake.
+- **Payment comes first.** Nothing goes up until it is paid. No escrow
+  exists here; it is a handshake.
 
 ## What to learn before automating
 
@@ -58,8 +79,8 @@ slot. See the roadmap for the full argument.
 ## What a booking delivered
 
 Views and clicks are counted per booking, privately — no cookies, no IPs, no
-third-party tracker. House promos are counted separately so they can never
-inflate a sponsor's numbers.
+third-party tracker. Only paid bookings are counted, so nothing but a sponsor's
+own ad adds to their numbers.
 
 ```bash
 # everything, newest first
@@ -70,5 +91,5 @@ curl "https://solquicks-points.solquicks-45c.workers.dev/api/banner/stats?slot=a
 ```
 
 Send the sponsor their figure at the end of a booking. It is also your own
-evidence when pricing the next one — and the thing that decides whether $250
-is too low.
+evidence when pricing the next one — and the thing that decides whether these prices
+are too low.

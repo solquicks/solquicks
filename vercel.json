@@ -38,6 +38,15 @@
           "value": "public, max-age=86400, stale-while-revalidate=604800"
         }
       ]
+    },
+    {
+      "source": "/games/moon-rangers/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     }
   ],
   "rewrites": [
@@ -46,8 +55,29 @@
       "destination": "/index.html"
     },
     {
-      "source": "/games/moon-rangers/(.*)",
-      "destination": "/games/moon-rangers/index.html"
+      "source": "/fees",
+      "destination": "/fees.html"
+    },
+    {
+      "source": "/launch",
+      "destination": "/launch.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/c/:slug/",
+      "destination": "/c/:slug",
+      "permanent": true
+    },
+    {
+      "source": "/fees.html",
+      "destination": "/fees",
+      "permanent": true
+    },
+    {
+      "source": "/launch.html",
+      "destination": "/launch",
+      "permanent": true
     }
   ]
 }

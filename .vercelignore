@@ -1,0 +1,14 @@
+# Only the website is deployed to Vercel. These are source, notes and tooling
+# that were being served publicly (e.g. /TODO.md, /worker/src/index.js).
+# The worker deploys to Cloudflare from the repo, not from Vercel, so it is
+# unaffected.
+.claude
+.github
+worker
+docs
+program
+collectible
+tools
+test
+*.md
+wrangler.toml
