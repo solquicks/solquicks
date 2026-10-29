@@ -1741,14 +1741,18 @@ try {
     await page.waitForFunction(() => !!swapQuote, null, { timeout: 15000 });
   }
 
-  section('clean URLs: /fees and /launch, with the .html links still working');
+  section('clean URLs: /fees and /launch, with the .html links forwarding to them');
   {
     const rw = VERCEL.rewrites || [];
     for (const name of ['fees', 'launch']) {
       ok('vercel.json rewrites /' + name + ' to /' + name + '.html',
         rw.some((r) => r.source === '/' + name && r.destination === '/' + name + '.html'));
-      ok('and does not redirect the old /' + name + '.html away',
-        !(VERCEL.redirects || []).some((r) => r.source === '/' + name + '.html'));
+      // The old address forwards to the clean one, so each page has one
+      // address. Redirects only apply to what was asked for, never to the
+      // rewrite's internal target, so this cannot loop.
+      ok('and forwards the old /' + name + '.html to /' + name + ' for good',
+        (VERCEL.redirects || []).some((r) => r.source === '/' + name + '.html' &&
+          r.destination === '/' + name && r.permanent === true));
       for (const url of [name, name + '.html']) {
         const res = await fetch(SITE + url);
         const body = await res.text();

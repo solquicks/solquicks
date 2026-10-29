@@ -68,6 +68,16 @@
       "source": "/c/:slug/",
       "destination": "/c/:slug",
       "permanent": true
+    },
+    {
+      "source": "/fees.html",
+      "destination": "/fees",
+      "permanent": true
+    },
+    {
+      "source": "/launch.html",
+      "destination": "/launch",
+      "permanent": true
     }
   ]
 }
