@@ -55,8 +55,16 @@ section('the origin check, which every creator site depends on');
   };
 
   eq('the main site is allowed', await from('https://solquicks.com'), 'https://solquicks.com');
-  eq('and so is a creator on a subdomain', await from('https://ripple.solquicks.com'), 'https://ripple.solquicks.com');
-  eq('dashes and digits in a name are fine', await from('https://fox-2.solquicks.com'), 'https://fox-2.solquicks.com');
+  // Exact allowlist only (security fix 2026-10-29). Creator sites live at
+  // /c/<slug> on the main origin, so no subdomain needs reading rights.
+  eq('a subdomain is not allowed just for being under the root', await from('https://ripple.solquicks.com'), undefined);
+  eq('nor one with dashes and digits', await from('https://fox-2.solquicks.com'), undefined);
+  eq('www is allowed only because it is listed', await from('https://www.solquicks.com'), undefined);
+  {
+    const listed = freshEnv({ ALLOWED_ORIGINS: 'https://solquicks.com,https://ripple.solquicks.com' });
+    const r = await call(listed, 'GET', '/api/launch/features', { origin: 'https://ripple.solquicks.com' });
+    eq('a subdomain listed explicitly is allowed', r.cors, 'https://ripple.solquicks.com');
+  }
 
   // The ways this is normally got wrong. Each of these passes a careless
   // endsWith or a substring test.

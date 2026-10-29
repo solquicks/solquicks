@@ -166,16 +166,16 @@ section('paying by connected wallet');
   eq('unknown booking', (await confirm('whatever', tok, 'FOX-NOPE22')).status, 404);
 
   eq('a transaction that is not on chain', (await confirm('sig-not-landed')).status, 402);
-  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: h.body.usdc, failed: true }))).status, 402);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: h.body.usdc - 10000 }))).status, 402);
-  const solPay = await confirm(pay({ from: buyer, sol: 2e9 }));
+  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: h.body.usdc, failed: true, reference: h.body.reference }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: h.body.usdc - 10000, reference: h.body.reference }))).status, 402);
+  const solPay = await confirm(pay({ from: buyer, sol: 2e9, reference: h.body.reference }));
   eq('paid in SOL instead of USDC', solPay.status, 402);
   ok('and is told bookings are USDC only', /USDC only/.test(solPay.body.error || ''), solPay.body.error);
-  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: h.body.usdc }))).status, 402);
+  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: h.body.usdc, reference: h.body.reference }))).status, 402);
   eq('none of that marked it paid', row(env, ref).status, 'held');
   eq('none of that consumed a payment', payments(env), 0);
 
-  const good = pay({ from: buyer, usdc: h.body.usdc });
+  const good = pay({ from: buyer, usdc: h.body.usdc, reference: h.body.reference });
   const c = await confirm(good);
   eq('the exact amount from the booker is accepted', c.status, 200);
   eq('booking is paid', row(env, ref).status, 'paid');
@@ -197,8 +197,15 @@ section('paying by connected wallet');
   eq('reusing a payment for another booking is refused', reuse.status, 402);
   eq('that booking is still unpaid', row(env, h2.body.ref).status, 'held');
 
-  const over = await confirm(pay({ from: buyer, usdc: h2.body.usdc + 50e6 }), tok, h2.body.ref);
-  eq('overpaying is accepted', over.status, 200);
+  // exact amounts only (security fix 2026-10-29); an overpayment is flagged
+  // for a refund instead of settling
+  const over = await confirm(pay({ from: buyer, usdc: h2.body.usdc + 50e6, reference: h2.body.reference }), tok, h2.body.ref);
+  eq('overpaying is not settled', over.status, 402);
+  ok('and is flagged for a refund', chain.alerts.some((a) => a.includes('Overpayment')));
+  const untagged = await confirm(pay({ from: buyer, usdc: h2.body.usdc }), tok, h2.body.ref);
+  eq('a transfer without this booking\'s reference is refused', untagged.status, 402);
+  const exact = await confirm(pay({ from: buyer, usdc: h2.body.usdc, reference: h2.body.reference }), tok, h2.body.ref);
+  eq('the exact amount, tagged, is accepted', exact.status, 200);
 }
 
 section('paying by QR from a phone that never visited the site');
@@ -247,7 +254,7 @@ section('an abandoned hold frees the slot');
 
   // the original customer's wallet now pays, but the hour has gone to someone else
   const late = await call(env, 'POST', '/api/booking/confirm', {
-    token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: h.body.usdc }) }
+    token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: h.body.usdc, reference: h.body.reference }) }
   });
   eq('paying for the expired hold after the hour was taken is refused', late.status, 409);
   eq('and says a refund is coming', late.body.refund, true);
@@ -314,7 +321,7 @@ section('late payment — each way it can go');
   const c = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[16].starts, ...guest } });
   advance(21 * MIN);
   await slots(env);
-  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
+  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc, reference: c.body.reference }) } });
   eq('a wallet payment landing after the hold, hour free, is accepted', cc.status, 200);
   eq('and booked', row(env, c.body.ref).status, 'paid');
 
@@ -405,7 +412,7 @@ section('two bookings, one payment, the same moment');
   const list = (await slots(env)).filter((x) => !x.rush);
   const h1 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[0].starts, ...guest } });
   const h2 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[4].starts, ...guest } });
-  const sig = pay({ from: buyer, usdc: h1.body.usdc });
+  const sig = pay({ from: buyer, usdc: h1.body.usdc, reference: h1.body.reference });
   const both = await Promise.all([
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h1.body.ref, signature: sig } }),
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig } })
@@ -600,12 +607,12 @@ section('ad slot — paying by connected wallet');
     body: { ref, sponsor: 'Sponsor', headline: 'Headline', url: 'https://example.com' } });
 
   eq('creative cannot be sent before paying', (await creative(a.body.ref)).status, 409);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: a.body.usdc - 10000 }))).status, 402);
-  eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9 }))).status, 402);
-  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: a.body.usdc }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: a.body.usdc - 10000, reference: a.body.reference }))).status, 402);
+  eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9, reference: a.body.reference }))).status, 402);
+  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: a.body.usdc, reference: a.body.reference }))).status, 402);
   eq('none of that marked it paid', adRow(env, a.body.ref).status, 'held');
 
-  const good = pay({ from: buyer, usdc: a.body.usdc });
+  const good = pay({ from: buyer, usdc: a.body.usdc, reference: a.body.reference });
   const c = await confirm(good);
   eq('the exact amount is accepted', c.status, 200);
   eq('and asks for the creative', c.body.needsCreative, true);
@@ -689,7 +696,7 @@ section('ad slot — late payment after the run was taken');
   const c = await adHold(env, 1, { token: tok });
   advance(21 * MIN);
   await adRates(env);
-  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
+  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc, reference: c.body.reference }) } });
   eq('a late wallet payment for a run still free is accepted', cc.status, 200);
   eq('and asks for the creative', cc.body.needsCreative, true);
 }

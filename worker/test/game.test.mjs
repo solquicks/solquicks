@@ -381,7 +381,7 @@ section('the leaderboard is public');
   eq('another origin still gets an answer', evil.status, 200);
   eq('but no permission to read it', evil.cors, undefined);
   const creator = await call(env, 'GET', '/api/game/leaderboard', { origin: 'https://ripple.solquicks.com' });
-  eq('a creator subdomain may read it', creator.cors, 'https://ripple.solquicks.com');
+  eq('an unlisted subdomain may not read it', creator.cors, undefined);
 
   const pre = await call(env, 'OPTIONS', '/api/game/leaderboard');
   eq('a preflight is answered', pre.status, 204);

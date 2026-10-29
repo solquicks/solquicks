@@ -64,29 +64,17 @@ function isWallet(w) {
   try { return b58decode(w).length === 32; } catch (e) { return false; }
 }
 
-/// Every creator's site is a subdomain of the launch root and calls this
-/// worker, so the exact-match list is not enough on its own.
-///
-/// Matched against the parsed hostname rather than the origin string. A test
-/// like origin.endsWith('.solquicks.com') is the usual way to get this wrong —
-/// "https://solquicks.com.attacker.dev" does not end with it, but
-/// "https://evil-solquicks.com" passes a sloppier suffix check, and a match on
-/// the raw string would also wave through "http://" and odd ports.
+/// An exact allowlist, nothing else. Creator sites are served at /c/<slug> on
+/// the main origin, so they need no entry of their own. Any https subdomain of
+/// the launch root used to be allowed as well; that was dropped (security fix
+/// 2026-10-29) so a subdomain handed to anyone else, or taken over, can never
+/// read API answers with somebody's session. If wildcard creator subdomains
+/// are ever switched on, add each one to ALLOWED_ORIGINS explicitly.
 function originAllowed(origin, env) {
   if (!origin) return false;
-  const exact = (env.ALLOWED_ORIGINS || '').split(',').map(function (s) { return s.trim(); });
-  if (exact.indexOf(origin) >= 0) return true;
-
-  const root = env.LAUNCH_ROOT || 'solquicks.com';
-  let u;
-  try { u = new URL(origin); } catch (e) { return false; }
-  if (u.protocol !== 'https:' || u.port) return false;
-  // Exactly one label in front of the root, and a label that could really be a
-  // subdomain we issued.
-  const suffix = '.' + root;
-  if (!u.hostname.endsWith(suffix)) return false;
-  const label = u.hostname.slice(0, -suffix.length);
-  return /^[a-z0-9-]{1,63}$/.test(label);
+  const exact = (env.ALLOWED_ORIGINS || '').split(',').map(function (s) { return s.trim(); })
+    .filter(Boolean);
+  return exact.indexOf(origin) >= 0;
 }
 
 function corsHeaders(request, env) {
@@ -261,8 +249,13 @@ async function stakedMints(env, wallet) {
 }
 
 // Verify a SOL payment on-chain before it unlocks anything.
+//
+// Fails closed (security fix 2026-10-29): a fee that is due but cannot be
+// checked because the treasury is not configured is a refusal, never a pass.
+// A fee of zero is a free action and needs no payment at all.
 async function verifyPayment(env, wallet, signature, minLamports, purpose) {
-  if (!env.TREASURY_WALLET || !minLamports) return { ok: true, skipped: true };
+  if (!minLamports) return { ok: true, skipped: true };
+  if (!env.TREASURY_WALLET || !env.HELIUS_API_KEY) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
 
   const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
@@ -291,12 +284,18 @@ async function verifyPayment(env, wallet, signature, minLamports, purpose) {
     if (keys.indexOf(wallet) !== 0) return { ok: false, error: 'payment was not sent by your wallet' };
   }
   const payer = keys[0];
+  if (payer === env.TREASURY_WALLET) return { ok: false, error: 'payment did not come from your wallet' };
 
   const delta = (tx.meta.postBalances[treasuryIdx] || 0) - (tx.meta.preBalances[treasuryIdx] || 0);
   if (delta < minLamports) return { ok: false, error: 'payment was too small' };
 
-  await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
-    .bind(signature, wallet || payer, delta, purpose, Date.now()).run();
+  // The check above and this insert are separate calls, so two requests racing
+  // one signature can both get here. The primary key lets only one win.
+  const rec = await env.DB.prepare(
+    'INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(signature) DO NOTHING'
+  ).bind(signature, wallet || payer, delta, purpose, Date.now()).run();
+  if (rec && rec.meta && rec.meta.changes === 0) return { ok: false, error: 'this payment was already used' };
   return { ok: true, lamports: delta, payer: payer };
 }
 
@@ -575,7 +574,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'game-routes-1';
+const BUILD = 'security-2026-10-29';
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1210,11 +1209,16 @@ async function analyticsPayload(env) {
 
 
 
-/// Looks for a payment tagged with this booking's reference. This is what makes
-/// the flow survive a closed tab: the money is on chain either way, and the
-/// reference is how we find it again.
-async function findPaymentByReference(env, reference) {
-  if (!env.HELIUS_API_KEY || !reference) return null;
+/// Every successful transaction tagged with this booking's reference. This is
+/// what makes the flow survive a closed tab: the money is on chain either way,
+/// and the reference is how we find it again.
+///
+/// All of them, not just the newest (security fix 2026-10-29): anyone can tag
+/// a dust transaction with a reference they have seen on chain, and taking only
+/// the newest let that "shadow" the real payment. Callers try each in turn and
+/// settle on the first one that really pays the invoice.
+async function findPaymentsByReference(env, reference) {
+  if (!env.HELIUS_API_KEY || !reference) return [];
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1223,14 +1227,10 @@ async function findPaymentByReference(env, reference) {
       params: [reference, { limit: 10 }]
     })
   });
-  if (!res.ok) return null;
+  if (!res.ok) return [];
   const data = await res.json();
   const list = (data && data.result) || [];
-  for (const s of list) {
-    if (s.err) continue;
-    return s.signature;
-  }
-  return null;
+  return list.filter(function (s) { return !s.err && s.signature; }).map(function (s) { return s.signature; });
 }
 
 
@@ -2621,44 +2621,84 @@ async function inspectPayment(env, signature, treasury) {
   const idx = keys.indexOf(treasury);
   if (idx >= 0) sol = (tx.meta.postBalances[idx] || 0) - (tx.meta.preBalances[idx] || 0);
 
-  // token balances are keyed by account index, and the "before" row is absent
-  // entirely when the account was created by this very transaction
-  const amountOf = function (rows) {
+  // Every USDC account the treasury owns, summed by account index — not just
+  // the first row found (security fix 2026-10-29). Moving USDC between two of
+  // the treasury's own accounts then nets to zero instead of looking like a
+  // payment. The "before" row is absent when this very transaction created
+  // the account, which reads as zero.
+  const byIndex = function (rows) {
+    const out = {};
     for (const r of rows || []) {
       if (r.mint === USDC_MINT && r.owner === treasury) {
-        return Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
+        out[r.accountIndex] = Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
       }
     }
-    return 0;
+    return out;
   };
-  const usdc = amountOf(tx.meta.postTokenBalances) - amountOf(tx.meta.preTokenBalances);
+  const pre = byIndex(tx.meta.preTokenBalances);
+  const post = byIndex(tx.meta.postTokenBalances);
+  let usdc = 0;
+  const seen = {};
+  for (const k of Object.keys(pre).concat(Object.keys(post))) {
+    if (seen[k]) continue;
+    seen[k] = true;
+    usdc += (post[k] || 0) - (pre[k] || 0);
+  }
 
-  return { found: true, payer: payer, sol: sol, usdc: usdc };
+  return {
+    found: true, payer: payer, sol: sol, usdc: usdc, keys: keys,
+    blockTime: typeof tx.blockTime === 'number' ? tx.blockTime * 1000 : null
+  };
 }
 
-/// One gate for both currencies. `wallet` null means the caller already proved
+// How far a transaction's block time may sit before the invoice was written,
+// allowing for clocks that disagree. Anything older is a payment for
+// something else.
+const INVOICE_CLOCK_SKEW_MS = 5 * 60000;
+
+/// One gate for every invoice. `wallet` null means the caller already proved
 /// which invoice this is with a Solana Pay reference.
-async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury) {
+///
+/// `invoice` ties the payment to this one invoice (security fix 2026-10-29):
+///   reference  — the Solana Pay reference key, which must be in the tx;
+///   createdAt  — when the invoice was written; an older tx cannot pay it.
+/// The amount must be exact: the treasury's USDC must rise by precisely what
+/// was invoiced. An overpayment is flagged for a refund rather than silently
+/// accepted, so a transfer for something else can never be reused here.
+async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury, invoice) {
   // Defaulted rather than assumed: a caller that forgets to say whose booking
   // this is gets this site's treasury, which is the old behaviour.
   const payTo = treasury || env.TREASURY_WALLET;
   if (!payTo) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
+  const inv = invoice || {};
 
   const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
   if (seen) return { ok: false, error: 'this payment was already used' };
 
   const p = await inspectPayment(env, signature, payTo);
   if (!p.found || p.error) return { ok: false, error: p.error || 'payment not found yet' };
-  if (wallet !== null && p.payer !== wallet) {
+  if (wallet !== null && wallet !== undefined && p.payer !== wallet) {
     return { ok: false, error: 'payment was not sent by your wallet' };
+  }
+  if (p.payer === payTo) return { ok: false, error: 'payment did not come from your wallet' };
+  if (inv.reference && p.keys.indexOf(inv.reference) < 0) {
+    return { ok: false, error: 'that payment is not for this order' };
+  }
+  if (inv.createdAt && p.blockTime !== null && p.blockTime < inv.createdAt - INVOICE_CLOCK_SKEW_MS) {
+    return { ok: false, error: 'that payment was made before this order existed' };
   }
 
   // USDC only. SOL is deliberately not accepted, even if someone sends the
   // right value by hand — bookings are priced and settled in dollars.
-  if (!(p.usdc >= minUsdc)) {
+  if (p.usdc !== minUsdc) {
     if (p.usdc === 0 && p.sol > 0) {
       return { ok: false, error: 'this was paid in SOL — bookings are USDC only. Get in touch with your reference for a refund' };
+    }
+    if (p.usdc > minUsdc) {
+      await alert(env, '⚠️ Overpayment not settled — ' + purpose + ' expected ' + minUsdc +
+        ' micro-USDC, got ' + p.usdc + ' from ' + p.payer + '. signature ' + signature);
+      return { ok: false, error: 'that payment is more than this order costs — get in touch with your reference for a refund' };
     }
     return { ok: false, error: p.usdc > 0 ? 'payment was too small' : 'payment did not go to the right wallet' };
   }
@@ -3315,7 +3355,8 @@ async function settlePayment(env, kind, b, signature, wallet) {
   // the request instead would let somebody hold on one site and settle
   // against another's treasury.
   const treasury = await treasuryFor(env, b.site_slug);
-  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose, treasury);
+  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose, treasury,
+    { reference: b.reference, createdAt: b.created_at });
   if (!v.ok) {
     // a concurrent request may have settled this exact payment a moment ago
     const cur = await env.DB.prepare('SELECT status, signature FROM ' + kind.table + ' WHERE ref = ?').bind(b.ref).first();
@@ -3421,9 +3462,14 @@ async function reconcilePayments(env) {
       'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
     ).bind(Date.now() - RECONCILE_HOURS * 3600000).all();
     for (const b of rows.results || []) {
-      const sig = await findPaymentByReference(env, b.reference);
-      if (!sig) continue;
-      const settled = await settlePayment(env, kind, b, sig, null);
+      const sigs = await findPaymentsByReference(env, b.reference);
+      let settled = null, sig = null;
+      for (const cand of sigs) {
+        settled = await settlePayment(env, kind, b, cand, null);
+        sig = cand;
+        if (settled.status !== 'unpaid') break;
+      }
+      if (!settled) continue;
       // A basket found this way has to pass the payment on to its lines, the
       // same as when the page confirms it.
       if (kind === CHECKOUTS.cart && settled.status === 'paid') await markCartPaid(env, b.ref, sig);
@@ -3449,10 +3495,17 @@ async function watchPayment(request, env, kind, ref) {
   }
   const unpaid = b.status === 'held' ? 'waiting' : 'expired';
 
-  const sig = await findPaymentByReference(env, b.reference);
-  if (!sig) return json(request, env, { status: unpaid });
+  const sigs = await findPaymentsByReference(env, b.reference);
+  if (!sigs.length) return json(request, env, { status: unpaid });
 
-  const s = await settlePayment(env, kind, b, sig, null);
+  // try each tagged payment: a dust transfer carrying the same reference must
+  // not hide the real one
+  let s = null, sig = null;
+  for (const cand of sigs) {
+    s = await settlePayment(env, kind, b, cand, null);
+    sig = cand;
+    if (s.status !== 'unpaid') break;
+  }
   if (s.status === 'unpaid') return json(request, env, { status: unpaid, note: s.error });
   if (s.status === 'settling') return json(request, env, { status: unpaid });
   return json(request, env, { status: s.status, signature: sig });
@@ -5968,7 +6021,7 @@ export default {
         // The money is checked against the chain, for the exact amount, tagged
         // with this purchase. Nothing here trusts the page.
         const v = await verifyInvoice(env, row.wallet, signature, usdcUnits(row.usd),
-          'points:' + row.ref, env.TREASURY_WALLET);
+          'points:' + row.ref, env.TREASURY_WALLET, { reference: row.reference, createdAt: row.created_at });
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         // The update is the lock: only the request that flips it off 'held'
