@@ -42,12 +42,24 @@ section('reported swap failures do not count as an outage');
 section('paths that do not exist (I11)');
 {
   const env = freshEnv();
-  for (const p of ['/nope', '/wp-login.php', '/.git/config']) {
+  for (const p of ['/nope', '/wp-login.php', '/.git/config', '/api/nope', '/api/admin/nope', '/api/me/extra']) {
     const r = await call(env, 'GET', p);
     eq(p + ' is not found, not "sign in"', r.status, 404);
   }
-  const r = await call(env, 'GET', '/api/nope');
-  eq('an unknown /api path still does not reveal what exists to a stranger', r.status, 401);
+  const me = await call(env, 'GET', '/api/me');
+  eq('a real session route still asks a stranger to sign in', me.status, 401);
+  const lo = await call(env, 'POST', '/api/logout');
+  eq('logout too', lo.status, 401);
+
+  // The list in the router has to name every route that sits behind the gate.
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  const below = src.slice(src.indexOf('// ── everything below needs a session ──'));
+  const used = [...new Set([...below.matchAll(/path === '([^']+)'/g)].map((m) => m[1]))].sort();
+  const list = [...src.match(/const SESSION_ROUTES = new Set\(\[([\s\S]*?)\]\)/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  eq('SESSION_ROUTES names exactly the routes behind the gate', list.join(','), used.join(','));
+  ok('and nothing behind the gate matches by prefix, which the list could not express',
+    !/path\.startsWith\(|path\.match\(/.test(below.slice(0, below.indexOf('} catch (err)'))));
 }
 
 finish();

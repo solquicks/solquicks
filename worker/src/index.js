@@ -702,6 +702,14 @@ async function healthCheck(env) {
 // Bumped on every deploy so /api/health says which build is actually live.
 const BUILD = 'security-2026-10-29';
 
+// The routes that sit behind the session gate (see I11 in the router).
+const SESSION_ROUTES = new Set([
+  '/api/logout', '/api/me', '/api/claim', '/api/visit', '/api/mission', '/api/mission/claim',
+  '/api/flip', '/api/flip/stats', '/api/swap/points', '/api/swap/award', '/api/cleanup/award',
+  '/api/invite', '/api/invite/bind', '/api/invite/claim', '/api/rangers', '/api/stake',
+  '/api/unstake', '/api/plushie/redeem',
+]);
+
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
 // countdown rather than a quarter nobody could have entered from the start.
@@ -6724,11 +6732,11 @@ export default {
         return gameRes || json(request, env, { error: 'not found' }, 404);
       }
 
-      // Nothing outside /api lives on this worker. Saying "not signed in" to
-      // a path that does not exist sent people (and scanners) the wrong way
-      // (I11). Unknown /api paths still answer 401 to a stranger, which is
-      // deliberate: it does not reveal which session routes exist.
-      if (!path.startsWith('/api/')) return json(request, env, { error: 'not found' }, 404);
+      // Every route past the session gate, by name. A path that is none of
+      // them is a 404 rather than "not signed in", which sent people and
+      // scanners the wrong way (I11). test/hardening.test.mjs reads the
+      // routes below the gate out of this file and fails if this list drifts.
+      if (!SESSION_ROUTES.has(path)) return json(request, env, { error: 'not found' }, 404);
 
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
