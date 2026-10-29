@@ -4943,8 +4943,15 @@ export default {
         // a retry or two tabs at once still pay exactly once.
         await env.DB.prepare(
           'INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, ?, 0) ' +
-          'ON CONFLICT(wallet) DO NOTHING'
+          'ON CONFLICT DO NOTHING'
         ).bind(who, asset, signature, Date.now()).run();
+        // The asset is unique too. One that was claimed by a wallet and then
+        // passed on used to hit that constraint and answer 500 (security fix
+        // 2026-10-29, I5); it is a plain "already claimed" now.
+        const mine = await env.DB.prepare('SELECT asset FROM collectibles WHERE wallet = ?').bind(who).first();
+        if (!mine) {
+          return json(request, env, { error: 'that collectible was already claimed by another wallet', already: true }, 409);
+        }
         const paid = await env.DB.prepare(
           'UPDATE collectibles SET points = ? WHERE wallet = ? AND points = 0'
         ).bind(COLLECTIBLE_POINTS, who).run();

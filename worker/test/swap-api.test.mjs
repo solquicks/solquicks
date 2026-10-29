@@ -986,6 +986,15 @@ section('the soulbound collectible');
   const stolen = await claim({ wallet: nobody, asset: asset, signature: 'D'.repeat(88) });
   eq("another wallet cannot claim someone else's collectible", stolen.status, 403);
 
+  // Passed on to another wallet after it was claimed: the asset is unique, and
+  // that used to surface as a 500 (I5).
+  const was = assets[asset].ownership.owner;
+  assets[asset].ownership.owner = nobody;
+  const passedOn = await claim({ wallet: nobody, asset: asset, signature: 'H'.repeat(88) });
+  eq('a collectible claimed once and passed on is a plain 409, not a 500', passedOn.status, 409);
+  eq('and pays nothing', (env._db.prepare('SELECT COUNT(*) AS n FROM collectibles WHERE wallet = ?').get(nobody)).n, 0);
+  assets[asset].ownership.owner = was;
+
   assets[wallet(125)] = { id: wallet(125), ownership: { owner: nobody }, grouping: [{ group_key: 'collection', group_value: wallet(126) }] };
   const imposter = await claim({ wallet: nobody, asset: wallet(125), signature: 'E'.repeat(88) });
   eq('an NFT from some other collection earns nothing', imposter.status, 400);
