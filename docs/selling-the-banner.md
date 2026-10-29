@@ -5,8 +5,22 @@ it's worth before building an auction around it.
 
 ## Price
 
-**$250 / week.** Change it whenever — the point is having a number to quote
-when someone asks on stream.
+Bookings on the site use this table (set in `BANNER_RATES` in
+`worker/src/index.js`). The per-week price drops with longer bookings and
+stops at $215:
+
+| Length   | Total   | Per week |
+|----------|---------|----------|
+| 1 week   | $300    | $300     |
+| 2 weeks  | $540    | $270     |
+| 3 weeks  | $750    | $250     |
+| 1 month  | $960    | $240     |
+| 3 months | $2,800  | $215     |
+| 6 months | $5,600  | $215     |
+| 1 year   | $11,200 | $215     |
+
+Quote the same prices for a slot sold by hand, so nobody pays more or less
+depending on how they asked.
 
 ## Booking one
 
@@ -45,7 +59,7 @@ that it is for sale.
 
 ## Ground rules worth keeping
 
-- **$250 / week**, as above.
+- **$300 for one week, $250 a week at 3 weeks**, as in the table above.
 - **Paid placements are labelled "Sponsored"** and use `rel="sponsored"`.
   That is both the honest thing and what search engines expect of paid links.
 - **quicks approves every ad before it goes live.** You are publishing it under
@@ -77,5 +91,5 @@ curl "https://solquicks-points.solquicks-45c.workers.dev/api/banner/stats?slot=a
 ```
 
 Send the sponsor their figure at the end of a booking. It is also your own
-evidence when pricing the next one — and the thing that decides whether $250
-is too low.
+evidence when pricing the next one — and the thing that decides whether these prices
+are too low.
