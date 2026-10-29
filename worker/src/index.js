@@ -1441,7 +1441,23 @@ async function signedBy(env, signature, wallet) {
   const keys = (tx.transaction.message.accountKeys || []).map(function (k) { return k.pubkey || k; });
   // The fee payer is the first key and always signed. Anything else could be a
   // wallet that merely appears in somebody else's transaction.
-  return keys[0] === wallet;
+  return keys[0] === wallet ? tx : false;
+}
+
+// How much USDC (in whole USDC) a wallet gained in a transaction, negative for
+// spent, read from the token balances the chain recorded before and after.
+function usdcMovedFor(tx, wallet) {
+  const sum = function (list) {
+    let n = 0;
+    for (const b of list || []) {
+      if (b && b.mint === USDC_MINT && b.owner === wallet) {
+        n += Number((b.uiTokenAmount && b.uiTokenAmount.amount) || 0);
+      }
+    }
+    return n;
+  };
+  const meta = tx.meta || {};
+  return (sum(meta.postTokenBalances) - sum(meta.preTokenBalances)) / Math.pow(10, USDC_DECIMALS);
 }
 
 async function reflect(env, method, path, body) {
@@ -5549,8 +5565,20 @@ export default {
         // And the transaction has to be theirs. The wallet and the signature
         // both arrive from whoever is posting, so taking them on trust let
         // anyone write rows into anyone's history.
-        if (!(await signedBy(env, signature, wallet))) {
+        const tx = await signedBy(env, signature, wallet);
+        if (!tx) {
           return json(request, env, { error: 'that transaction is not yours' }, 403);
+        }
+        // Security fix 2026-10-29 (L11): any transaction of theirs used to do,
+        // with any amount and either direction. The USDC their wallet actually
+        // paid in (or got back) has to match what is being written down. A
+        // withdrawal returns a little more than went in, so it may be larger.
+        const moved = usdcMovedFor(tx, wallet);
+        const fits = side === 'in'
+          ? (-moved >= amount * 0.99 && -moved <= amount * 1.01)
+          : (moved >= amount * 0.99 && moved <= amount * 2);
+        if (!fits) {
+          return json(request, env, { error: 'that transaction did not move that much USDC' }, 400);
         }
         // The signature is the key, so a page that retries cannot write twice.
         await env.DB.prepare(
