@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { vercelHeaders } from './vercel-headers.mjs';
 
 const ROOT = path.resolve(new URL('../../', import.meta.url).pathname);
 const WORKER = 'https://solquicks-points.solquicks-45c.workers.dev';
@@ -57,7 +58,7 @@ const server = http.createServer((req, res) => {
   const creator = /^\/c\/[a-z0-9-]{3,32}\/?$/.test(rel);
   const file = path.join(ROOT, rel === '/' || creator ? 'index.html' : (CLEAN[rel] || rel));
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
+  res.writeHead(200, { ...vercelHeaders(VERCEL, rel), 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
