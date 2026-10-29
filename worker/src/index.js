@@ -6837,10 +6837,28 @@ export default {
           if (tx.meta && tx.meta.err) return json(request, env, { error: 'that transaction failed' }, 400);
           const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
           if (keys[0] !== wallet) return json(request, env, { error: 'that was not signed by your wallet' }, 400);
+          // Security fix 2026-10-29 (L1): only real cleanup is paid. An
+          // account opened in this same transaction and closed again costs
+          // nothing once the rent comes back, and burning zero tokens burns
+          // nothing, so both used to be free points up to the daily cap.
+          const all = (tx.transaction.message.instructions || []).slice();
+          for (const inner of (tx.meta && tx.meta.innerInstructions) || []) {
+            for (const ix of inner.instructions || []) all.push(ix);
+          }
+          const openedHere = new Set();
+          for (const ix of all) {
+            const t = ix.parsed && ix.parsed.type, info = (ix.parsed && ix.parsed.info) || {};
+            if (t === 'createAccount' || t === 'createAccountWithSeed') { if (info.newAccount) openedHere.add(info.newAccount); }
+            else if (t === 'initializeAccount' || t === 'initializeAccount2' || t === 'initializeAccount3' ||
+                     t === 'create' || t === 'createIdempotent') { if (info.account) openedHere.add(info.account); }
+          }
           for (const ix of tx.transaction.message.instructions || []) {
-            const t = ix.parsed && ix.parsed.type;
-            if (t === 'burn' || t === 'burnChecked') burns++;
-            else if (t === 'closeAccount') closes++;
+            const t = ix.parsed && ix.parsed.type, info = (ix.parsed && ix.parsed.info) || {};
+            if (info.account && openedHere.has(info.account)) continue;
+            if (t === 'burn' || t === 'burnChecked') {
+              const amt = String(info.amount != null ? info.amount : (info.tokenAmount && info.tokenAmount.amount) || '0');
+              if (/^[0-9]+$/.test(amt) && /[1-9]/.test(amt)) burns++;
+            } else if (t === 'closeAccount') closes++;
           }
         } catch (e) {
           await logError(env, 'cleanup.award', (e && e.message) || e);

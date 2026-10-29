@@ -732,6 +732,48 @@ section('the daily swap points cap holds under parallel awards');
   eq('and the balance agrees', env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(me).points, 500);
 }
 
+section('cleanup pays only for real cleanup (L1)');
+{
+  const env = freshEnv();
+  const me = wallet(96);
+  const token = signIn(env, me);
+  const farm = 'Z'.repeat(88);
+  chain.txs.set(farm, {
+    blockTime: 1789400000,
+    transaction: { message: {
+      accountKeys: [{ pubkey: me }],
+      instructions: [
+        { parsed: { type: 'create', info: { account: 'fresh1' } } },
+        { parsed: { type: 'createAccount', info: { newAccount: 'fresh2' } } },
+        { parsed: { type: 'initializeAccount3', info: { account: 'fresh2' } } },
+        { parsed: { type: 'burn', info: { account: 'fresh1', amount: '5' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'fresh1' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'fresh2' } } },
+        { parsed: { type: 'burnChecked', info: { account: 'old1', tokenAmount: { amount: '0' } } } },
+        { parsed: { type: 'burn', info: { account: 'old2', amount: '0' } } }
+      ]
+    } },
+    meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [],
+      innerInstructions: [] }
+  });
+  const r = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: farm } });
+  eq('opening accounts and closing them in one go, or burning nothing, earns nothing', r.body.awarded, 0);
+  const real = 'Y'.repeat(88);
+  chain.txs.set(real, {
+    blockTime: 1789400000,
+    transaction: { message: {
+      accountKeys: [{ pubkey: me }],
+      instructions: [
+        { parsed: { type: 'burnChecked', info: { account: 'old3', tokenAmount: { amount: '42' } } } },
+        { parsed: { type: 'closeAccount', info: { account: 'old3' } } }
+      ]
+    } },
+    meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [] }
+  });
+  const r2 = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: real } });
+  eq('burning real dust from an old account and closing it still pays', r2.body.awarded, BURN_POINTS);
+}
+
 section('cleanup points are paid once, not twice');
 {
   const env = freshEnv();
@@ -742,7 +784,8 @@ section('cleanup points are paid once, not twice');
     blockTime: 1789400000,
     transaction: { message: {
       accountKeys: [{ pubkey: me }],
-      instructions: [{ parsed: { type: 'burn' } }, { parsed: { type: 'closeAccount' } }, { parsed: { type: 'closeAccount' } }]
+      instructions: [{ parsed: { type: 'burn', info: { account: 'acctA', amount: '12' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'acctA' } } }, { parsed: { type: 'closeAccount', info: { account: 'acctB' } } }]
     } },
     meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [] }
   });
