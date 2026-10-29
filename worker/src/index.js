@@ -2244,20 +2244,21 @@ async function awardSwapPointsFor(env, signature, wallet) {
   }
 
   const dayStart = Date.now() - (Date.now() % 86400000);
-  const today = await env.DB.prepare(
-    'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
-  ).bind(wallet, dayStart).first();
-  const used = (today && today.n) || 0;
-  const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
-  const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
+  const want = Math.round(v.usd * SWAP_POINTS_PER_USD);
 
   // The insert is the lock: two awards for one signature cannot both land, so
-  // the page and the sweep racing each other is harmless.
+  // the page and the sweep racing each other is harmless. The daily cap is
+  // worked out inside the same statement (security fix 2026-10-29, M1), so
+  // parallel awards for different swaps cannot each see the same room.
   const wrote = await env.DB.prepare(
-    'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+    'INSERT INTO swap_awards (signature, wallet, usd, points, ts) ' +
+    'SELECT ?, ?, ?, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM swap_awards WHERE wallet = ? AND ts >= ?))), ? WHERE 1 ' +
     'ON CONFLICT(signature) DO NOTHING'
-  ).bind(signature, wallet, v.usd, points, Date.now()).run();
+  ).bind(signature, wallet, v.usd, want, SWAP_POINTS_DAILY_CAP, wallet, dayStart, Date.now()).run();
   if (wrote.meta.changes !== 1) return { ok: true, awarded: 0, already: true };
+  const got = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?').bind(signature).first();
+  const points = (got && got.points) || 0;
+  const room = points < want ? points : SWAP_POINTS_DAILY_CAP;
   if (points > 0) await addPoints(env, wallet, 'swap', points);
   return { ok: true, awarded: points, usd: v.usd, cappedOut: points === 0 && room === 0, room: room };
 }
@@ -3257,19 +3258,20 @@ async function accrueInvite(env, row) {
   const usd = Math.round(feeUsd * pct / 100 * 1000000) / 1000000;
 
   const dayStart = Date.now() - (Date.now() % 86400000);
-  const today = await env.DB.prepare(
-    'SELECT COALESCE(SUM(points), 0) AS n FROM invite_earnings WHERE referrer = ? AND ts >= ?'
-  ).bind(link.referrer, dayStart).first();
-  const room = Math.max(0, INVITE_POINTS_DAILY_CAP - ((today && today.n) || 0));
-  const points = Math.min(room, Math.round(row.usd * SWAP_POINTS_PER_USD * INVITE_POINTS_PCT / 100));
+  const want = Math.round(row.usd * SWAP_POINTS_PER_USD * INVITE_POINTS_PCT / 100);
 
+  // The cap is applied inside the insert (M1), so racing accruals for one
+  // referrer cannot each see the same room.
   const wrote = await env.DB.prepare(
     'INSERT INTO invite_earnings (signature, referrer, referee, usd, points, share_pct, fee_usd, ts) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
-  ).bind(row.signature, link.referrer, row.wallet, usd, points,
+    'SELECT ?, ?, ?, ?, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM invite_earnings WHERE referrer = ? AND ts >= ?))), ?, ?, ? WHERE 1 ' +
+    'ON CONFLICT(signature) DO NOTHING'
+  ).bind(row.signature, link.referrer, row.wallet, usd, want, INVITE_POINTS_DAILY_CAP, link.referrer, dayStart,
     pct, Math.round(feeUsd * 1000000) / 1000000, Date.now()).run();
   // Already paid for. Nothing below this line may run twice.
   if (wrote.meta.changes !== 1) return;
+  const got = await env.DB.prepare('SELECT points FROM invite_earnings WHERE signature = ?').bind(row.signature).first();
+  const points = (got && got.points) || 0;
 
   // addPoints only adds to a row that exists: without this a wallet with no
   // player row would have the award written to its event log and nothing added
@@ -6665,9 +6667,15 @@ export default {
           return json(request, env, { error: 'Not enough points. You have ' + balance + '.' }, 400);
         }
 
-        // take the wager first, so a crash mid-flip can never pay out for free
-        await env.DB.prepare('UPDATE players SET points = points - ?, updated_at = ? WHERE wallet = ?')
-          .bind(wager, Date.now(), wallet).run();
+        // take the wager first, so a crash mid-flip can never pay out for free.
+        // The balance check is part of the write (security fix 2026-10-29,
+        // M1): two flips racing past the SELECT above used to both deduct and
+        // drive the balance negative. Only a write that changed a row may flip.
+        const took = await env.DB.prepare('UPDATE players SET points = points - ?, updated_at = ? WHERE wallet = ? AND points >= ?')
+          .bind(wager, Date.now(), wallet, wager).run();
+        if (!took.meta || took.meta.changes !== 1) {
+          return json(request, env, { error: 'Not enough points for that wager.' }, 400);
+        }
 
         const buf = new Uint32Array(1);
         let v;
@@ -6792,21 +6800,23 @@ export default {
         if (earned === 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
 
         const dayStart = Date.now() - (Date.now() % 86400000);
-        const today = await env.DB.prepare(
-          "SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type IN ('burn','cleanup') AND ts >= ?"
-        ).bind(wallet, dayStart).first();
-        const room = Math.max(0, BURN_POINTS_DAILY_CAP - ((today && today.n) || 0));
-        const points = Math.min(room, earned);
 
         // A page that retries, or two tabs at once, used to hit the primary key and
         // hand the person a 500 for a cleanup that had already been paid.
+        // The daily cap is applied inside the insert (security fix 2026-10-29,
+        // M1). Cleanup rows are the usd = 0 rows of swap_awards, one per paid
+        // cleanup, so they are what the cap counts.
         const wrote = await env.DB.prepare(
-          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) ' +
+          'SELECT ?, ?, 0, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM swap_awards WHERE wallet = ? AND usd = 0 AND ts >= ?))), ? WHERE 1 ' +
           'ON CONFLICT(signature) DO NOTHING'
-        ).bind(signature, wallet, 0, points, Date.now()).run();
+        ).bind(signature, wallet, earned, BURN_POINTS_DAILY_CAP, wallet, dayStart, Date.now()).run();
         if (wrote.meta.changes !== 1) {
           return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
         }
+        const got = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?').bind(signature).first();
+        const points = (got && got.points) || 0;
+        const room = points < earned ? points : BURN_POINTS_DAILY_CAP;
         if (points > 0) await addPoints(env, wallet, 'cleanup', points);
 
         return json(request, env, {
@@ -6980,7 +6990,13 @@ export default {
         if (p && p.last_visit === today) {
           return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
         }
-        await env.DB.prepare('UPDATE players SET last_visit = ? WHERE wallet = ?').bind(today, wallet).run();
+        // The update is the lock (L7): two racing visits both pass the SELECT,
+        // but only the one that changed last_visit is paid.
+        await ensurePlayer(env, wallet);
+        const mark = await env.DB.prepare('UPDATE players SET last_visit = ? WHERE wallet = ? AND last_visit IS NOT ?').bind(today, wallet, today).run();
+        if (!mark.meta || mark.meta.changes !== 1) {
+          return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
+        }
         await addPoints(env, wallet, 'visit', AWARDS.visit);
         return json(request, env, { awarded: AWARDS.visit, player: await playerState(env, wallet) });
       }

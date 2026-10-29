@@ -717,6 +717,21 @@ section('points still check who signed the swap');
   eq('your own $150 swap earns 150 points', r2.body.awarded, 150);
 }
 
+section('the daily swap points cap holds under parallel awards');
+{
+  // Security fix 2026-10-29 (M1): the room left under the cap is worked out
+  // inside the insert, so parallel awards cannot each see the same room.
+  const env = freshEnv();
+  const me = wallet(7);
+  const token = signIn(env, me);
+  env._db.prepare('INSERT INTO players (wallet, points, created_at, updated_at) VALUES (?, 0, 0, 0)').run(me);
+  const sigs = ['S', 'T', 'U', 'V', 'W'].map((c) => swapTx(c.repeat(88), me, { solSpent: 1, get: { mint: USDC, amount: 150 } }));
+  const r = await Promise.all(sigs.map((sig) => call(env, 'POST', '/api/swap/award', { token, body: { signature: sig } })));
+  const total = r.reduce((n, x) => n + (x.body.awarded || 0), 0);
+  eq('five $150 swaps at once earn the daily cap, not 750', total, 500);
+  eq('and the balance agrees', env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(me).points, 500);
+}
+
 section('cleanup points are paid once, not twice');
 {
   const env = freshEnv();
