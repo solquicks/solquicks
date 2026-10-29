@@ -46,7 +46,7 @@ const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got
 const section = (s) => console.log('\n── ' + s + ' ──');
 
 // ── the worker, stood in for ──────────────────────────────────────────────
-const net = { created: null, slugTaken: ['taken'], registered: ['google.io'], invites: ['FOX-ALPHA'] };
+const net = { created: null, createdAuth: null, signed: [],  slugTaken: ['taken'], registered: ['google.io'], invites: ['FOX-ALPHA'] };
 
 const FEATURES = [
   { id: 'swap', name: 'Swap', earns: true, live: false, blurb: 'Every Solana token, routed by Jupiter.' },
@@ -67,7 +67,14 @@ const SOCIALS = [
   { id: 'email', name: 'Email', hint: 'you@example.com', url: 'mailto:' }
 ];
 
-function answer(p, url, body) {
+function answer(p, url, body, auth) {
+  // Signing in, stood in for (security fix 2026-10-29, M4): launching needs
+  // the paid wallet signed in.
+  if (p === '/api/nonce') return { nonce: 'n-1', message: 'solquicks sign-in ' + body.wallet };
+  if (p === '/api/session') {
+    net.signed.push(body.wallet + ':' + body.signature);
+    return { token: 'tok-' + body.wallet, expires: Date.now() + 86400000, player: {} };
+  }
   if (p === '/api/launch/features') {
     return { features: FEATURES, socials: SOCIALS, avatarMaxBytes: 400000,
       root: 'solquicks.com', usdcMaxPct: 50, platformPct: 1 };
@@ -89,6 +96,8 @@ function answer(p, url, body) {
     return { name: n, status: net.registered.includes(n) ? 'taken' : 'free' };
   }
   if (p === '/api/launch/create') {
+    net.createdAuth = auth || null;
+    if (auth !== 'Bearer tok-' + body.wallet) return { error: 'sign in with the wallet that will be paid first', _status: 401 };
     net.created = body;
     return { ok: true, slug: body.slug, host: body.slug + '.solquicks.com',
       path: '/c/' + body.slug, split: { usdc: 50, token: 49, platform: 1 } };
@@ -189,7 +198,15 @@ await context.addInitScript(() => {
   const account = { address: '6N1NhZc8CAk3eZYyRWMkKXAqZrV8LSycURz2aMhmUhAd', chains: ['solana:mainnet'] };
   const make = (name, chains) => ({
     name, version: '1.0.0', icon: 'data:image/svg+xml;base64,PHN2Zy8+', chains: chains || ['solana:mainnet'],
-    accounts: [], features: { 'standard:connect': { version: '1.0.0', connect: async () => ({ accounts: [account] }) } }
+    accounts: [], features: {
+      'standard:connect': { version: '1.0.0', connect: async () => ({ accounts: [account] }) },
+      // Signs with a fixed stand-in; the worker is mocked, so only the wiring
+      // is under test here.
+      'solana:signMessage': { version: '1.0.0', signMessage: async ({ account: a, message }) => {
+        window.__signedFor = a && a.address; window.__signedText = new TextDecoder().decode(message);
+        return [{ signature: new Uint8Array([1, 2, 3]) }];
+      } }
+    }
   });
 
   // One that waits to be told the page is ready...
@@ -252,7 +269,7 @@ await context.route('**/*', async (route) => {
     const u = new URL(url);
     let body = null;
     try { body = JSON.parse(route.request().postData() || 'null'); } catch (e) { /* GET */ }
-    const out = answer(u.pathname, u, body);
+    const out = answer(u.pathname, u, body, route.request().headers()['authorization']);
     const status = out._status || 200;
     delete out._status;
     return route.fulfill({ status, contentType: 'application/json',
@@ -816,12 +833,16 @@ try {
   // be making that it does not keep.
   eq('the button says what it actually does', (await page.textContent('#launch-go')).trim(), 'Launch my site');
   const sub = (await page.textContent('#s-launch .step-sub')).replace(/\s+/g, ' ');
-  ok('and says no signature is needed', /no wallet signature needed/.test(sub), sub);
+  ok('and says the one signature is a sign-in, not a transaction', /sign one sign-in message/.test(sub) && /no transaction is sent/.test(sub), sub);
   ok('while naming what does go on Solana, and when', /tokenized on Solana with D3 after/.test(sub), sub);
 
   await page.click('#launch-go');
   await page.waitForSelector('#s-done:not([hidden])', { timeout: 10000 });
 
+  eq('the wallet signed the sign-in message', await page.evaluate(() => window.__signedText), 'solquicks sign-in ' + WALLET);
+  eq('as the account it connected', await page.evaluate(() => window.__signedFor), WALLET);
+  eq('the signature went to the worker', net.signed[net.signed.length - 1], WALLET + ':AQID');
+  eq('and the launch carried that session', net.createdAuth, 'Bearer tok-' + WALLET);
   eq('the site is made with the name they chose', net.created.name, 'Ripple');
   eq('with the bio they wrote', net.created.tagline, 'Making waves since 2019');
   eq('the links they gave', net.created.socials.map((s) => s.id + '=' + s.value).join(','),

@@ -1953,6 +1953,7 @@ const INVITE_CLAIM_MIN_USD = 10;
 // later, never less. Stored per site at launch so a later change of policy
 // cannot quietly rewrite what somebody signed up to.
 const LAUNCH_USDC_MAX_PCT = 50;
+const LAUNCH_DOMAIN_RE = /^[a-z0-9-]{2,63}\.[a-z]{2,24}$/;
 const LAUNCH_PLATFORM_PCT = 1;
 // Names that must never become somebody's subdomain: they are either already
 // something here, or they are the kind of thing used to impersonate it.
@@ -5298,7 +5299,7 @@ export default {
       // that will not answer is reported as unknown, never as available.
       if (path === '/api/launch/domain' && request.method === 'GET') {
         const name = String(url.searchParams.get('name') || '').trim().toLowerCase();
-        if (!/^[a-z0-9-]{2,63}\.[a-z]{2,24}$/.test(name)) {
+        if (!LAUNCH_DOMAIN_RE.test(name)) {
           return json(request, env, { name: name, status: 'invalid', reason: 'that is not a domain name' });
         }
         const mine = await env.DB.prepare('SELECT slug FROM sites WHERE domain = ?').bind(name).first();
@@ -5315,7 +5316,15 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const code = String(body.code || '').trim().toUpperCase();
         const slug = String(body.slug || '').trim().toLowerCase();
-        const wallet = String(body.wallet || '').trim();
+        // Security fix 2026-10-29 (M4): the wallet a site pays into is the
+        // one that signed in, not whatever the form sent. Otherwise anyone
+        // holding an invite could launch a site paying a wallet they do not
+        // control, or claim to be somebody else's site.
+        const wallet = await getSession(request, env);
+        if (!wallet) return json(request, env, { error: 'sign in with the wallet that will be paid first', signIn: true }, 401);
+        if (body.wallet && String(body.wallet).trim() !== wallet) {
+          return json(request, env, { error: 'that is not the wallet you signed in with' }, 403);
+        }
         const name = String(body.name || '').trim().slice(0, 60);
         // Not sliced to length before being checked: truncating four choices
         // to three would silently drop one of them and launch a site the
@@ -5348,6 +5357,11 @@ export default {
         const socials = cleanSocials(body.socials);
 
         const domain = body.domain ? String(body.domain).trim().toLowerCase() : null;
+        // Same shape /api/launch/domain checks against the registry, so a site
+        // cannot carry a "domain" that is markup or a URL (M4).
+        if (domain !== null && !LAUNCH_DOMAIN_RE.test(domain)) {
+          return json(request, env, { error: 'that is not a domain name' }, 400);
+        }
 
         // The invite is spent in the same statement that checks it, so two
         // people holding the same code cannot both get through.

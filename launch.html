@@ -499,8 +499,9 @@
       <!-- ── 5. launch ── -->
       <div class="card" id="s-launch" hidden>
         <div class="step-head"><span class="step-no">5</span><span class="step-title">Launch</span></div>
-        <p class="step-sub">This makes your site and it is live the moment you press it —
-           no wallet signature needed. Your domain is reserved to you now and tokenized on
+        <p class="step-sub">This makes your site and it is live the moment you press it.
+           Your wallet asks you to sign one sign-in message, to prove the money goes to you —
+           no transaction is sent and nothing is spent. Your domain is reserved to you now and tokenized on
            Solana with D3 after that.</p>
         <div id="review"></div>
         <div class="actions">
@@ -920,12 +921,14 @@
         const account = (out && out.accounts && out.accounts[0]) || (entry.w.accounts && entry.w.accounts[0]);
         if (!account) throw new Error('no account came back');
         address = account.address;
+        entry.account = account;
       } else {
         const out = await entry.w.connect();
         const key = (out && out.publicKey) || entry.w.publicKey;
         if (!key) throw new Error('no account came back');
         address = key.toString();
       }
+      signer = entry;
       useWallet(address, entry.name);
     } catch (e) {
       note('wallet-msg', (e && e.message) || 'That did not connect.', 'bad');
@@ -954,6 +957,7 @@
 
   function pickAnotherWallet() {
     draft.wallet = null;
+    signer = null;
     saveDraft();
     $('wallet-have').hidden = true;
     $('wallet-go').disabled = true;
@@ -1387,6 +1391,7 @@
       account = SDK.getUserEmbeddedSolanaWallet(made && made.user);
     }
     if (!account || !account.address) throw new Error('The wallet did not come back. Try again.');
+    signer = { kind: 'privy', SDK: SDK, p: p, account: account };
     useWallet(account.address, null);
   }
 
@@ -1504,12 +1509,73 @@
       '<div class="split-row"><span>Your split</span><b>' + usdc + '% cash · ' + token + '% token · ' + PLATFORM + '% fee</b></div>';
   }
 
+  // ── proving the wallet is theirs ───────────────────────────────────────
+  // The worker pays a site into the wallet that signed in, not whichever
+  // address the form names (security fix 2026-10-29, M4). One signature of
+  // a sign-in message — nothing is sent on Solana and nothing is spent. A
+  // session from the main site for the same wallet is reused, so somebody
+  // already signed in there is not asked twice.
+  let signer = null;
+  function savedSession(address) {
+    try {
+      const s = JSON.parse(localStorage.getItem('fox_session') || 'null');
+      if (s && s.token && s.wallet === address && s.expires > Date.now() + 60000) return s.token;
+    } catch (e) { /* fine */ }
+    return null;
+  }
+  async function signWith(who, message) {
+    const bytes = new TextEncoder().encode(message);
+    if (who.kind === 'privy') {
+      const user = (await who.p.user.get()).user;
+      const ent = who.SDK.getEntropyDetailsFromUser(user);
+      const prov = await who.p.embeddedWallet.getSolanaProvider(who.account, ent.entropyId, ent.entropyIdVerifier);
+      const out = await prov.request({ method: 'signMessage', params: { message: message } });
+      return out.signature;   // Privy already answers in base64
+    }
+    let sig;
+    if (who.kind === 'standard') {
+      const feat = who.w.features['solana:signMessage'];
+      if (!feat) throw new Error('This wallet cannot sign messages — pick another one.');
+      const out = await feat.signMessage({ account: who.account || (who.w.accounts || [])[0], message: bytes });
+      sig = out[0].signature;
+    } else {
+      if (typeof who.w.signMessage !== 'function') throw new Error('This wallet cannot sign messages — pick another one.');
+      const out = await who.w.signMessage(bytes, 'utf8');
+      sig = out.signature || out;
+    }
+    let bin = '';
+    const arr = new Uint8Array(sig);
+    for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+    return btoa(bin);
+  }
+  async function proveWallet() {
+    const have = savedSession(draft.wallet);
+    if (have) return have;
+    if (!signer) throw new Error('Connect your wallet again so it can sign the launch.');
+    const n = await api('/api/nonce', { method: 'POST', body: JSON.stringify({ wallet: draft.wallet }) });
+    if (n.status !== 200 || !n.body.message) throw new Error((n.body && n.body.error) || 'Could not start signing in.');
+    const signature = await signWith(signer, n.body.message);
+    const s = await api('/api/session', { method: 'POST',
+      body: JSON.stringify({ wallet: draft.wallet, nonce: n.body.nonce, signature: signature }) });
+    if (s.status !== 200 || !s.body.token) throw new Error((s.body && s.body.error) || 'Signing in did not work.');
+    try { localStorage.setItem('fox_session', JSON.stringify({ token: s.body.token, expires: s.body.expires, wallet: draft.wallet })); } catch (e) { /* fine */ }
+    return s.body.token;
+  }
+
   async function launchSite() {
     const btn = $('launch-go');
     btn.disabled = true;
+    note('launch-msg', 'Approve the sign-in in your wallet…', '');
+    let token;
+    try { token = await proveWallet(); } catch (e) {
+      btn.disabled = false;
+      note('launch-msg', (e && e.message) || 'Signing in did not work.', 'bad');
+      return;
+    }
     note('launch-msg', 'Building your site…', '');
     const r = await api('/api/launch/create', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify({
         code: draft.code, slug: draft.slug, wallet: draft.wallet, name: draft.name,
         handle: draft.handle, tagline: draft.tagline, avatar: draft.avatar,

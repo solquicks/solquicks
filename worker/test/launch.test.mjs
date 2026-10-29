@@ -54,7 +54,13 @@ const good = {
   socials: [{ id: 'x', value: '@ripple' }, { id: 'email', value: 'hi@ripple.io' }],
   topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup', 'gacha'], domain: 'ripple.io'
 };
-const create = (env, body) => call(env, 'POST', '/api/launch/create', { body: Object.assign({}, good, body) });
+// Launching needs the paid wallet signed in (security fix 2026-10-29, M4):
+// each create signs in as the wallet it names, unless a test says otherwise.
+const create = (env, body, opts = {}) => {
+  const b = Object.assign({}, good, body);
+  const token = opts.token !== undefined ? opts.token : signIn(env, b.wallet);
+  return call(env, 'POST', '/api/launch/create', { body: b, token });
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -225,7 +231,19 @@ section('launching');
 section('what a launch refuses');
 {
   const env = freshEnv();
-  eq('no wallet, no site', (await create(env, { wallet: 'nope' })).status, 400);
+  eq('no signed-in wallet, no site', (await create(env, {}, { token: null })).status, 401);
+  eq('a site cannot be pointed at a wallet you did not sign in with',
+    (await create(env, { wallet: wallet(999) }, { token: signIn(env, CREATOR) })).status, 403);
+  eq('a domain that is not a domain is refused', (await create(env, { domain: '<img src=x>.io' })).status, 400);
+  eq('nor a URL dressed as one', (await create(env, { domain: 'https://ripple.io/' })).status, 400);
+  {
+    // The wallet can be left out of the form altogether: the session decides.
+    const env9 = freshEnv();
+    const b = Object.assign({}, good); delete b.wallet;
+    const r = await call(env9, 'POST', '/api/launch/create', { body: b, token: signIn(env9, CREATOR) });
+    eq('with no wallet in the form the signed-in one is paid', r.status, 200);
+    eq('and recorded as the owner', env9._db.prepare('SELECT wallet FROM sites WHERE slug = ?').get('ripple').wallet, CREATOR);
+  }
   eq('no name, no site', (await create(env, { name: '' })).status, 400);
   eq('a bad slug is refused here too, not only in the check',
     (await create(env, { slug: 'admin' })).status, 400);
