@@ -521,7 +521,10 @@ section('Moon Ranger holders pay half');
   eq('and told the full rate, to show the saving', h.r.body.fullFeeBps + ' holder=' + h.r.body.holder, '20 holder=true');
   const n = await q(regular);
   eq('anyone else is quoted 0.2%', n.r.body.feeBps, 20);
-  eq('a staked Ranger counts as held', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?)').run(wallet(22), 'm1', 1), (await q(wallet(22))).r.body.feeBps), 10);
+  // Only a stake the chain confirmed in the last day counts (security fix
+  // 2026-10-29): an old row says nothing about who holds the Ranger now.
+  eq('a staked Ranger the chain confirmed today counts as held', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, ?, ?)').run(wallet(22), 'm1', 1, Date.now()), (await q(wallet(22))).r.body.feeBps), 10);
+  eq('an unverified stake row does not', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?)').run(wallet(23), 'm2', 1), (await q(wallet(23))).r.body.feeBps), 20);
 
   eq('a holder swapping at the holder rate is built', (await buildAs(holder, h.r.body.quote)).status, 200);
   eq('a holder quote used by a different wallet is refused', (await buildAs(regular, h.r.body.quote)).status, 409);

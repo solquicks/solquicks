@@ -37,8 +37,12 @@ CREATE TABLE IF NOT EXISTS staked_nfts (
   wallet TEXT NOT NULL,
   mint   TEXT NOT NULL,
   since  INTEGER NOT NULL,
+  -- last time the worker saw this Ranger in this wallet on-chain (migration 005)
+  verified_at INTEGER,
   PRIMARY KEY (wallet, mint)
 );
+-- one active stake per Ranger, whichever wallet holds it (migration 005)
+CREATE UNIQUE INDEX IF NOT EXISTS staked_nfts_mint ON staked_nfts(mint);
 CREATE TABLE IF NOT EXISTS payments (
   signature TEXT PRIMARY KEY,
   wallet    TEXT NOT NULL,
@@ -337,3 +341,21 @@ CREATE TABLE IF NOT EXISTS game_challenge_claims (
   claimed_at INTEGER NOT NULL,
   period_key TEXT NOT NULL,
   PRIMARY KEY (wallet, challenge_id, period_key));
+
+-- Game points waiting for review (migrations/005). earned -> claimed -> approved | rejected.
+CREATE TABLE IF NOT EXISTS game_pending_points (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  wallet TEXT NOT NULL,
+  source TEXT NOT NULL,          -- 'match' | 'challenge' | 'share'
+  source_id TEXT NOT NULL,       -- match id, or challenge id + ':' + period
+  base_fp INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'earned',  -- earned | claimed | approved | rejected
+  boost REAL,                    -- 1.25 for a verified holder at approval, else 1
+  awarded_fp INTEGER,            -- what was actually credited
+  note TEXT,
+  created_at INTEGER NOT NULL,
+  claimed_at INTEGER,
+  decided_at INTEGER,
+  UNIQUE (wallet, source, source_id));
+CREATE INDEX IF NOT EXISTS game_pending_points_status ON game_pending_points(status, claimed_at);
+CREATE INDEX IF NOT EXISTS game_pending_points_wallet ON game_pending_points(wallet, status);

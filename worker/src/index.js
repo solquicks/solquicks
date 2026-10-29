@@ -349,6 +349,56 @@ async function saveStake(env, wallet, s) {
   ).bind(wallet, s.staked ? 1 : 0, s.since, s.count, s.banked).run();
 }
 
+/// Drops Rangers from a wallet's stake and banks what the wallet has earned.
+///
+/// Security fix 2026-10-29 (H1): a Ranger that has left the wallet earns only
+/// up to the last time the worker actually saw it there (verified_at), not up
+/// to now — otherwise selling a Ranger kept it earning until the next check.
+/// The Rangers that stay earn up to now, and their clock restarts.
+async function dropStakedMints(env, wallet, drop) {
+  const rows = ((await env.DB.prepare(
+    'SELECT mint, verified_at FROM staked_nfts WHERE wallet = ?'
+  ).bind(wallet).all()).results) || [];
+  const s = await loadStake(env, wallet);
+  const now = Date.now();
+  const gone = rows.filter(function (r) { return drop.indexOf(r.mint) >= 0; });
+  const kept = rows.length - gone.length;
+  let banked = s.banked || 0;
+  if (s.staked && s.since) {
+    banked += Math.max(0, Math.floor(((now - s.since) / DAY_MS) * STAKE_RATE_PER_DAY * kept));
+    for (const g of gone) {
+      const until = Math.min(now, g.verified_at || 0);
+      if (until > s.since) banked += Math.floor(((until - s.since) / DAY_MS) * STAKE_RATE_PER_DAY);
+    }
+  }
+  if (gone.length) {
+    await env.DB.batch(gone.map(function (g) {
+      return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, g.mint);
+    }));
+  }
+  await saveStake(env, wallet, { staked: kept > 0 ? 1 : 0, since: kept > 0 ? now : 0, count: kept, banked: banked });
+  return { kept: kept, banked: banked };
+}
+
+/// Re-checks a wallet's stake against what it holds on-chain right now:
+/// Rangers no longer there stop earning (and are dropped), the ones still
+/// there are stamped as verified. `owned` is listRangers' answer and must not
+/// be null — an unavailable check is the caller's to refuse, never a pass.
+async function reconcileStake(env, wallet, owned) {
+  const ownedMints = owned.map(function (r) { return r.mint; });
+  const staked = await stakedMints(env, wallet);
+  const stale = staked.filter(function (m) { return ownedMints.indexOf(m) < 0; });
+  if (stale.length) await dropStakedMints(env, wallet, stale);
+  const still = staked.filter(function (m) { return ownedMints.indexOf(m) >= 0; });
+  if (still.length) {
+    const now = Date.now();
+    await env.DB.batch(still.map(function (m) {
+      return env.DB.prepare('UPDATE staked_nfts SET verified_at = ? WHERE wallet = ? AND mint = ?').bind(now, wallet, m);
+    }));
+  }
+  return { stale: stale, still: still };
+}
+
 async function playerState(env, wallet) {
   const p = await env.DB.prepare('SELECT points, last_visit FROM players WHERE wallet = ?').bind(wallet).first();
   const log = await env.DB.prepare('SELECT type, points, ts FROM events WHERE wallet = ? ORDER BY ts DESC LIMIT 50').bind(wallet).all();
@@ -3040,9 +3090,11 @@ async function isRangerHolder(env, wallet) {
   ).bind(wallet).first();
   if (row && row.count > 0) return true;
   // a Ranger locked in the vault is still held, even if the snapshot lags
+  // Only a stake the worker has seen on-chain in the last day counts (H1):
+  // an off-chain stake row says nothing about who holds the Ranger today.
   const staked = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ?'
-  ).bind(wallet).first();
+    'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ? AND verified_at > ?'
+  ).bind(wallet, Date.now() - DAY_MS).first();
   return !!(staked && staked.n > 0);
 }
 
@@ -3109,8 +3161,8 @@ async function badgesFor(env, wallets) {
   // in it, and the box quietly vanished from the page.
   const rangers = await env.DB.prepare(
     'SELECT wallet FROM holder_positions WHERE count > 0 AND wallet IN (' + marks + ') ' +
-    'UNION SELECT wallet FROM staked_nfts WHERE wallet IN (' + marks + ')'
-  ).bind(...wallets, ...wallets).all();
+    'UNION SELECT wallet FROM staked_nfts WHERE verified_at > ? AND wallet IN (' + marks + ')'
+  ).bind(...wallets, Date.now() - DAY_MS, ...wallets).all();
   for (const r of rangers.results || []) out[r.wallet] = 'ranger';
   const collectors = await env.DB.prepare(
     'SELECT wallet FROM collectibles WHERE wallet IN (' + marks + ')'
@@ -6930,18 +6982,8 @@ export default {
       if (path === '/api/rangers' && request.method === 'GET') {
         const owned = await listRangers(env, wallet);
         if (owned === null) return json(request, env, { rangers: [], staked: [], verified: false });
-        const staked = await stakedMints(env, wallet);
-        const ownedMints = owned.map(function (r) { return r.mint; });
-        // drop anything that has since left the wallet
-        const stale = staked.filter(function (m) { return ownedMints.indexOf(m) < 0; });
-        if (stale.length) {
-          const s = await loadStake(env, wallet);
-          const remaining = staked.length - stale.length;
-          await saveStake(env, wallet, { staked: remaining > 0 ? 1 : 0, since: remaining > 0 ? Date.now() : 0, count: remaining, banked: stakeAccrued(s) });
-          await env.DB.batch(stale.map(function (m) {
-            return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
-          }));
-        }
+        // drop anything that has since left the wallet, and stamp the rest
+        await reconcileStake(env, wallet, owned);
         // when each one was locked, so the page can show days staked and what
         // that Ranger has earned so far
         const sinceRows = await env.DB.prepare(
@@ -6970,6 +7012,7 @@ export default {
         want = want.filter(function (m) { return ownedMints.indexOf(m) >= 0; });
         if (!want.length) return json(request, env, { error: 'those Rangers are not in this wallet' }, 403);
 
+        await reconcileStake(env, wallet, owned);
         const already = await stakedMints(env, wallet);
         const toAdd = want.filter(function (m) { return already.indexOf(m) < 0; });
         if (!toAdd.length) return json(request, env, { player: await playerState(env, wallet), added: 0 });
@@ -6979,14 +7022,31 @@ export default {
         const pay = await verifyPayment(env, wallet, body.paymentSignature, fee, 'stake');
         if (!pay.ok) return json(request, env, { error: pay.error, feeLamports: fee }, 402);
 
-        const s = await loadStake(env, wallet);
+        // One active stake per Ranger (H1). A Ranger still staked under some
+        // other wallet is one that wallet no longer holds — this one does, the
+        // chain says so a few lines up. That stake ends now: the old wallet
+        // keeps what it earned up to its last verified check, and no more.
+        const marks = toAdd.map(function () { return '?'; }).join(',');
+        const others = ((await env.DB.prepare(
+          'SELECT wallet, mint FROM staked_nfts WHERE wallet != ? AND mint IN (' + marks + ')'
+        ).bind(wallet, ...toAdd).all()).results) || [];
+        const byWallet = {};
+        for (const o of others) (byWallet[o.wallet] = byWallet[o.wallet] || []).push(o.mint);
+        for (const w of Object.keys(byWallet)) await dropStakedMints(env, w, byWallet[w]);
+
+        // Bank this wallet's earnings at the old count before the count grows.
+        await dropStakedMints(env, wallet, []);
         const now = Date.now();
         await env.DB.batch(toAdd.map(function (m) {
-          return env.DB.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(wallet, m, now);
+          return env.DB.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING').bind(wallet, m, now, now);
         }));
-        const total = already.length + toAdd.length;
-        await saveStake(env, wallet, { staked: 1, since: now, count: total, banked: stakeAccrued(s) });
-        return json(request, env, { player: await playerState(env, wallet), added: toAdd.length, staked: await stakedMints(env, wallet) });
+        // The count is what is actually in the table, not arithmetic on what
+        // was asked for: a racing stake of the same Ranger elsewhere loses at
+        // the unique index and must not be counted here.
+        const s = await loadStake(env, wallet);
+        const total = (await stakedMints(env, wallet)).length;
+        await saveStake(env, wallet, { staked: total > 0 ? 1 : 0, since: total > 0 ? now : 0, count: total, banked: s.banked || 0 });
+        return json(request, env, { player: await playerState(env, wallet), added: total - already.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/unstake' && request.method === 'POST') {
@@ -6997,21 +7057,24 @@ export default {
           : already;
         if (!drop.length) return json(request, env, { player: await playerState(env, wallet), removed: 0 });
 
-        const s = await loadStake(env, wallet);
-        await env.DB.batch(drop.map(function (m) {
-          return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
-        }));
-        const remaining = already.length - drop.length;
-        await saveStake(env, wallet, {
-          staked: remaining > 0 ? 1 : 0,
-          since: remaining > 0 ? Date.now() : 0,
-          count: remaining,
-          banked: stakeAccrued(s)
-        });
+        // Unstaking always works, even when the chain cannot be asked. With a
+        // fresh check, Rangers still here are stamped as seen now and earn up
+        // to now; without one, each earns only to its last verified sighting.
+        const ownedU = await listRangers(env, wallet).catch(function () { return null; });
+        if (ownedU) await reconcileStake(env, wallet, ownedU);
+        await dropStakedMints(env, wallet, drop);
         return json(request, env, { player: await playerState(env, wallet), removed: drop.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/claim' && request.method === 'POST') {
+        // Ownership is re-checked at claim (H1): staking points are paid only
+        // for Rangers still in this wallet, and an unavailable check is a
+        // refusal, not a pass.
+        if (await stakedMints(env, wallet).then(function (m) { return m.length; })) {
+          const owned = await listRangers(env, wallet).catch(function () { return null; });
+          if (owned === null) return json(request, env, { error: 'Could not check your Rangers just now — try again in a minute.' }, 503);
+          await reconcileStake(env, wallet, owned);
+        }
         const s = await loadStake(env, wallet);
         const pending = stakeAccrued(s);
         if (pending <= 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
