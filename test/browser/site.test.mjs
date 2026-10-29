@@ -586,6 +586,12 @@ async function standIns(context) {
             : { error: 'no route for that pair right now' })
         });
       }
+      // What the worker now says to a hold with no session (security fix
+      // 2026-10-29): sign in first. The page has to say so and open the picker.
+      if (net.holdNeedsSignIn && /^\/api\/(booking|banner|bundle)\/hold$/.test(u.pathname)) {
+        net.signInAsks = (net.signInAsks || 0) + 1;
+        return json(route, { error: 'Connect your wallet first — it keeps this booking tied to you.', signIn: true }, 401);
+      }
       if (u.pathname === '/api/swap/quote') {
         net.lastQuote = u.searchParams.get('in');
         net.lastQuoteAmount = u.searchParams.get('amount');
@@ -1440,6 +1446,33 @@ try {
     ok('and that longer needs its own package', /longer needs its own package/.test(noteText), noteText);
     eq('and it is not a ticked inclusion',
       await mc.locator('.bk-inc li', { hasText: 'up to 2 days' }).count(), 0);
+  }
+
+  section('booking: a hold without a session asks you to connect, not a bare error');
+  {
+    await page.evaluate(() => { try { localStorage.removeItem('sq.book.cart'); } catch (e) {} });
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+    await page.locator('.bk-card', { hasText: 'Hosted X Space' }).locator('button.bk-go').click();
+    await page.waitForSelector('.bk-slot', { timeout: 10000 });
+    await page.locator('.bk-slot').first().click();
+    await page.fill('#bk-name', 'Test Guest');
+    await page.fill('#bk-contact', '@guest');
+    const tokenWas = await page.evaluate(() => FoxPoints.token);
+    net.holdNeedsSignIn = true;
+    const before = net.signInAsks || 0;
+    await page.click('#bk-submit');
+    await page.waitForFunction(() => /Connect your wallet first/.test(document.getElementById('bk-msg').textContent), null, { timeout: 10000 });
+    net.holdNeedsSignIn = false;
+    eq('the worker was asked once', (net.signInAsks || 0) - before, 1);
+    const m = await page.textContent('#bk-msg');
+    ok('it says what to do next', /press the button again/i.test(m), m);
+    eq('and no payment screen opens', await page.evaluate(() => {
+      const f = document.querySelector('.bk-pay, #bk-pay'); return !!(f && f.offsetParent);
+    }), false);
+    ok('and the wallet picker opens', await page.evaluate(() => !!document.getElementById('wm-backdrop')));
+    // Put things back as they were for the sections after this one.
+    await page.evaluate((t) => { const w = document.getElementById('wm-backdrop'); if (w) w.remove(); FoxPoints.token = t; if (typeof backToRateCard === 'function') backToRateCard(); }, tokenWas);
   }
 
   section('booking: a basket survives wandering off and coming back');
@@ -2867,6 +2900,9 @@ try {
     eq('the tokens swapped here are ticked', tickedNow.join(','), 'BONK,WIF');
     ok('and nothing else is', ticks.every((t) => t.ticked === (t.symbol === 'BONK' || t.symbol === 'WIF')));
 
+    // The table is painted before the simulations finish, so the summary
+    // line is waited for rather than read the instant the table appears.
+    await fees.waitForFunction(() => /pay their rent back/.test(document.getElementById('log').textContent), null, { timeout: 20000 }).catch(() => {});
     const logged = await fees.textContent('#log');
     ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
     ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));

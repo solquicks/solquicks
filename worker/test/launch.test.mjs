@@ -7,7 +7,19 @@
 // invite, because a code that can be spent twice is two creators fighting over
 // one site.
 
-import { chain, freshEnv as blankEnv, call, wallet, ok, eq, section, finish, TREASURY, pay } from './harness.mjs';
+import { chain, freshEnv as blankEnv, call as rawCall, signIn, wallet, ok, eq, section, finish, TREASURY, pay } from './harness.mjs';
+
+// Holding anything now needs a signed-in wallet (security fix 2026-10-29).
+// Tests that are not about who is signed in hold as one stand-in buyer; a test
+// that is about it passes its own token, or token: null to hold signed out.
+export const BUYER = wallet(77);
+const NEEDS_SESSION = /^\/api\/(booking\/hold|banner\/hold|banner\/creative|bundle\/hold|bundle\/redeem|booking\/brief|cart\/checkout)$/;
+async function call(env, method, path, opts = {}) {
+  if (NEEDS_SESSION.test(path) && opts.token === undefined) {
+    opts = Object.assign({}, opts, { token: signIn(env, BUYER) });
+  }
+  return rawCall(env, method, path, opts);
+}
 
 const ROOT = 'solquicks.com';
 const CREATOR = wallet(500);

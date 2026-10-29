@@ -126,6 +126,37 @@ async function getSession(request, env) {
   return row.wallet;
 }
 
+/// A paid-for thing that holds a slot, a run or credits now needs a signed-in
+/// wallet (security fix 2026-10-29). Before, anyone could hold every free hour
+/// and the whole ad calendar without one, and a booking with no owner could be
+/// steered by whoever had its reference. The page signs in and retries on this.
+function signInFirst(request, env) {
+  return json(request, env, {
+    error: 'Connect your wallet first — it keeps this booking tied to you.',
+    signIn: true
+  }, 401);
+}
+
+/// How many unpaid, unexpired holds one wallet may sit on at once. Enough for
+/// a full basket; not enough to empty the calendar.
+const MAX_OPEN_HOLDS = { bookings: 12, banner_bookings: 1, bundles: 2 };
+
+async function tooManyHolds(env, table, wallet) {
+  const r = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM ' + table + " WHERE wallet = ? AND status = 'held' AND hold_until > ?"
+  ).bind(wallet, Date.now()).first();
+  return !!r && r.n >= MAX_OPEN_HOLDS[table];
+}
+
+/// Owner-bound actions on a reference: when the row has an owner, only that
+/// wallet may act. A row with no owner (an enquiry, or a hold made before
+/// sign-in was required) still works by reference alone.
+async function ownsRow(request, env, row) {
+  if (!row || !row.wallet) return true;
+  const who = await getSession(request, env).catch(function () { return null; });
+  return who === row.wallet;
+}
+
 async function ensurePlayer(env, wallet) {
   const now = Date.now();
   await env.DB.prepare(
@@ -414,6 +445,13 @@ const RATE_RULES = [
   // Each claim is once per period anyway; this only stops anyone hammering it.
   { match: ['/api/game/points', '/api/game/challenge-complete', '/api/game/share-reward'], name: 'gameplayer', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
+  // One view and one click per address per slot per ten minutes count; the
+  // rest are answered but not recorded, so a script cannot inflate the stats.
+  { match: ['banner:dedupe'], name: 'eventdedupe', by: 'ip', limit: 1, windowMs: 600000 },
+  // Fox Points earned in the game wait here to be claimed and approved.
+  { match: ['/api/game/pending', '/api/game/pending/claim'], name: 'gamepending', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/logout'], name: 'logout', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/health'], name: 'health', by: 'ip', limit: 30, windowMs: 60000 },
   // Guessing a code is infeasible (32^10), so this is not the thing standing
   // between an attacker and the points — it just stops anyone hammering it.
   { match: ['/api/plushie/redeem'], name: 'plushie', by: 'ip', limit: 10, windowMs: 60000 },
@@ -447,19 +485,44 @@ function tokenMatches(header, secret) {
   return diff === 0;
 }
 
-async function rateLimited(request, env, path, wallet) {
+/// The part of an address that identifies one subscriber. An IPv6 user is
+/// handed a whole /64 and can rotate through it freely, so keying on the full
+/// address let one person count as billions (security fix 2026-10-29).
+function ipKey(ip) {
+  const raw = String(ip || 'unknown');
+  if (raw.indexOf(':') < 0) return raw;
+  // expand a "::" so the first four groups are the real ones
+  const halves = raw.toLowerCase().split('::');
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  const groups = halves.length > 1
+    ? head.concat(new Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), tail)
+    : head;
+  return groups.slice(0, 4).map(function (g) { return g.replace(/^0+(?=.)/, ''); }).join(':') + '::/64';
+}
+
+/// Limits that guard money, points or a secret refuse when the counter cannot
+/// be read, rather than waving everyone through (security fix 2026-10-29).
+/// Read-only routes still fail open so a D1 hiccup does not take the site down.
+const FAIL_CLOSED = ['auth', 'admin', 'flip', 'write', 'mission', 'bookwrite', 'bundlewrite',
+  'pointsbuy', 'bundleredeem', 'bookbrief', 'cartwrite', 'adwrite', 'cleanaward', 'swapaward',
+  'swapfail', 'launchinvite', 'launchcreate', 'invitewrite', 'gameplayer', 'plushie',
+  'collectibleclaim', 'eventdedupe'];
+
+/// `extra` narrows the key further, for "once per thing per caller" limits.
+async function rateLimited(request, env, path, wallet, extra) {
   const rule = RATE_RULES.find(function (r) { return r.match.indexOf(path) >= 0; });
   if (!rule) return false;
 
   // A global budget has no IP to key on and can be spent from deep inside a
   // request, where the Request object is not to hand.
-  const ip = (request && request.headers.get('CF-Connecting-IP')) || 'unknown';
+  const ip = ipKey((request && request.headers.get('CF-Connecting-IP')) || 'unknown');
   const who = rule.by === 'global'
     ? 'all'
     : (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
   const now = Date.now();
   const window = Math.floor(now / rule.windowMs);
-  const key = rule.name + ':' + who + ':' + window;
+  const key = rule.name + ':' + who + (extra ? ':' + String(extra).slice(0, 80) : '') + ':' + window;
   const expires = (window + 1) * rule.windowMs;
 
   try {
@@ -473,7 +536,7 @@ async function rateLimited(request, env, path, wallet) {
     ).bind(key, expires).first();
     return !!row && row.n > rule.limit;
   } catch (e) {
-    return false; // fail open rather than lock everyone out of a working site
+    return FAIL_CLOSED.indexOf(rule.name) >= 0;
   }
 }
 
@@ -3511,12 +3574,26 @@ async function watchPayment(request, env, kind, ref) {
   return json(request, env, { status: s.status, signature: sig });
 }
 
-function bookingRef() {
-  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let out = 'FOX-';
-  const bytes = crypto.getRandomValues(new Uint8Array(6));
-  for (const b of bytes) out += s[b % s.length];
+/// A reference that is hard to guess. Ten characters from 31 is about 8×10^14
+/// (it was six, about 9×10^8, which a patient script could walk), drawn without
+/// modulo bias (security fix 2026-10-29). Old six- and five-character
+/// references stay valid; only new ones are longer.
+const REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REF_LENGTH = 10;
+function refCode(prefix, n) {
+  let out = prefix;
+  while (out.length < prefix.length + n) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    for (const b of bytes) {
+      // 248 is the largest multiple of 31 below 256; above it would skew
+      if (b < 248 && out.length < prefix.length + n) out += REF_ALPHABET[b % 31];
+    }
+  }
   return out;
+}
+
+function bookingRef() {
+  return refCode('FOX-', REF_LENGTH);
 }
 
 
@@ -3940,11 +4017,16 @@ async function redeemCredit(env, row, type, startsAt, status, holdUntil) {
 }
 
 function bundleRef() {
-  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let out = 'PACK-';
-  const bytes = crypto.getRandomValues(new Uint8Array(5));
-  for (const b of bytes) out += s[b % s.length];
-  return out;
+  return refCode('PACK-', REF_LENGTH);
+}
+
+/// What a reference shows to someone who is not its owner: when and what, not
+/// who or with which transaction (security fix 2026-10-29).
+function redactForStranger(o) {
+  if (!o) return o;
+  const c = Object.assign({}, o);
+  delete c.name; delete c.signature;
+  return c;
 }
 
 function publicBundle(row, credits) {
@@ -4029,10 +4111,21 @@ async function bannerNextFree(env, weeks) {
   return earliestBannerStart(await bannerRuns(env, soonest), soonest, weeks);
 }
 
+/// Fingerprint of one run's artwork, so an approval is of exactly what was
+/// reviewed. Hex SHA-256 of the four fields, joined by a separator none of
+/// them can contain unescaped.
+async function creativeHash(b) {
+  const text = JSON.stringify([b.sponsor || '', b.headline || '', b.url || '', b.image_url || '']);
+  const h = await sha256(new TextEncoder().encode(text));
+  return Array.from(h).map(function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+}
+
 async function bannerLive(env) {
   const now = Date.now();
   return await env.DB.prepare(
-    "SELECT ref, sponsor, headline, url, image_url, starts_at, ends_at FROM banner_bookings " +
+    // No ref: it is the only key to the booking's page and its creative, and
+    // this answer is public (security fix 2026-10-29).
+    "SELECT sponsor, headline, url, image_url, starts_at, ends_at FROM banner_bookings " +
     "WHERE status = 'paid' AND approved = 1 AND starts_at <= ? AND ends_at > ? " +
     'ORDER BY starts_at ASC LIMIT 1'
   ).bind(now, now).first();
@@ -4243,6 +4336,15 @@ export default {
         const slot = String(body.slot || '').slice(0, 64);
         const kind = body.kind === 'click' ? 'clicks' : 'views';
         if (!slot) return json(request, env, { ok: false }, 400);
+        // Only the campaign actually running can be counted (security fix
+        // 2026-10-29): any string used to be accepted, so stats could be
+        // written for slots that never ran, or inflated at will. A run sold
+        // off-platform through banner.json is not counted here.
+        const live = await bannerLive(env);
+        if (!live || slot !== 'ad:' + live.sponsor) return json(request, env, { ok: false, counted: false }, 400);
+        if (await rateLimited(request, env, 'banner:dedupe', null, slot + ':' + kind)) {
+          return json(request, env, { ok: true, counted: false });
+        }
         const day = new Date().toISOString().slice(0, 10);
         await env.DB.prepare(
           'INSERT INTO banner_stats (slot, day, ' + kind + ') VALUES (?, ?, 1) ' +
@@ -4423,6 +4525,11 @@ export default {
       // JWT, and the calendar is actually shared with the service account.
       // Each of those fails differently and all three look like "it is broken".
       if (path === '/api/admin/calendar/test' && request.method === 'GET') {
+        // Admin only (security fix 2026-10-29): it used to answer anyone, and
+        // each call signs a JWT and writes a test event to the calendar.
+        if (!tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
         if (!gcalConfigured(env)) {
           return json(request, env, {
             ok: false,
@@ -4504,7 +4611,11 @@ export default {
         const rows = await env.DB.prepare(
           "SELECT * FROM banner_bookings WHERE status IN ('paid','refund') ORDER BY starts_at ASC"
         ).all();
-        return json(request, env, { bookings: rows.results || [] });
+        const list = [];
+        for (const r of rows.results || []) {
+          list.push(Object.assign({}, r, { creativeHash: await creativeHash(r) }));
+        }
+        return json(request, env, { bookings: list });
       }
 
       if (path === '/api/admin/banner/approve' && request.method === 'POST') {
@@ -4515,10 +4626,25 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const ref = String(body.ref || '').trim();
         const ok = body.approved ? 1 : 0;
+        const cur = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (!cur) return json(request, env, { error: 'no such booking' }, 404);
+        // Approval is of the exact artwork reviewed (security fix 2026-10-29).
+        // The reviewer sends back the hash shown in the admin list; if the
+        // creative changed in between, nothing goes live unseen.
+        if (ok) {
+          if (cur.status !== 'paid') return json(request, env, { error: 'only a paid run can be approved' }, 409);
+          if (!cur.sponsor || !cur.headline || !cur.url) {
+            return json(request, env, { error: 'no artwork has been sent for this run yet' }, 409);
+          }
+          const want = await creativeHash(cur);
+          if (String(body.creativeHash || '') !== want) {
+            return json(request, env, { error: 'the artwork changed since you looked — reload and review it again', creativeHash: want }, 409);
+          }
+        }
         const r = await env.DB.prepare(
-          'UPDATE banner_bookings SET approved = ? WHERE ref = ?'
-        ).bind(ok, ref).run();
-        if (!r.meta || r.meta.changes === 0) return json(request, env, { error: 'no such booking' }, 404);
+          'UPDATE banner_bookings SET approved = ? WHERE ref = ?' + (ok ? ' AND sponsor IS ? AND headline IS ? AND url IS ? AND image_url IS ?' : '')
+        ).bind(...[ok, ref].concat(ok ? [cur.sponsor, cur.headline, cur.url, cur.image_url] : [])).run();
+        if (!r.meta || r.meta.changes === 0) return json(request, env, { error: 'the artwork changed — review it again' }, 409);
         return json(request, env, { ok: true, ref: ref, approved: !!ok });
       }
 
@@ -5551,7 +5677,11 @@ export default {
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
         const wallet = await getSession(request, env).catch(function () { return null; });
-        const ref = bookingRef().replace('FOX-', 'AD-');
+        if (!wallet) return signInFirst(request, env);
+        if (await tooManyHolds(env, 'banner_bookings', wallet)) {
+          return json(request, env, { error: 'you already have an ad run waiting for payment — pay for it or let it lapse first' }, 409);
+        }
+        const ref = refCode('AD-', REF_LENGTH);
         const reference = newReference();
         const now = Date.now();
 
@@ -5632,7 +5762,19 @@ export default {
         const ref = String(body.ref || '').trim();
         const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        // The reference alone used to be enough to rewrite a live, approved
+        // banner (security fix 2026-10-29). Now only the wallet that booked the
+        // run may send its creative, and once approved it is locked: a change
+        // after that is a new review, arranged with me directly.
+        const who = await getSession(request, env).catch(function () { return null; });
+        if (!who) return signInFirst(request, env);
+        if (b.wallet && who !== b.wallet) {
+          return json(request, env, { error: 'only the wallet that booked this run can send its artwork' }, 403);
+        }
         if (b.status !== 'paid') return json(request, env, { error: 'that booking is not paid yet' }, 409);
+        if (b.approved) {
+          return json(request, env, { error: 'this banner is approved and locked — get in touch to change it', locked: true }, 409);
+        }
 
         const sponsor = String(body.sponsor || '').trim().slice(0, 60);
         const headline = String(body.headline || '').trim().slice(0, 90);
@@ -5645,7 +5787,8 @@ export default {
         if (image && !/^https:\/\//.test(image)) return json(request, env, { error: 'the image must be https' }, 400);
 
         await env.DB.prepare(
-          'UPDATE banner_bookings SET sponsor = ?, headline = ?, url = ?, image_url = ?, approved = 0 WHERE ref = ?'
+          'UPDATE banner_bookings SET sponsor = ?, headline = ?, url = ?, image_url = ?, approved = 0 ' +
+          "WHERE ref = ? AND status = 'paid' AND (approved IS NULL OR approved = 0)"
         ).bind(sponsor, headline, link, image || null, ref).run();
         await alert(env, '🖼 Creative submitted for ' + ref + '\n' + sponsor + ' — ' + headline +
           '\n' + link + '\nApprove it before it runs.');
@@ -5720,6 +5863,14 @@ export default {
         }
 
         const wallet = await getSession(request, env).catch(function () { return null; });
+        // An enquiry holds nothing and takes no money, so it still works
+        // signed out. Anything that holds an hour needs a wallet.
+        if (type.mode !== 'enquiry') {
+          if (!wallet) return signInFirst(request, env);
+          if (await tooManyHolds(env, 'bookings', wallet)) {
+            return json(request, env, { error: 'you are holding as many times as anyone can at once — pay for those or let them lapse first' }, 409);
+          }
+        }
         const holder = wallet ? await perkTier(env, wallet) : null;
         const q = quoteFor(type, startsAt, holder);
         // Paid in USDC, so no exchange rate is needed — and a SOL price feed
@@ -5795,6 +5946,8 @@ export default {
         if (!items.length) return json(request, env, { error: 'the basket is empty' }, 400);
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
+        const cartWallet = await getSession(request, env).catch(function () { return null; });
+        if (!cartWallet) return signInFirst(request, env);
         const now = Date.now();
         const rows = [];
         for (const it of items) {
@@ -5806,6 +5959,11 @@ export default {
           if (row.status === 'paid') return json(request, env, { error: ref + ' is already paid for', ref: ref, gone: true }, 409);
           if (row.status !== 'held') return json(request, env, { error: ref + ' is no longer held', ref: ref, gone: true }, 409);
           if (row.group_ref) return json(request, env, { error: ref + ' is already in a basket', ref: ref, gone: true }, 409);
+          // Only your own holds go in your basket (security fix 2026-10-29);
+          // a seen reference used to be enough to take somebody else's.
+          if (row.wallet && row.wallet !== cartWallet) {
+            return json(request, env, { error: ref + ' is not one of yours', ref: ref, gone: true }, 403);
+          }
           rows.push({ kind: kind, row: row });
         }
 
@@ -5822,7 +5980,7 @@ export default {
         if (cartSite && !cartPayTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
 
         const total = Math.round(rows.reduce(function (sum, r) { return sum + Number(r.row.total_usd || 0); }, 0) * 100) / 100;
-        const wallet = await getSession(request, env).catch(function () { return null; });
+        const wallet = cartWallet;
         const ref = bookingRef();
         const reference = newReference();
         const holdUntil = now + HOLD_MINUTES * 60000;
@@ -5836,9 +5994,9 @@ export default {
         // the first thing added does not expire while the last is chosen.
         for (const r of rows) {
           const claimed = await env.DB.prepare(
-            'UPDATE ' + r.kind.table + ' SET group_ref = ?, hold_until = ?, name = ?, contact = ? ' +
-            "WHERE ref = ? AND status = 'held' AND group_ref IS NULL"
-          ).bind(ref, holdUntil, name, contact, r.row.ref).run();
+            'UPDATE ' + r.kind.table + ' SET group_ref = ?, hold_until = ?, name = ?, contact = ?, wallet = COALESCE(wallet, ?) ' +
+            "WHERE ref = ? AND status = 'held' AND group_ref IS NULL AND (wallet IS NULL OR wallet = ?)"
+          ).bind(ref, holdUntil, name, contact, wallet, r.row.ref, wallet).run();
           if (claimed.meta.changes !== 1) {
             // someone else took it in the last moment: undo and say which
             await env.DB.prepare('UPDATE bookings SET group_ref = NULL WHERE group_ref = ?').bind(ref).run();
@@ -5945,8 +6103,11 @@ export default {
         const details = String(body.details || '').trim().slice(0, 4000);
         if (!ref || !details) return json(request, env, { error: 'reference and details are both needed' }, 400);
 
-        const b = await env.DB.prepare('SELECT ref, type_id, status, name, contact FROM bookings WHERE ref = ?').bind(ref).first();
+        const b = await env.DB.prepare('SELECT ref, wallet, type_id, status, name, contact FROM bookings WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (!(await ownsRow(request, env, b))) {
+          return json(request, env, { error: 'sign in with the wallet that booked this to add details', signIn: true }, 403);
+        }
         if (b.status !== 'paid' && b.status !== 'enquiry') {
           return json(request, env, { error: 'that booking is not paid for yet' }, 409);
         }
@@ -6103,6 +6264,10 @@ export default {
         }
 
         const wallet = await getSession(request, env).catch(function () { return null; });
+        if (!wallet) return signInFirst(request, env);
+        if (await tooManyHolds(env, 'bundles', wallet)) {
+          return json(request, env, { error: 'you already have bundles waiting for payment — pay for those or let them lapse first' }, 409);
+        }
         const holder = wallet ? await perkTier(env, wallet) : null;
         const q = bundleQuote(bundle, holder);
 
@@ -6204,6 +6369,11 @@ export default {
 
         const b = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
+        // A seen reference used to be enough to spend somebody's credits
+        // (security fix 2026-10-29). Owned bundles now need their wallet.
+        if (!(await ownsRow(request, env, b))) {
+          return json(request, env, { error: 'sign in with the wallet that bought this bundle to use it', signIn: true }, 403);
+        }
         if (b.status !== 'paid') return json(request, env, { error: 'that bundle is not paid for yet' }, 409);
 
         const credits = await bundleCredits(env, b);
@@ -6254,10 +6424,12 @@ export default {
         if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
         const credits = await bundleCredits(env, b);
         const type = bookingType(b.type_id);
+        const mine = b.wallet ? await ownsRow(request, env, b) : false;
+        const sess = await bundleSessions(env, ref);
         return json(request, env, {
           kind: 'bundle',
-          bundle: publicBundle(b, credits),
-          sessions: await bundleSessions(env, ref),
+          bundle: mine ? publicBundle(b, credits) : redactForStranger(publicBundle(b, credits)),
+          sessions: mine ? sess : sess.map(redactForStranger),
           typeName: type ? type.name : b.type_id,
           minutes: type ? type.minutes : null,
           mode: type ? type.mode : null
@@ -6268,7 +6440,14 @@ export default {
         const ref = String(url.searchParams.get('ref') || '').trim();
         if (!ref) return json(request, env, { error: 'which booking?' }, 400);
         const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
-        if (b) return json(request, env, { kind: 'booking', booking: publicBooking(b), details: b.details || null });
+        if (b) {
+          // The brief can hold private detail; the owner sees it, a stranger
+          // holding the reference sees only the booking itself.
+          const mine = b.wallet ? await ownsRow(request, env, b) : false;
+          return json(request, env, mine
+            ? { kind: 'booking', booking: publicBooking(b), details: b.details || null }
+            : { kind: 'booking', booking: redactForStranger(publicBooking(b)), details: null, hasDetails: !!b.details });
+        }
         // An advertiser looking for the run they paid for, most likely to
         // finish the artwork they left behind.
         const a = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
@@ -6287,10 +6466,12 @@ export default {
         const p = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
         if (p) {
           const type = bookingType(p.type_id);
+          const mineP = p.wallet ? await ownsRow(request, env, p) : false;
+          const sessP = await bundleSessions(env, p.ref);
           return json(request, env, {
             kind: 'bundle',
-            bundle: publicBundle(p, await bundleCredits(env, p)),
-            sessions: await bundleSessions(env, p.ref),
+            bundle: mineP ? publicBundle(p, await bundleCredits(env, p)) : redactForStranger(publicBundle(p, await bundleCredits(env, p))),
+            sessions: mineP ? sessP : sessP.map(redactForStranger),
             typeName: type ? type.name : p.type_id,
             minutes: type ? type.minutes : null,
             mode: type ? type.mode : null

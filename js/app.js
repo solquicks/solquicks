@@ -5538,6 +5538,33 @@ function renderAdForm() {
 
 function pickWeeks(w) { adWeeks = w; renderAdForm(); }
 
+/// Holding a time, a run or a bundle, and acting on one you own, needs a
+/// signed-in wallet now (security fix 2026-10-29). Every such call goes
+/// through here: it sends the session when there is one, and when the worker
+/// says sign in first it opens the wallet picker and says what to do next,
+/// rather than showing a bare error.
+const SIGN_IN_FIRST = 'Connect your wallet first — it keeps this booking tied to you. Then press the button again.';
+function bookingHeaders() {
+  return Object.assign({ 'Content-Type': 'application/json' },
+    FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {});
+}
+async function bookingApi(path, body) {
+  const init = body === undefined
+    ? { headers: bookingHeaders() }
+    : { method: 'POST', headers: bookingHeaders(), body: JSON.stringify(body) };
+  const res = await fetch(POINTS_API + path, init);
+  let d;
+  try { d = await res.json(); } catch (e) { d = { error: 'Something went wrong — try again.' }; }
+  if ((res.status === 401 || res.status === 403) && d && d.signIn) {
+    if (res.status === 401) FoxPoints.token = null;
+    try { connectWallet(); } catch (e) { /* no picker on this page */ }
+    const err = new Error(res.status === 401 ? SIGN_IN_FIRST : d.error);
+    err.signIn = true;
+    throw err;
+  }
+  return d;
+}
+
 async function submitAd(toBasket) {
   const btn = document.getElementById(toBasket ? 'ad-add' : 'ad-submit');
   const msg = document.getElementById('ad-msg');
@@ -5553,13 +5580,7 @@ async function submitAd(toBasket) {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/banner/hold', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({ weeks: adWeeks, name: name, contact: contact }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/banner/hold', withSite({ weeks: adWeeks, name: name, contact: contact }));
     if (d.error) throw new Error(d.error);
     const runs = new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
       ' – ' + new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -5612,18 +5633,13 @@ async function sendAdCreative(ref) {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    const res = await fetch(POINTS_API + '/api/banner/creative', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ref: ref,
-        sponsor: (document.getElementById('ad-sponsor').value || '').trim(),
-        headline: (document.getElementById('ad-headline').value || '').trim(),
-        url: (document.getElementById('ad-url').value || '').trim(),
-        image: (document.getElementById('ad-image').value || '').trim()
-      })
+    const d = await bookingApi('/api/banner/creative', {
+      ref: ref,
+      sponsor: (document.getElementById('ad-sponsor').value || '').trim(),
+      headline: (document.getElementById('ad-headline').value || '').trim(),
+      url: (document.getElementById('ad-url').value || '').trim(),
+      image: (document.getElementById('ad-image').value || '').trim()
     });
-    const d = await res.json();
     if (d.error) throw new Error(d.error);
     document.getElementById('bk-flow').innerHTML = '<div class="bk-flow bk-done">' +
       '<div class="bk-tick">🪧</div><div class="bk-lead">Sent for approval</div>' +
@@ -5681,7 +5697,7 @@ function renderRateCard() {
   const lookup = '<div class="bk-lookup">' +
     '<label for="bk-find">Already booked something?</label>' +
     '<div class="bk-hint">Put your reference in to see it, book a session from a bundle, or finish sending a banner.</div>' +
-    '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-XXXXXX or PACK-XXXXX" spellcheck="false">' +
+    '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-… or PACK-…" spellcheck="false">' +
     '<button onclick="findBooking()">Find it</button></div>' +
     '<div class="bk-msg" id="bk-find-msg"></div></div>';
 
@@ -5736,8 +5752,7 @@ async function findBooking() {
   if (!ref) { msg.className = 'bk-msg bad'; msg.textContent = 'Put your reference in first.'; return; }
   msg.textContent = 'Looking…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/lookup?ref=' + encodeURIComponent(ref));
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/lookup?ref=' + encodeURIComponent(ref));
     if (d.error) throw new Error(d.error);
     msg.textContent = '';
     // A reference is just a reference to whoever typed it, so the worker
@@ -5900,13 +5915,7 @@ async function cartPay() {
   btn.textContent = 'Working…';
   try {
     const items = cartRead().map(function (i) { return { kind: i.kind, ref: i.ref }; });
-    const res = await fetch(POINTS_API + '/api/cart/checkout', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({ items: items, name: name, contact: contact }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/cart/checkout', withSite({ items: items, name: name, contact: contact }));
     if (d.error) {
       // A line that went while they were deciding is dropped by name,
       // rather than failing the whole basket with nothing to act on.
@@ -6094,12 +6103,7 @@ async function submitBooking(toBasket) {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/hold', Object.assign({
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {})
-    }, { body: JSON.stringify(withSite({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief })) }));
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/hold', withSite({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief }));
     if (d.error) throw new Error(d.error);
 
     if (t.mode === 'enquiry') { showBookingDone(d, true); return; }
@@ -6433,19 +6437,13 @@ async function submitBundle() {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/hold', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({
-        bundle: b.id, name: name, contact: contact, brief: brief,
-        // Left out entirely when the credits are booked later: an empty
-        // list and no list mean the same thing to the worker, and sending
-        // neither keeps that true.
-        slots: packPick.mode === 'now' ? packPick.slots : undefined
-      }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/hold', withSite({
+      bundle: b.id, name: name, contact: contact, brief: brief,
+      // Left out entirely when the credits are booked later: an empty
+      // list and no list mean the same thing to the worker, and sending
+      // neither keeps that true.
+      slots: packPick.mode === 'now' ? packPick.slots : undefined
+    }));
     if (d.error) throw new Error(d.error);
     renderPayment(d, 'bundle', b.name, function (sig) { showBundleDone(d, sig); });
   } catch (e) {
@@ -6488,8 +6486,7 @@ async function findBundle(ref) {
   flow.hidden = false;
   flow.innerHTML = '<div class="bk-flow">Loading…</div>';
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref));
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/lookup?ref=' + encodeURIComponent(ref));
     if (d.error) throw new Error(d.error);
     showBundle(d);
   } catch (e) {
@@ -6552,7 +6549,7 @@ async function redeemPick(ref) {
     '<button class="bk-back" onclick="findBundle(\'' + escapeHtml(ref) + '\')">← Back to your bundle</button>' +
     '<div class="bk-step">Pick a time</div><div id="redeem-slots">Loading times…</div></div>';
   try {
-    const look = await (await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref))).json();
+    const look = await bookingApi('/api/bundle/lookup?ref=' + encodeURIComponent(ref));
     const res = await fetch(POINTS_API + '/api/booking/slots?type=' + look.bundle.type);
     const d = await res.json();
     const slots = d.slots || [];
@@ -6592,11 +6589,7 @@ async function redeemCreditNow(ref, startsAt, el) {
   if (el) { el.disabled = true; el.classList.add('on'); }
   if (msg) { msg.className = 'bk-msg'; msg.textContent = 'Booking…'; }
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/redeem', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: ref, startsAt: startsAt || undefined })
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/redeem', { ref: ref, startsAt: startsAt || undefined });
     if (d.error) throw new Error(d.error);
     showBundleSessionDone(d, ref);
   } catch (e) {
@@ -6644,11 +6637,7 @@ async function sendBrief(ref) {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/brief', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: ref, details: details })
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/brief', { ref: ref, details: details });
     if (d.error) throw new Error(d.error);
     msg.className = 'bk-msg good';
     msg.textContent = 'Got it — thank you.';
