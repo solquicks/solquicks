@@ -28,6 +28,10 @@
     }
     header h1 { font-family: 'Baloo 2', sans-serif; font-size: 2rem; font-weight: 800;
                 color: #7eb8ff; letter-spacing: 1px; }
+    /* Each half stays whole, so a narrow screen breaks the heading between
+       them instead of starting the second line with the dash. */
+    header h1 .nw { white-space: nowrap; display: inline-block; }
+    @media (max-width: 480px) { header h1 { font-size: 1.6rem; } }
     header p  { color: #7a8fb0; font-size: 0.85rem; margin-top: 4px; }
     header a  { color: #7eb8ff; text-decoration: none; font-weight: 700; }
     header a:hover { text-decoration: underline; }
@@ -72,7 +76,7 @@
 </head>
 <body>
 <header>
-  <h1>🌙 Moon Rangers FPS — Leaderboard</h1>
+  <h1><span class="nw">🌙 Moon Rangers FPS&nbsp;—</span> <span class="nw">Leaderboard</span></h1>
   <p>Top players by Fox Points · <a href="/games/moon-rangers/">▶ Play now</a></p>
 </header>
 

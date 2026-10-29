@@ -616,8 +616,16 @@ const whoseSite = (async function () {
       '<div class="soon-tag">Nothing here yet</div>' +
       '<div class="soon-lead">No site at this address</div>' +
       '<p class="soon-what">This name has not been claimed. ' +
-      '<a href="https://' + SITE_ROOT + '/launch">Launch your own website</a>.</p></div>';
+      '<a class="no-site-link" href="https://' + SITE_ROOT + '/launch">Launch your own website</a>.</p></div>';
     document.body.appendChild(cover);
+    // The tab and the description were still mine, which made an empty
+    // address look like it belonged to me.
+    document.title = 'No site at this address | ' + SITE_ROOT;
+    const desc = document.querySelector('meta[name="description"]');
+    if (desc) desc.setAttribute('content', 'This name has not been claimed on ' + SITE_ROOT + ' yet. Launch your own website.');
+    let robots = document.querySelector('meta[name="robots"]');
+    if (!robots) { robots = document.createElement('meta'); robots.name = 'robots'; document.head.appendChild(robots); }
+    robots.setAttribute('content', 'noindex');
     return null;
   } catch (e) {
     return null;   // the main site is what is left, which is a safe default
@@ -706,6 +714,31 @@ setInterval(() => { slideIdx = (slideIdx + 1) % 3; goSlide(slideIdx); }, 3500);
     if (window.scrollY > 300) { btn.classList.add('visible'); }
     else { btn.classList.remove('visible'); }
   }, { passive: true });
+})();
+
+// ── THE CORNER, ON A PHONE ──
+// On a phone the badge and the back-to-top button sit over the arrow column
+// of the link cards. While somebody is scrolling down through the page they
+// step out of the way; scrolling back up, or reaching the top or the bottom
+// (where the footer is padded to clear them), brings them straight back. The
+// badge never goes away for good — it is how the next creator finds the
+// Launchpad.
+const CORNER_NARROW = '(max-width: 480px)';
+function cornerTuck(prevY) {
+  const y = window.scrollY;
+  const narrow = window.matchMedia && window.matchMedia(CORNER_NARROW).matches;
+  const nearTop = y < 120;
+  const nearEnd = y + window.innerHeight >= document.documentElement.scrollHeight - 160;
+  const body = document.body;
+  if (!narrow || nearTop || nearEnd) body.classList.remove('corner-tucked');
+  else if (y > prevY + 4) body.classList.add('corner-tucked');
+  else if (y < prevY - 4) body.classList.remove('corner-tucked');
+  return y;
+}
+(function() {
+  let lastY = window.scrollY;
+  window.addEventListener('scroll', function() { lastY = cornerTuck(lastY); }, { passive: true });
+  window.addEventListener('resize', function() { lastY = cornerTuck(lastY); }, { passive: true });
 })();
   
 // ── STAT COUNTERS (was referenced but never defined) ──
@@ -981,7 +1014,7 @@ const FoxPoints = {
       const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       return '<div class="lb-log-row"><span class="lb-log-what">' + cfg.label +
         '</span><span class="lb-log-when">' + when +
-        '</span><span class="lb-log-pts">+' + item.p + '</span></div>';
+        '</span><span class="lb-log-pts">+' + (Number(item.p) || 0) + '</span></div>';
     }).join('');
   },
 
@@ -2004,6 +2037,8 @@ async function loadDefiRate() {
   try {
     const r = await fetch(POINTS_API + '/api/reflect/apy');
     const b = await r.json();
+    // No rate published comes back as a 200 with apy null and
+    // published false; only a real fault is an error status.
     if (!r.ok || typeof b.apy !== 'number') {
       const err = new Error(b.error || 'no rate');
       err.notPublished = b.published === false;

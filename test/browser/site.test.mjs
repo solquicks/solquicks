@@ -534,7 +534,7 @@ async function standIns(context) {
       // ends is what lets the signature the page actually sends be inspected,
       // rather than a signature the test made for itself.
       if (u.pathname === '/api/reflect/apy') {
-        if (net.reflectUnpublished) return json(route, { error: 'no rate published yet', published: false }, 503);
+        if (net.reflectUnpublished) return json(route, { apy: null, published: false });
         if (net.reflectMeasured) {
           return json(route, { apy: 7.4, at: new Date().toISOString(), measured: true,
             since: Date.now() - 3 * 86400000, readings: 144 });
@@ -3462,6 +3462,55 @@ try {
     await page.waitForTimeout(300);
     eq('and on a desktop too', (await clears()).join(','), '');
 
+    // On a phone the corner sat over the link cards' arrows. Scrolling down
+    // through the cards, it steps aside; scrolling up brings it back.
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.evaluate(() => switchTab('links'));
+    await page.waitForTimeout(300);
+    const settle = () => page.evaluate(async () => {
+      for (let last = -1; last !== window.scrollY;) {
+        last = window.scrollY;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
+    });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await settle();
+    ok('at the top of a phone page the badge is there', !(await page.evaluate(() => document.body.classList.contains('corner-tucked'))));
+    for (const y of [200, 320, 440]) {
+      await page.evaluate((y) => window.scrollTo({ top: y, behavior: 'instant' }), y);
+      await settle();
+    }
+    const tucked = await page.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+      const b = document.getElementById('powered');
+      const r = b.getBoundingClientRect();
+      const arrows = [...document.querySelectorAll('.link-arrow')].filter((a) => {
+        const q = a.getBoundingClientRect();
+        return q.height && !(q.right < r.left || r.right < q.left || q.bottom < r.top || r.bottom < q.top);
+      }).length;
+      return { cls: document.body.classList.contains('corner-tucked'),
+               opacity: getComputedStyle(b).opacity, pe: getComputedStyle(b).pointerEvents,
+               blocking: arrows && getComputedStyle(b).opacity !== '0' };
+    });
+    ok('scrolling down on a phone, the corner steps aside', tucked.cls, JSON.stringify(tucked));
+    eq('so it is not drawn over the cards', tucked.opacity, '0');
+    eq('and taps go through to the card underneath', tucked.pe, 'none');
+    ok('no link arrow sits under a visible badge', !tucked.blocking, JSON.stringify(tucked));
+    await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }));
+    await settle();
+    await page.waitForTimeout(350);
+    ok('scrolling back up brings it straight back', await page.evaluate(() =>
+      !document.body.classList.contains('corner-tucked') && getComputedStyle(document.getElementById('powered')).opacity === '1'));
+    ok('and it is still the way to the Launchpad', await badge.isVisible());
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => window.scrollTo({ top: 600, behavior: 'instant' }));
+    await settle();
+    await page.evaluate(() => window.scrollTo({ top: 900, behavior: 'instant' }));
+    await settle();
+    ok('on a desktop the corner never tucks away', !(await page.evaluate(() => document.body.classList.contains('corner-tucked'))));
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await settle();
+
     // It has to go to the Launchpad from whatever page you were on.
     eq('it points at the Launchpad, by its clean URL', await page.locator('#powered').getAttribute('href'), '/launch');
 
@@ -3770,6 +3819,24 @@ try {
     ok('an unclaimed address says so rather than showing mine', true);
     ok('and points them at the Launchpad, by its clean URL',
       /\/launch"/.test(await page.evaluate(() => document.body.innerHTML)));
+    eq('its tab says there is nothing here, not my name',
+      await page.evaluate(() => document.title), 'No site at this address | solquicks.com');
+    ok('its description is not mine either',
+      /not been claimed/.test(await page.evaluate(() => document.querySelector('meta[name="description"]').content)));
+    eq('and search engines are asked not to index it',
+      await page.evaluate(() => document.querySelector('meta[name="robots"]').content), 'noindex');
+    const nsLink = await page.evaluate(() => {
+      const a = document.querySelector('#no-site a');
+      const cs = getComputedStyle(a);
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--orange-deep)';
+      document.body.appendChild(probe);
+      const want = getComputedStyle(probe).color;
+      probe.remove();
+      return { color: cs.color, want, deco: cs.textDecorationLine };
+    });
+    eq('the Launchpad link wears the site link colour', nsLink.color, nsLink.want);
+    eq('without the browser default underline', nsLink.deco, 'none');
 
     await page.goto(SITE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
