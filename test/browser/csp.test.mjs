@@ -50,6 +50,8 @@ for (const p of ['/', '/fees', '/fees.html', '/launch', '/c/some-creator', '/gam
 }
 ok('the game pages may not run inline script beyond the one hashed leaderboard script',
   !/'unsafe-inline'/.test(csp('/games/moon-rangers/').match(/script-src[^;]*/)[0]));
+ok('scripts from jsdelivr are pinned to the two files the site uses, not the whole CDN',
+  !/cdn\.jsdelivr\.net(\s|;|$)/.test(csp('/')) && /web3\.js@1\.98\.0\/lib\/index\.iife\.min\.js/.test(csp('/')));
 ok('X-Frame-Options is still DENY everywhere', vercelHeaders(VERCEL, '/games/moon-rangers/')['X-Frame-Options'] === 'DENY');
 ok('the asset cache rule still applies to the game files',
   /immutable/.test(vercelHeaders(VERCEL, '/games/moon-rangers/assets/a.js')['Cache-Control'] || ''));
@@ -114,6 +116,13 @@ section('the game page loads under its policy');
   ok('the game module ran (no "refused to execute" errors)', !r.errors.some((e) => /Content Security Policy|refused/i.test(e)), r.errors.join(' | '));
 }
 
+section('the games index loads under the game policy');
+{
+  const r = await visit('/games/');
+  ok('/games/ carries the game policy', /wasm-unsafe-eval/.test(r.header), r.header);
+  ok('and nothing on it is blocked', r.blocked.length === 0, r.blocked.join(' | '));
+}
+
 section('the leaderboard runs its inline script and reaches the worker');
 {
   const before = workerHits.length;
@@ -143,6 +152,16 @@ section('and the policy does block what it should');
   });
   ok('fetch to another workers.dev host is blocked', tried.fetch === 'blocked');
   ok('a script from another origin is blocked', tried.script === 'blocked');
+  const other = await page.evaluate(async () => {
+    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/left-pad@1.3.0/index.js';
+    return new Promise((r) => { s.onerror = () => r('blocked'); s.onload = () => r('allowed'); document.head.appendChild(s); });
+  });
+  ok('and so is any other package from jsdelivr', other === 'blocked');
+  const qr = await page.evaluate(async () => {
+    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    return new Promise((r) => { s.onerror = () => r('blocked'); s.onload = () => r(typeof qrcode); document.head.appendChild(s); });
+  });
+  ok('while the QR code library the Solana Pay step loads still loads', qr === 'function', qr);
   await page.close();
 }
 
