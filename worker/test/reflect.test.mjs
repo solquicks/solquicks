@@ -61,8 +61,9 @@ section('the rate people are shown');
   serving({ apy: { success: true, data: [{ index: 7, apy: 99, timestamp: 'x' }] } });
   const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
   const r = await call(env, 'GET', '/api/reflect/apy');
-  eq('a rate for a different product is not shown as ours', r.status, 503);
-  ok('and says so rather than showing nothing', /no rate/.test(r.body.error), r.body.error);
+  eq('a rate for a different product is not shown as ours', r.body.apy, null);
+  eq('and says none is published, rather than showing nothing', r.body.published, false);
+  eq('which is an answer, not an error', r.status, 200);
 }
 
 // ── quotes ──────────────────────────────────────────────────────────────────
@@ -358,7 +359,9 @@ section('the rate, measured rather than borrowed');
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
     .bind(Date.now() - 30 * DAY, 1.0).run();
   let r = await call(env, 'GET', '/api/reflect/apy');
-  eq('one reading gives no rate', r.status, 503);
+  eq('one reading gives no rate', r.body.apy, null);
+  eq('said as an empty answer, not an error', r.status, 200);
+  eq('marked as not published', r.body.published, false);
 
   // Two, a month apart, with the token up 1% — about 12.7% a year compounded.
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
@@ -381,7 +384,8 @@ section('the rate, measured rather than borrowed');
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
     .bind(Date.now(), 1.004).run();
   const r = await call(env, 'GET', '/api/reflect/apy');
-  eq('ten minutes of movement is not an annual rate', r.status, 503);
+  eq('ten minutes of movement is not an annual rate', r.body.apy, null);
+  eq('still a 200 with nothing published', r.status, 200);
 }
 
 {

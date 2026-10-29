@@ -5496,15 +5496,17 @@ export default {
               { apy: own.apy, at: new Date(own.to).toISOString(), measured: true,
                 since: own.from, readings: own.readings });
           }
-          return json(request, env,
-            { error: r.error, published: r.status === 404 ? false : undefined },
-            r.status === 404 ? 503 : r.status);
+          // Nobody has published a rate is an answer, not a failure: a 200
+          // with no number, so the page says so and the browser does not log
+          // an error on every visit. Only a real fault upstream is an error.
+          if (r.status === 404) return json(request, env, { apy: null, published: false });
+          return json(request, env, { error: r.error }, r.status);
         }
         // Only the one product this site offers. Handing back every index
         // would invite the page to display a rate for something it cannot
         // actually deposit into.
         const row = (r.body.data || []).find(function (d) { return d.index === REFLECT_INDEX; });
-        if (!row) return json(request, env, { error: 'no rate published yet', published: false }, 503);
+        if (!row) return json(request, env, { apy: null, published: false });
         return json(request, env, { apy: row.apy, at: row.timestamp });
       }
 
