@@ -563,6 +563,10 @@ async function standIns(context) {
         net.reflectBuilds.push({ path: u.pathname, body: b });
         return json(route, { transaction: net.reflectTx, wallet: b.wallet, amount: b.amount });
       }
+      if (u.pathname === '/api/logout') {
+        net.logouts = (net.logouts || []).concat([req.headers()['authorization'] || null]);
+        return json(route, { ok: true });
+      }
       if (u.pathname === '/api/nonce') {
         return json(route, { nonce: 'n-1', message: 'prove it' });
       }
@@ -2387,9 +2391,14 @@ try {
       if (ext) await Wallet.connect(ext);
     });
     await page.waitForFunction(() => !!Wallet.pubkey, null, { timeout: 10000 });
-    await page.evaluate(() => Wallet.disconnect());
+    net.logouts = [];
+    await page.evaluate(() => { FoxPoints.token = 't-logout'; Wallet.disconnect(); });
     eq('asking to disconnect forgets it',
       await page.evaluate(() => localStorage.getItem('wallet_last')), null);
+    // Security fix 2026-10-29 (L6): the session is ended on the server too.
+    await page.waitForFunction(() => true);
+    for (let i = 0; i < 50 && !net.logouts.length; i++) await new Promise((r) => setTimeout(r, 100));
+    eq('and ends the session on the server, not just in this browser', net.logouts[0], 'Bearer t-logout');
 
     await page.evaluate(async () => {
       const ext = Wallet.discover().find((w) => w.kind === 'standard');

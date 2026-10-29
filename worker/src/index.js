@@ -6,7 +6,9 @@ import { handleGameRequest, adminListPending, adminDecidePending } from './game/
 
 const DAY_MS = 86400000;
 const STAKE_RATE_PER_DAY = 100;
-const SESSION_TTL_MS = 30 * DAY_MS;
+// Was 30 days with no way to end one early (L6). A week, and /api/logout now
+// ends it on the server when someone disconnects.
+const SESSION_TTL_MS = 7 * DAY_MS;
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const FLIP_MIN = 10;
 const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
@@ -101,11 +103,16 @@ function randomToken() {
   return [...b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
-function signInMessage(wallet, nonce) {
+// The time the nonce was issued is part of what is signed (L6), so a
+// signature shown to a user is plainly dated and only good for the five
+// minutes its nonce lives. Derived from the nonce's own expiry, so nothing
+// new is stored.
+function signInMessage(wallet, nonce, expires) {
   return 'solquicks.com wants you to sign in.\n\n' +
     'This proves you own this wallet. It is free and does not move any funds.\n\n' +
     'Wallet: ' + wallet + '\n' +
-    'Nonce: ' + nonce;
+    'Nonce: ' + nonce + '\n' +
+    'Issued at: ' + new Date(expires - NONCE_TTL_MS).toISOString();
 }
 
 async function verifySignature(wallet, message, signatureB64) {
@@ -464,6 +471,8 @@ const RATE_RULES = [
   { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top', '/api/swap/traded'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
+  // and all callers together, so rotating addresses cannot fill error_log (L4)
+  { match: ['swapfail:all'], name: 'swapfailall', by: 'global', limit: 500, windowMs: 3600000 },
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/swap/record'], name: 'swaprecord', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/history'], name: 'swaphistory', by: 'ip', limit: 30, windowMs: 60000 },
@@ -557,7 +566,7 @@ function ipKey(ip) {
 const FAIL_CLOSED = ['auth', 'admin', 'flip', 'write', 'mission', 'bookwrite', 'bundlewrite',
   'pointsbuy', 'bundleredeem', 'bookbrief', 'cartwrite', 'adwrite', 'cleanaward', 'swapaward',
   'swapfail', 'launchinvite', 'launchcreate', 'invitewrite', 'gameplayer', 'plushie',
-  'collectibleclaim', 'eventdedupe'];
+  'collectibleclaim', 'eventdedupe', 'swapfailall'];
 
 /// `extra` narrows the key further, for "once per thing per caller" limits.
 async function rateLimited(request, env, path, wallet, extra) {
@@ -638,6 +647,7 @@ async function alert(env, text) {
 
 const REQUIRED_SETTINGS = ['HELIUS_API_KEY', 'JUPITER_API_KEY', 'ADMIN_TOKEN', 'TREASURY_WALLET', 'ALLOWED_ORIGINS'];
 
+let publicHealth = null;   // { at, ok, env } — see /api/health
 async function healthCheck(env) {
   const detail = {};
   let ok = true;
@@ -666,7 +676,10 @@ async function healthCheck(env) {
 
   try {
     const since = Date.now() - 3600000;
-    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM error_log WHERE ts > ?').bind(since).first();
+    // Client-reported swap failures are anyone's to send, so they do not count
+    // towards an outage (security fix 2026-10-29, L4): a flood of them used to
+    // trip the threshold and page the owner for nothing.
+    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM error_log WHERE ts > ? AND route IS NOT 'swap.client'").bind(since).first();
     detail.errorsLastHour = r ? r.n : 0;
     if (detail.errorsLastHour > 25) ok = false;
   } catch (e) { /* already covered by the db check */ }
@@ -4569,9 +4582,22 @@ export default {
 
       // ── health ──
       if (path === '/api/health' && request.method === 'GET') {
-        const h = await healthCheck(env);
-        h.build = BUILD;
-        return json(request, env, h, h.ok ? 200 : 503);
+        // Security fix 2026-10-29 (L3): the public answer is up/down and the
+        // build, from a check run at most once a minute per isolate, so the
+        // endpoint cannot be used to burn the Helius quota or read which
+        // settings are missing and how many players and errors there are.
+        // The full detail is for the admin token.
+        if (tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          const h = await healthCheck(env);
+          h.build = BUILD;
+          return json(request, env, h, h.ok ? 200 : 503);
+        }
+        const now = Date.now();
+        if (!publicHealth || now - publicHealth.at > 60000 || publicHealth.env !== env) {
+          const h = await healthCheck(env);
+          publicHealth = { at: now, ok: !!h.ok, env: env };
+        }
+        return json(request, env, { ok: publicHealth.ok, build: BUILD }, publicHealth.ok ? 200 : 503);
       }
 
       // What is owed, so a payout run is one page rather than a query. Paying
@@ -4985,7 +5011,8 @@ export default {
       // useless ("Internal error"). Recording them is the only way to find out
       // what actually went wrong for someone else.
       if (path === '/api/swap/failed' && request.method === 'POST') {
-        const body = await request.json().catch(function () { return {}; });
+        if (await rateLimited(request, env, 'swapfail:all', null)) return json(request, env, { ok: true, logged: false });
+        const body = (await request.json().catch(function () { return null; })) || {};
         await logError(env, 'swap.client', JSON.stringify({
           message: String(body.message || '').slice(0, 240),
           in: String(body.inMint || '').slice(0, 44),
@@ -6613,18 +6640,22 @@ export default {
 
       // ── step 1: request a nonce ──
       if (path === '/api/nonce' && request.method === 'POST') {
-        const { wallet } = await request.json();
+        // Malformed or empty JSON is a 400, not a 500 (I10).
+        const { wallet } = (await request.json().catch(function () { return null; })) || {};
         if (!isWallet(wallet)) return json(request, env, { error: 'bad wallet' }, 400);
         const nonce = randomToken();
+        const nonceExpires = Date.now() + NONCE_TTL_MS;
         await env.DB.prepare('INSERT INTO nonces (nonce, wallet, expires) VALUES (?, ?, ?)')
-          .bind(nonce, wallet, Date.now() + NONCE_TTL_MS).run();
-        return json(request, env, { nonce, message: signInMessage(wallet, nonce) });
+          .bind(nonce, wallet, nonceExpires).run();
+        return json(request, env, { nonce, message: signInMessage(wallet, nonce, nonceExpires) });
       }
 
       // ── step 2: exchange a signature for a session ──
       if (path === '/api/session' && request.method === 'POST') {
-        const { wallet, nonce, signature } = await request.json();
-        if (!isWallet(wallet) || !nonce || !signature) return json(request, env, { error: 'missing fields' }, 400);
+        const { wallet, nonce, signature } = (await request.json().catch(function () { return null; })) || {};
+        if (!isWallet(wallet) || typeof nonce !== 'string' || !nonce || typeof signature !== 'string' || !signature) {
+          return json(request, env, { error: 'missing fields' }, 400);
+        }
         const row = await env.DB.prepare('SELECT wallet, expires FROM nonces WHERE nonce = ?').bind(nonce).first();
         if (!row || row.wallet !== wallet || row.expires < Date.now()) {
           return json(request, env, { error: 'nonce invalid or expired' }, 401);
@@ -6633,7 +6664,7 @@ export default {
         await env.DB.prepare('DELETE FROM nonces WHERE nonce = ?').bind(nonce).run();
 
         let ok = false;
-        try { ok = await verifySignature(wallet, signInMessage(wallet, nonce), signature); } catch (e) { ok = false; }
+        try { ok = await verifySignature(wallet, signInMessage(wallet, nonce, row.expires), signature); } catch (e) { ok = false; }
         if (!ok) return json(request, env, { error: 'signature did not verify' }, 401);
 
         const token = randomToken();
@@ -6661,6 +6692,14 @@ export default {
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
 
       if (await rateLimited(request, env, path, wallet)) return tooMany(request, env);
+
+      // ── sign out (L6) ── ends this session on the server, not just in the
+      // browser that held it.
+      if (path === '/api/logout' && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(auth.slice(7)).run();
+        return json(request, env, { ok: true });
+      }
 
       // ── coin flip (points only) ──
       // No money in or out — points are staked against points. The outcome is

@@ -1322,6 +1322,14 @@ const Wallet = {
     this.active = null;
     this.pubkey = null;
     rangerCount = null;
+    // End the session on the server too (security fix 2026-10-29, L6), not
+    // just forget it here. Best effort: a failed call still signs out locally.
+    if (FoxPoints.token) {
+      try {
+        fetch(POINTS_API + '/api/logout', { method: 'POST', keepalive: true,
+          headers: { 'Authorization': 'Bearer ' + FoxPoints.token } }).catch(function () {});
+      } catch (e) {}
+    }
     FoxPoints.clearToken();
     if (forget) { try { localStorage.removeItem('wallet_last'); } catch (e) {} }
     this.render();
