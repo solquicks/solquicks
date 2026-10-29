@@ -6,7 +6,7 @@
     "url": "where the banner links to",
     "image": "optional square logo/art URL (https), falls back to the emoji",
     "emoji": "optional, used when there is no image",
-    "until": "YYYY-MM-DD — the slot auto-reverts to house promos after this date, so a finished campaign never runs on past its booking",
+    "until": "YYYY-MM-DD — the slot goes back to advertising itself as available after this date, so a finished campaign never runs on past its booking",
     "id": "optional; stats are keyed by the sponsor name if omitted"
   },
   "active": null,
