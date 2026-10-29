@@ -131,6 +131,37 @@ section('the leaderboard runs its inline script and reaches the worker');
   ok('its hashed inline script ran and asked the worker for the board', workerHits.length > before, workerHits.join(','));
 }
 
+section('the game page has a description and a link preview (retest #2)');
+{
+  const g = fs.readFileSync(path.join(ROOT, 'games/moon-rangers/index.html'), 'utf8');
+  ok('a meta description', /<meta name="description" content="[^"]{40,}"/.test(g));
+  ok('an og:image, the same preview /games/ uses',
+    g.includes('<meta property="og:image" content="https://solquicks.com/games/moon-rangers/preview.jpg"'));
+  ok('which exists', fs.existsSync(path.join(ROOT, 'games/moon-rangers/preview.jpg')));
+  ok('og:title, og:url and a large twitter card',
+    /og:title/.test(g) && /og:url" content="https:\/\/solquicks\.com\/games\/moon-rangers\/"/.test(g) && /summary_large_image/.test(g));
+  ok('and a canonical URL', /<link rel="canonical" href="https:\/\/solquicks\.com\/games\/moon-rangers\/"/.test(g));
+}
+
+section('the leaderboard heading breaks cleanly on a phone (retest #5)');
+{
+  const page = await context.newPage();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(SITE + '/games/moon-rangers/leaderboard/', { waitUntil: 'load' });
+  const h = await page.evaluate(() => {
+    const parts = [...document.querySelectorAll('header h1 .nw')].map((e) => {
+      const r = e.getBoundingClientRect(); return { text: e.textContent, top: r.top, h: r.height, rects: e.getClientRects().length };
+    });
+    return { parts, sw: document.documentElement.scrollWidth, w: window.innerWidth };
+  });
+  await page.close();
+  ok('two halves', h.parts.length === 2, JSON.stringify(h));
+  ok('neither half breaks inside itself', h.parts.every((p) => p.rects === 1), JSON.stringify(h));
+  ok('the dash stays at the end of the first line, not the start of the second',
+    /—$/.test(h.parts[0].text.trim()) && !/^—/.test(h.parts[1].text.trim()));
+  ok('and the page does not scroll sideways', h.sw <= h.w + 1, JSON.stringify(h));
+}
+
 section('the site pages are served with the site policy');
 for (const p of ['/', '/fees', '/launch', '/c/some-creator']) {
   const r = await visit(p);
