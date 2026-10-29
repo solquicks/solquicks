@@ -2,7 +2,7 @@
 // Points live here, not in the visitor's browser. Every award is decided
 // server-side; the client can only ask, never assert a balance.
 
-import { handleGameRequest } from './game/routes.js';
+import { handleGameRequest, adminListPending, adminDecidePending } from './game/routes.js';
 
 const DAY_MS = 86400000;
 const STAKE_RATE_PER_DAY = 100;
@@ -4576,6 +4576,23 @@ export default {
       // Proves the whole chain in one call: the key parses, Google accepts the
       // JWT, and the calendar is actually shared with the service account.
       // Each of those fails differently and all three look like "it is broken".
+      // ── admin: game points review queue (security fix 2026-10-29, H3) ──
+      if (path === '/api/admin/game/pending' || path === '/api/admin/game/pending/decide') {
+        if (!tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        if (path === '/api/admin/game/pending' && request.method === 'GET') {
+          return json(request, env, await adminListPending(env, { listRangers }, url.searchParams.get('status') || 'claimed'));
+        }
+        if (path === '/api/admin/game/pending/decide' && request.method === 'POST') {
+          const body = await request.json().catch(function () { return null; });
+          if (!body || typeof body !== 'object') return json(request, env, { error: 'bad request' }, 400);
+          const r = await adminDecidePending(env, { listRangers, ensurePlayer, addPoints }, body);
+          return json(request, env, r.body, r.status);
+        }
+        return json(request, env, { error: 'method not allowed' }, 405);
+      }
+
       if (path === '/api/admin/calendar/test' && request.method === 'GET') {
         // Admin only (security fix 2026-10-29): it used to answer anyone, and
         // each call signs a JWT and writes a test event to the calendar.
@@ -6618,7 +6635,7 @@ export default {
       // ones that touch a player's points still require a session.
       if (path.startsWith('/api/game/')) {
         const gameRes = await handleGameRequest(path, request, env, {
-          json, getSession, ensurePlayer, addPoints, isWallet, badgesFor, rateLimited, tooMany
+          json, getSession, ensurePlayer, addPoints, isWallet, badgesFor, rateLimited, tooMany, alert
         });
         return gameRes || json(request, env, { error: 'not found' }, 404);
       }

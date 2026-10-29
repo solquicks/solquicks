@@ -650,7 +650,7 @@ section('weekly swap leaderboard');
   env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 2, 1, 1)').run(a);
   env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(b, 'asset-b', 'sig-b');
   env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(a, 'asset-a', 'sig-a');
-  env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, 1)').run(c, 'staked-c');
+  env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, 1, ?)').run(c, 'staked-c', Date.now());
   const boardRes = await call(env, 'GET', '/api/swap/leaderboard');
   eq('the board still answers once there are badges to work out', boardRes.status, 200);
   const badged = boardRes.body.top;
@@ -658,7 +658,7 @@ section('weekly swap leaderboard');
   eq('a Ranger holder is badged as one', tierOf(a), 'ranger');
   eq('holding both shows the Ranger badge only', tierOf(a), 'ranger');
   eq('a collectible holder gets its own badge', tierOf(b), 'collectible');
-  eq('a staked Ranger still counts', tierOf(c), 'ranger');
+  eq('a staked Ranger the chain confirmed today still counts', tierOf(c), 'ranger');
   eq('everyone else has no badge', tierOf(d), null);
   ok('and no chain call was made for any of it',
     !chain.rpcCalls.slice(-6).includes('searchAssets'), chain.rpcCalls.slice(-6).join(','));

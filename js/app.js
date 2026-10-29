@@ -902,7 +902,7 @@ const FoxPoints = {
     this.token = null; this.server = null;
     // These are one wallet's earnings and its own code. They belong to
     // nobody the moment that wallet is gone.
-    for (const id of ['iv-card', 'iv-enter-card']) {
+    for (const id of ['iv-card', 'iv-enter-card', 'gp-card']) {
       const el = document.getElementById(id);
       if (el) el.hidden = true;
     }
@@ -941,6 +941,7 @@ const FoxPoints = {
     if (typeof loadMission === 'function') loadMission();
     if (typeof loadSwapPoints === 'function') loadSwapPoints().then(flushSwapPoints);
     if (typeof loadInvite === 'function') loadInvite();
+    if (typeof loadGamePoints === 'function') loadGamePoints();
   },
 
   render() {
@@ -973,7 +974,9 @@ const FoxPoints = {
       return;
     }
     logEl.innerHTML = log.map(function (item) {
-      const cfg = FOX_EVENTS[item.e] || { label: item.e };
+      // Unknown event types fall back to the raw type, which comes from the
+      // server: escape it rather than trust it as markup (I6).
+      const cfg = FOX_EVENTS[item.e] || { label: escapeHtml(String(item.e)) };
       const d = new Date(item.t);
       const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       return '<div class="lb-log-row"><span class="lb-log-what">' + cfg.label +
@@ -7020,6 +7023,51 @@ function inviteLinkFor(code) {
 /// Everything this wallet has earned by inviting people, and the box for
 /// anyone who arrived with a code of their own. Both cards stay hidden
 /// until there is a wallet, because neither means anything without one.
+// ── Moon Rangers game points: earned → claimed → approved ──
+// The game queues points; the player asks for review here; the admin approves
+// (a Moon Rangers holder gets 1.25x, checked on-chain at approval).
+function renderGamePoints(d) {
+  const card = document.getElementById('gp-card');
+  if (!card) return;
+  if (!FoxPoints.token || !d || !d.totals) { card.hidden = true; return; }
+  const t = d.totals;
+  const any = (t.earned || 0) + (t.claimed || 0) + (t.approved || 0) + (t.rejected || 0) > 0;
+  card.hidden = !any;
+  if (!any) return;
+  const boost = Math.round(((d.holderBoost || 1.25) - 1) * 100);
+  document.getElementById('gp-lead').innerHTML = t.earned > 0
+    ? 'You have <strong>' + t.earned.toLocaleString() + '</strong> points from the game ready to claim. ' +
+      'Claimed points are checked, then added to your balance — Moon Rangers holders get <strong>+' + boost + '%</strong>.'
+    : 'Points from the game are checked before they reach your balance. Moon Rangers holders get <strong>+' + boost + '%</strong>.';
+  document.getElementById('gp-stats').innerHTML =
+    '<span><b>' + (t.earned || 0).toLocaleString() + '</b> ready to claim</span> · ' +
+    '<span><b>' + (t.claimed || 0).toLocaleString() + '</b> in review</span> · ' +
+    '<span><b>' + (t.approved || 0).toLocaleString() + '</b> added</span>';
+  document.getElementById('gp-claim').hidden = !(t.earned > 0);
+}
+
+async function loadGamePoints() {
+  if (!FoxPoints.token) { renderGamePoints(null); return; }
+  const d = await FoxPoints.api('/api/game/pending').catch(function () { return null; });
+  renderGamePoints(d);
+}
+
+async function claimGamePoints() {
+  const btn = document.getElementById('gp-claim');
+  const msg = document.getElementById('gp-msg');
+  btn.disabled = true;
+  try {
+    const d = await FoxPoints.api('/api/game/pending/claim', { method: 'POST', body: {} });
+    if (!d || d.error) throw new Error((d && d.error) || 'Could not claim just now');
+    msg.textContent = d.claimed > 0
+      ? 'Claimed — your points are in review and will be added once approved.'
+      : 'Nothing new to claim.';
+    renderGamePoints(d);
+  } catch (e) {
+    msg.textContent = e.message || 'Could not claim just now';
+  } finally { btn.disabled = false; }
+}
+
 async function loadInvite() {
   const card = document.getElementById('iv-card');
   const enter = document.getElementById('iv-enter-card');
@@ -7834,6 +7882,7 @@ export {
   chooseToken,
   clShow,
   claimDaily,
+  claimGamePoints,
   claimInvite,
   claimReward,
   claimStakePoints,
@@ -7858,6 +7907,7 @@ export {
   loadDefiBalances,
   loadDefiRate,
   loadInvite,
+  loadGamePoints,
   loadPointsPacks,
   loadReferrals,
   loadStore,

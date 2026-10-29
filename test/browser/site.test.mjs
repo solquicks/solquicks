@@ -216,6 +216,12 @@ function workerAnswer(p, url, body) {
       topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup']
     } } : { site: null };
   }
+  if (p === '/api/game/pending' || p === '/api/game/pending/claim') {
+    const g = net.game || (net.game = { earned: 80, claimed: 0, approved: 50 });
+    if (p === '/api/game/pending/claim') { net.gameClaims = (net.gameClaims || 0) + 1; const n = g.earned ? 1 : 0; g.claimed += g.earned; g.earned = 0;
+      return { ok: true, claimed: n, items: [], totals: Object.assign({ rejected: 0 }, g), holderBoost: 1.25 }; }
+    return { items: [], totals: Object.assign({ rejected: 0 }, g), holderBoost: 1.25 };
+  }
   if (p === '/api/invite') return inviteState();
   if (p === '/api/invite/bind') {
     const code = (net.lastBody && net.lastBody.code) || '';
@@ -3093,6 +3099,24 @@ try {
     await page.evaluate(() => FoxPoints.clearToken());
     eq('signing out hides the card',
       await page.evaluate(() => document.getElementById('iv-card').hidden), true);
+  }
+
+  section('game points: claimed for review, not credited');
+  {
+    await page.evaluate(() => { FoxPoints.clearToken(); switchTab('leaderboard'); return loadGamePoints(); });
+    eq('signed out there is no game points card', await page.evaluate(() => document.getElementById('gp-card').hidden), true);
+    await page.evaluate(() => { FoxPoints.token = 'test-session'; return loadGamePoints(); });
+    await page.waitForSelector('#gp-card', { state: 'visible', timeout: 10000 });
+    const lead = await page.textContent('#gp-lead');
+    ok('it says how much is ready to claim', /80/.test(lead) && /ready to claim/.test(lead), lead);
+    ok('and that holders get +25%', /\+25%/.test(lead), lead);
+    ok('the stats show what was already added', /50 added/.test(await page.textContent('#gp-stats')), await page.textContent('#gp-stats'));
+    await page.click('#gp-claim');
+    await page.waitForFunction(() => /in review/.test(document.getElementById('gp-msg').textContent), null, { timeout: 10000 });
+    ok('claiming says the points are in review', /approved/.test(await page.textContent('#gp-msg')));
+    ok('the stats move them to review', /80 in review/.test(await page.textContent('#gp-stats')), await page.textContent('#gp-stats'));
+    eq('and the claim button goes away', await page.evaluate(() => document.getElementById('gp-claim').hidden), true);
+    await page.evaluate(() => FoxPoints.clearToken());
   }
 
   section('invite: arriving on somebody else\'s link');

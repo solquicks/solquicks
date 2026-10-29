@@ -23,8 +23,17 @@ import {
 const DAY = 24 * HOUR;
 const SECRET = 'game-server-test-secret-0123456789';
 
-const points = (env, w) => (env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(w) || {}).points || 0;
-const events = (env, w) => env._db.prepare('SELECT type, points FROM events WHERE wallet = ? ORDER BY id').all(w);
+// Since the security fix of 2026-10-29 (H3) the game never credits the
+// balance directly: what it reports is queued in game_pending_points for the
+// player to claim and the admin to approve. So "credited" in the checks below
+// means "queued for this wallet", and `events` lists the queue in the old
+// ledger types. `balance` is the real Fox Points balance, which the game alone
+// must never move.
+const LEGACY = { match: () => 'game_match', share: () => 'share_reward', challenge: (id) => 'challenge_' + id.split(':')[0] };
+const points = (env, w) => (env._db.prepare("SELECT COALESCE(SUM(base_fp), 0) AS p FROM game_pending_points WHERE wallet = ? AND status != 'rejected'").get(w) || {}).p || 0;
+const events = (env, w) => env._db.prepare('SELECT source, source_id, base_fp FROM game_pending_points WHERE wallet = ? ORDER BY id').all(w)
+  .map((r) => ({ type: LEGACY[r.source](r.source_id), points: r.base_fp }));
+const balance = (env, w) => (env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(w) || {}).points || 0;
 const claims = (env) => env._db.prepare('SELECT * FROM game_challenge_claims ORDER BY claimed_at').all();
 const awards = (env, m) => env._db.prepare('SELECT * FROM game_match_awards WHERE match_id = ? ORDER BY wallet').all(m);
 
@@ -229,7 +238,8 @@ section('the share bonus, once per UTC day');
   const first = await share(env, token);
   eq('pays', first.body.ok, true);
   eq('25 points', first.body.points_awarded, 25);
-  eq('reports the new total', first.body.total, 25);
+  eq('reports the balance, unchanged until review', first.body.total, 0);
+  eq('and says the points are pending', first.body.pending, true);
   const again = await share(env, token);
   eq('a second the same day is refused', again.status, 429);
   eq('as already claimed', again.body.error, 'already_claimed');
@@ -437,7 +447,8 @@ section('the player\'s own stats');
   eq('need a session', (await call(env, 'GET', '/api/game/points?wallet=' + me)).status, 401);
   const r = await call(env, 'GET', '/api/game/points', { token: signIn(env, me) });
   eq('answers', r.status, 200);
-  eq('the balance', r.body.points, 70 + 10);
+  eq('the balance has not moved: game points wait for review', r.body.points, 0);
+  eq('they show as earned, waiting to be claimed', r.body.pending.earned, 70 + 10);
   eq('matches played', r.body.matches_played, 2);
   eq('won', r.body.matches_won, 1);
   eq('kills', r.body.kills, 3);
@@ -455,6 +466,70 @@ section('no schema at request time');
     ok(t + ' is in schema.sql', new RegExp('CREATE TABLE IF NOT EXISTS ' + t + '\\b').test(schema));
     ok(t + ' is in the migration', new RegExp('CREATE TABLE IF NOT EXISTS ' + t + '\\b').test(migration));
   }
+}
+
+section('game points wait for review, then a holder gets 1.25x');
+{
+  const { chain } = await import('./harness.mjs');
+  const env = freshEnv({ SERVER_TO_WORKER_SECRET: SECRET, ADMIN_TOKEN: 'admin-test', MOON_RANGERS_COLLECTION: wallet(200) });
+  const holder = wallet(40), plain = wallet(41), other = wallet(42);
+  let dasDown = false;
+  const owns = { [holder]: [wallet(301)] };
+  chain.rpc.searchAssets = (params) => {
+    if (dasDown) throw new Error('das down');
+    const o = (params && (params.ownerAddress || (params[0] && params[0].ownerAddress))) || '';
+    return { total: (owns[o] || []).length, items: (owns[o] || []).map((id) => ({ id, grouping: [{ group_key: 'collection', group_value: wallet(200) }], content: { metadata: { name: 'Ranger' } } })) };
+  };
+  await server(env, 'end', { match_id: 'r-1', winning_team: 'red', players: [
+    { wallet: holder, team: 'red', kills: 3 }, { wallet: plain, team: 'red', kills: 1 }, { wallet: other, team: 'blue', kills: 0 }] });
+  const th = signIn(env, holder), tp = signIn(env, plain), to = signIn(env, other);
+  eq('nobody\'s balance moved', balance(env, holder) + balance(env, plain) + balance(env, other), 0);
+
+  const mine = await call(env, 'GET', '/api/game/pending', { token: th });
+  eq('the player sees their item', mine.body.items.length, 1);
+  eq('as earned', mine.body.items[0].status + ' ' + mine.body.items[0].base_fp, 'earned 80');
+  eq('needs a session', (await call(env, 'GET', '/api/game/pending')).status, 401);
+
+  const admin = (m, p, body) => call(env, m, p, { token: 'admin-test', body });
+  eq('the queue needs the admin token', (await call(env, 'GET', '/api/admin/game/pending', { token: th })).status, 401);
+  eq('and so does deciding', (await call(env, 'POST', '/api/admin/game/pending/decide', { token: th, body: { ids: [1], approve: true } })).status, 401);
+  const early = await admin('POST', '/api/admin/game/pending/decide', { ids: [mine.body.items[0].id], approve: true });
+  eq('an item the player has not claimed cannot be approved', early.body.decided.length, 0);
+
+  const c1 = await call(env, 'POST', '/api/game/pending/claim', { token: th });
+  eq('claiming moves it to review', c1.body.claimed + ' ' + c1.body.items[0].status, '1 claimed');
+  eq('claiming again finds nothing new', (await call(env, 'POST', '/api/game/pending/claim', { token: th })).body.claimed, 0);
+  await call(env, 'POST', '/api/game/pending/claim', { token: tp });
+
+  const q = await admin('GET', '/api/admin/game/pending');
+  eq('the admin sees both claims', q.body.items.map((i) => i.wallet).sort().join(','), [holder, plain].sort().join(','));
+  const hi = q.body.items.find((i) => i.wallet === holder);
+  eq('with the match behind it', hi.evidence.player.kills + ' kills, ' + hi.evidence.playersInMatch + ' players', '3 kills, 3 players');
+
+  dasDown = true;
+  const blind = await admin('POST', '/api/admin/game/pending/decide', { ids: [hi.id], approve: true });
+  eq('with the holder check down nothing is paid', blind.body.decided.length + ' ' + balance(env, holder), '0 0');
+  ok('and it says why', /unavailable/.test(blind.body.skipped[0].reason));
+  dasDown = false;
+
+  const ok1 = await admin('POST', '/api/admin/game/pending/decide', { ids: q.body.items.map((i) => i.id), approve: true });
+  eq('approved two', ok1.body.decided.length, 2);
+  eq('the holder gets 1.25x, after a fresh check', balance(env, holder), 100);
+  eq('a non-holder gets the base', balance(env, plain), 60);
+  eq('on the ledger as a game credit', JSON.stringify(env._db.prepare('SELECT type, points FROM events WHERE wallet = ?').all(holder)), JSON.stringify([{ type: 'game_match', points: 100 }]));
+  const again = await admin('POST', '/api/admin/game/pending/decide', { ids: [hi.id], approve: true });
+  eq('approving twice pays once', again.body.decided.length + ' ' + balance(env, holder), '0 100');
+
+  const oi = (await call(env, 'GET', '/api/game/pending', { token: to })).body;
+  eq('a zero-point match queues nothing', oi.items.length, 0);
+  await complete(env, to, { challenge_id: activeToday()[0].id });
+  const oid = (await call(env, 'GET', '/api/game/pending', { token: to })).body.items[0].id;
+  const rej = await admin('POST', '/api/admin/game/pending/decide', { ids: [oid], approve: false, note: 'no' });
+  eq('a rejection is recorded', rej.body.decided[0].status, 'rejected');
+  eq('and pays nothing', balance(env, other), 0);
+  eq('and cannot then be approved', (await admin('POST', '/api/admin/game/pending/decide', { ids: [oid], approve: true })).body.decided.length, 0);
+  eq('bad input is a 400', (await admin('POST', '/api/admin/game/pending/decide', { ids: [], approve: true })).status, 400);
+  delete chain.rpc.searchAssets;
 }
 
 finish();
