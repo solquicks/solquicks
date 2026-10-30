@@ -9,10 +9,6 @@
           "value": "DENY"
         },
         {
-          "key": "Content-Security-Policy",
-          "value": "frame-ancestors 'none'"
-        },
-        {
           "key": "X-Content-Type-Options",
           "value": "nosniff"
         },
@@ -27,6 +23,24 @@
         {
           "key": "Strict-Transport-Security",
           "value": "max-age=63072000; includeSubDomains"
+        }
+      ]
+    },
+    {
+      "source": "/((?!games/).*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://solquicks-points.solquicks-45c.workers.dev https://solquicks-rpc-proxy.solquicks-45c.workers.dev https://sender.helius-rpc.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://solflare.com https://*.solflare.com https://auth.privy.io; frame-src https://auth.privy.io; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        }
+      ]
+    },
+    {
+      "source": "/games/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-vdFNI8/aSnnIVhqVVMLhy3pJn4xEMBOV1z6N3rBJfIQ='; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob:; connect-src 'self' data: blob: https://solquicks-points.solquicks-45c.workers.dev; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         }
       ]
     },

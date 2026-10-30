@@ -87,6 +87,7 @@ export function pay({ from, usdc = 0, sol = 0, reference = null, failed = false,
   const sig = 'sig' + String(++chain.n).padStart(84, '0');
   const keys = [from, to].concat(reference ? [reference] : []);
   chain.txs.set(sig, {
+    blockTime: Math.floor(clock / 1000),
     transaction: { message: { accountKeys: keys.map((k) => ({ pubkey: k })) } },
     meta: {
       err: failed ? { InstructionError: [0, 'Custom'] } : null,

@@ -2,9 +2,21 @@
 // The database, clock and fake network are in harness.mjs.
 
 import {
-  MIN, HOUR, START, clock, advance, setClock, TREASURY, USDC, chain, pay, freshEnv, call, runScheduled,
+  MIN, HOUR, START, clock, advance, setClock, TREASURY, USDC, chain, pay, freshEnv, call as rawCall, runScheduled,
   payments, wallet, signIn, ok, eq, section, finish
 } from './harness.mjs';
+
+// Holding anything now needs a signed-in wallet (security fix 2026-10-29).
+// Tests that are not about who is signed in hold as one stand-in buyer; a test
+// that is about it passes its own token, or token: null to hold signed out.
+export const BUYER = wallet(77);
+const NEEDS_SESSION = /^\/api\/(booking\/hold|banner\/hold|banner\/creative|bundle\/hold|bundle\/redeem|booking\/brief|cart\/checkout)$/;
+async function call(env, method, path, opts = {}) {
+  if (NEEDS_SESSION.test(path) && opts.token === undefined) {
+    opts = Object.assign({}, opts, { token: signIn(env, BUYER) });
+  }
+  return rawCall(env, method, path, opts);
+}
 
 const row = (env, ref) => env._db.prepare('SELECT * FROM bookings WHERE ref = ?').get(ref);
 
@@ -71,7 +83,7 @@ section('holding a slot — what a good hold looks like');
   const s = firstCalm(await slots(env));
   const r = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
   eq('accepted', r.status, 200);
-  ok('reference looks like FOX-XXXXXX', /^FOX-[A-HJ-NP-Z2-9]{6}$/.test(r.body.ref), r.body.ref);
+  ok('reference looks like FOX- and ten characters', /^FOX-[A-HJKMNP-Z2-9]{10}$/.test(r.body.ref), r.body.ref);
   eq('quoted at list price', r.body.quote.total, PRICE.space);
   eq('asks for exactly the list price in micro-USDC', r.body.usdc, PRICE.space * 1e6);
   eq('pays the treasury', r.body.payTo, TREASURY);
@@ -126,7 +138,8 @@ section('the price is decided by the server');
 
   const staleTok = signIn(env, wallet(3), { holder: true, expired: true });
   const st = await call(env, 'POST', '/api/booking/hold', { token: staleTok, body: { type: 'space', startsAt: s.starts + 8 * HOUR, ...guest } });
-  eq('a holder with an expired session pays list price', st.body.quote.total, PRICE.space);
+  eq('a holder with an expired session is asked to sign in again', st.status, 401);
+  eq('and the page is told to sign in', st.body.signIn, true);
 
   const rushSlot = firstRush(await slots(env));
   const rr = await call(env, 'POST', '/api/booking/hold', { body: { type: 'podcast', startsAt: rushSlot.starts, ...guest } });
@@ -166,16 +179,16 @@ section('paying by connected wallet');
   eq('unknown booking', (await confirm('whatever', tok, 'FOX-NOPE22')).status, 404);
 
   eq('a transaction that is not on chain', (await confirm('sig-not-landed')).status, 402);
-  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: h.body.usdc, failed: true }))).status, 402);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: h.body.usdc - 10000 }))).status, 402);
-  const solPay = await confirm(pay({ from: buyer, sol: 2e9 }));
+  eq('a failed transaction', (await confirm(pay({ from: buyer, usdc: h.body.usdc, failed: true, reference: h.body.reference }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: h.body.usdc - 10000, reference: h.body.reference }))).status, 402);
+  const solPay = await confirm(pay({ from: buyer, sol: 2e9, reference: h.body.reference }));
   eq('paid in SOL instead of USDC', solPay.status, 402);
   ok('and is told bookings are USDC only', /USDC only/.test(solPay.body.error || ''), solPay.body.error);
-  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: h.body.usdc }))).status, 402);
+  eq('the right amount from somebody else\'s wallet', (await confirm(pay({ from: wallet(11), usdc: h.body.usdc, reference: h.body.reference }))).status, 402);
   eq('none of that marked it paid', row(env, ref).status, 'held');
   eq('none of that consumed a payment', payments(env), 0);
 
-  const good = pay({ from: buyer, usdc: h.body.usdc });
+  const good = pay({ from: buyer, usdc: h.body.usdc, reference: h.body.reference });
   const c = await confirm(good);
   eq('the exact amount from the booker is accepted', c.status, 200);
   eq('booking is paid', row(env, ref).status, 'paid');
@@ -197,8 +210,15 @@ section('paying by connected wallet');
   eq('reusing a payment for another booking is refused', reuse.status, 402);
   eq('that booking is still unpaid', row(env, h2.body.ref).status, 'held');
 
-  const over = await confirm(pay({ from: buyer, usdc: h2.body.usdc + 50e6 }), tok, h2.body.ref);
-  eq('overpaying is accepted', over.status, 200);
+  // exact amounts only (security fix 2026-10-29); an overpayment is flagged
+  // for a refund instead of settling
+  const over = await confirm(pay({ from: buyer, usdc: h2.body.usdc + 50e6, reference: h2.body.reference }), tok, h2.body.ref);
+  eq('overpaying is not settled', over.status, 402);
+  ok('and is flagged for a refund', chain.alerts.some((a) => a.includes('Overpayment')));
+  const untagged = await confirm(pay({ from: buyer, usdc: h2.body.usdc }), tok, h2.body.ref);
+  eq('a transfer without this booking\'s reference is refused', untagged.status, 402);
+  const exact = await confirm(pay({ from: buyer, usdc: h2.body.usdc, reference: h2.body.reference }), tok, h2.body.ref);
+  eq('the exact amount, tagged, is accepted', exact.status, 200);
 }
 
 section('paying by QR from a phone that never visited the site');
@@ -220,7 +240,7 @@ section('paying by QR from a phone that never visited the site');
   const paid = await watch();
   eq('the full payment is found by its reference', paid.body.status, 'paid');
   eq('booking is paid', row(env, h.body.ref).status, 'paid');
-  eq('the paying wallet is recorded', row(env, h.body.ref).wallet, phone);
+  eq('the booking stays with the wallet that held it', row(env, h.body.ref).wallet, BUYER);
 
   eq('watching again stays paid', (await watch()).body.status, 'paid');
   eq('and does not record the payment twice', payments(env), 1);
@@ -242,12 +262,12 @@ section('an abandoned hold frees the slot');
   eq('at 21 minutes it has expired', row(env, h.body.ref).status, 'expired');
   ok('the slot is back on the calendar', (await slots(env)).some((x) => x.starts === s.starts));
 
-  const again = await call(env, 'POST', '/api/booking/hold', { body: { type: 'space', startsAt: s.starts, ...guest } });
+  const again = await call(env, 'POST', '/api/booking/hold', { token: signIn(env, wallet(31)), body: { type: 'space', startsAt: s.starts, ...guest } });
   eq('someone else can now hold it', again.status, 200);
 
   // the original customer's wallet now pays, but the hour has gone to someone else
   const late = await call(env, 'POST', '/api/booking/confirm', {
-    token: signIn(env, wallet(30)), body: { ref: h.body.ref, signature: pay({ from: wallet(30), usdc: h.body.usdc }) }
+    token: signIn(env, BUYER), body: { ref: h.body.ref, signature: pay({ from: BUYER, usdc: h.body.usdc, reference: h.body.reference }) }
   });
   eq('paying for the expired hold after the hour was taken is refused', late.status, 409);
   eq('and says a refund is coming', late.body.refund, true);
@@ -275,7 +295,7 @@ section('money that arrives when nobody is watching');
   await runScheduled(env);
   eq('the scheduled sweep finds the payment', row(env, h.body.ref).status, 'paid');
   eq('records it once', payments(env), 1);
-  eq('against the wallet that paid', row(env, h.body.ref).wallet, wallet(40));
+  eq('against the wallet that held it', row(env, h.body.ref).wallet, BUYER);
   ok('the hour is off the calendar again', !(await slots(env)).some((x) => x.starts === s.starts));
   ok('you are told it was booked late but honoured',
     chain.alerts.slice(before).some((a) => a.includes(h.body.ref) && a.includes('still free')));
@@ -314,7 +334,7 @@ section('late payment — each way it can go');
   const c = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[16].starts, ...guest } });
   advance(21 * MIN);
   await slots(env);
-  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
+  const cc = await call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc, reference: c.body.reference }) } });
   eq('a wallet payment landing after the hold, hour free, is accepted', cc.status, 200);
   eq('and booked', row(env, c.body.ref).status, 'paid');
 
@@ -405,7 +425,7 @@ section('two bookings, one payment, the same moment');
   const list = (await slots(env)).filter((x) => !x.rush);
   const h1 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[0].starts, ...guest } });
   const h2 = await call(env, 'POST', '/api/booking/hold', { token: tok, body: { type: 'space', startsAt: list[4].starts, ...guest } });
-  const sig = pay({ from: buyer, usdc: h1.body.usdc });
+  const sig = pay({ from: buyer, usdc: h1.body.usdc, reference: h1.body.reference });
   const both = await Promise.all([
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h1.body.ref, signature: sig } }),
     call(env, 'POST', '/api/booking/confirm', { token: tok, body: { ref: h2.body.ref, signature: sig } })
@@ -466,7 +486,11 @@ section('abuse');
   eq('twelve holds a minute from one address are allowed', codes.slice(0, 12).every((c) => c === 200), true);
   eq('the thirteenth is refused', codes[12], 429);
   advance(61 * MIN / 60);
-  eq('and the limit resets after a minute', (await call(env, 'POST', '/api/booking/hold', { ip, body: { type: 'space', startsAt: list[40].starts, ...guest } })).status, 200);
+  eq('and the limit resets after a minute', (await call(env, 'POST', '/api/booking/hold', { ip, token: signIn(env, wallet(81)), body: { type: 'space', startsAt: list[40].starts, ...guest } })).status, 200);
+  // security fix 2026-10-29: one wallet cannot sit on the whole calendar
+  eq('but one wallet holding twelve unpaid times is told to pay or wait', (await call(env, 'POST', '/api/booking/hold', { ip: '203.0.113.8', body: { type: 'space', startsAt: list[43].starts, ...guest } })).status, 409);
+  eq('and signed out, a paid service cannot be held at all', (await call(env, 'POST', '/api/booking/hold', { token: null, ip: '203.0.113.9', body: { type: 'space', startsAt: list[46].starts, ...guest } })).status, 401);
+  eq('while an enquiry still works signed out', (await call(env, 'POST', '/api/booking/hold', { token: null, ip: '203.0.113.9', body: { type: 'mc', ...guest } })).status, 200);
 }
 
 section('payments switched off');
@@ -486,8 +510,14 @@ section('payments switched off');
 const DAY = 24 * HOUR, WEEK = 7 * DAY;
 const adRow = (env, ref) => env._db.prepare('SELECT * FROM banner_bookings WHERE ref = ?').get(ref);
 const adRates = async (env) => (await call(env, 'GET', '/api/banner/rates')).body;
-const adHold = (env, weeks, opts = {}) =>
-  call(env, 'POST', '/api/banner/hold', { token: opts.token, body: { weeks, name: opts.name || 'Test Sponsor', contact: '@sponsor' } });
+// Each advertiser is their own signed-in wallet now (one open run each); the
+// reply carries the token so a test can act as that advertiser afterwards.
+let adSeq = 0;
+const adHold = async (env, weeks, opts = {}) => {
+  const token = opts.token || signIn(env, wallet(600 + ++adSeq));
+  const r = await call(env, 'POST', '/api/banner/hold', { token, body: { weeks, name: opts.name || 'Test Sponsor', contact: '@sponsor' } });
+  return Object.assign(r, { token, who: env._db.prepare('SELECT wallet FROM sessions WHERE token = ?').get(token).wallet });
+};
 const liveRuns = (env) => env._db.prepare(
   "SELECT ref, starts_at, ends_at FROM banner_bookings WHERE status IN ('held','paid') ORDER BY starts_at").all();
 const runsOverlap = (runs) => runs.some((a, i) => runs.some((b, j) => i < j && a.starts_at < b.ends_at && b.starts_at < a.ends_at));
@@ -524,7 +554,7 @@ section('ad slot — holding a run');
 
   const a = await adHold(env, 1);
   eq('a one-week run is held', a.status, 200);
-  ok('reference looks like AD-XXXXXX', /^AD-[A-HJ-NP-Z2-9]{6}$/.test(a.body.ref), a.body.ref);
+  ok('reference looks like AD- and ten characters', /^AD-[A-HJKMNP-Z2-9]{10}$/.test(a.body.ref), a.body.ref);
   eq('it starts in a day', a.body.startsAt - clock, DAY);
   eq('and lasts a week', a.body.endsAt - a.body.startsAt, WEEK);
   // An advertising hold reports totalUsd rather than a quote — it has no rush
@@ -596,16 +626,16 @@ section('ad slot — paying by connected wallet');
   const tok = signIn(env, buyer);
   const a = await adHold(env, 1, { token: tok });
   const confirm = (signature, ref = a.body.ref) => call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref, signature } });
-  const creative = (ref) => call(env, 'POST', '/api/banner/creative', {
-    body: { ref, sponsor: 'Sponsor', headline: 'Headline', url: 'https://example.com' } });
+  const creative = (ref, t = tok) => call(env, 'POST', '/api/banner/creative', {
+    token: t, body: { ref, sponsor: 'Sponsor', headline: 'Headline', url: 'https://example.com' } });
 
   eq('creative cannot be sent before paying', (await creative(a.body.ref)).status, 409);
-  eq('one cent short', (await confirm(pay({ from: buyer, usdc: a.body.usdc - 10000 }))).status, 402);
-  eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9 }))).status, 402);
-  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: a.body.usdc }))).status, 402);
+  eq('one cent short', (await confirm(pay({ from: buyer, usdc: a.body.usdc - 10000, reference: a.body.reference }))).status, 402);
+  eq('paid in SOL', (await confirm(pay({ from: buyer, sol: 3e9, reference: a.body.reference }))).status, 402);
+  eq('the right amount from another wallet', (await confirm(pay({ from: wallet(71), usdc: a.body.usdc, reference: a.body.reference }))).status, 402);
   eq('none of that marked it paid', adRow(env, a.body.ref).status, 'held');
 
-  const good = pay({ from: buyer, usdc: a.body.usdc });
+  const good = pay({ from: buyer, usdc: a.body.usdc, reference: a.body.reference });
   const c = await confirm(good);
   eq('the exact amount is accepted', c.status, 200);
   eq('and asks for the creative', c.body.needsCreative, true);
@@ -620,6 +650,11 @@ section('ad slot — paying by connected wallet');
   eq('creative is accepted once paid', cr.status, 200);
   eq('and waits for approval', adRow(env, a.body.ref).approved, 0);
   eq('it does not go live unapproved', (await call(env, 'GET', '/api/banner/live')).body.slot, null);
+
+  // security fix 2026-10-29: the reference alone no longer edits a banner
+  eq('signed out, the creative is refused', (await creative(a.body.ref, null)).status, 401);
+  eq('another wallet holding the reference is refused', (await creative(a.body.ref, signIn(env, wallet(79)))).status, 403);
+  eq('and the artwork is unchanged by either', adRow(env, a.body.ref).headline, 'Headline');
 }
 
 section('ad slot — paying by QR');
@@ -637,7 +672,9 @@ section('ad slot — paying by QR');
   ok('with a reason', !!short.body.note);
   pay({ from: wallet(73), usdc: a.body.usdc, reference: a.body.reference });
   eq('the full payment is found by reference', (await watch()).body.status, 'paid');
-  eq('the paying wallet is recorded', adRow(env, a.body.ref).wallet, wallet(73));
+  // the run already belongs to the wallet that held it; a phone paying the
+  // QR does not take it over
+  eq('the run stays with the wallet that held it', adRow(env, a.body.ref).wallet, a.who);
   eq('watching again stays paid', (await watch()).body.status, 'paid');
   eq('and records nothing new', payments(env), 1);
 }
@@ -678,7 +715,7 @@ section('ad slot — late payment after the run was taken');
   eq('the money is recorded', payments(env), 1);
   ok('you are told to refund it', chain.alerts.slice(before).some((m) => m.includes('Refund needed') && m.includes(a.body.ref)));
   const creative = await call(env, 'POST', '/api/banner/creative', {
-    body: { ref: a.body.ref, sponsor: 'S', headline: 'H', url: 'https://example.com' } });
+    token: a.token, body: { ref: a.body.ref, sponsor: 'S', headline: 'H', url: 'https://example.com' } });
   eq('a refunded run cannot submit creative', creative.status, 409);
   const admin = await call(env, 'GET', '/api/admin/banner', { token: 'admin-test' });
   ok('the refund shows in the admin list', (admin.body.bookings || []).some((x) => x.ref === a.body.ref && x.status === 'refund'));
@@ -689,7 +726,7 @@ section('ad slot — late payment after the run was taken');
   const c = await adHold(env, 1, { token: tok });
   advance(21 * MIN);
   await adRates(env);
-  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc }) } });
+  const cc = await call(env, 'POST', '/api/banner/confirm', { token: tok, body: { ref: c.body.ref, signature: pay({ from: buyer, usdc: c.body.usdc, reference: c.body.reference }) } });
   eq('a late wallet payment for a run still free is accepted', cc.status, 200);
   eq('and asks for the creative', cc.body.needsCreative, true);
 }
@@ -740,7 +777,7 @@ section('the basket — several things, one payment');
   const podSlots = await slots(env, 'podcast');
   const b = await call(env, 'POST', '/api/booking/hold',
     { body: { type: 'podcast', startsAt: firstCalm(podSlots).starts, ...guest } });
-  const ad = await adHold(env, 4);
+  const ad = await adHold(env, 4, { token: signIn(env, BUYER) });
   eq('three things are held on their own', [a.status, b.status, ad.status].join(','), '200,200,200');
 
   const basket = (items, extra = {}) => call(env, 'POST', '/api/cart/checkout',
@@ -771,9 +808,9 @@ section('the basket — several things, one payment');
     (await basket([{ kind: 'booking', ref: a.body.ref }])).status, 409);
 
   // one payment settles the lot
-  const signature = pay({ from: wallet(40), usdc: Math.round(out.body.total * 1e6), reference: out.body.reference });
+  const signature = pay({ from: BUYER, usdc: Math.round(out.body.total * 1e6), reference: out.body.reference });
   const done = await call(env, 'POST', '/api/cart/confirm',
-    { token: signIn(env, wallet(40)), body: { ref: out.body.ref, signature } });
+    { token: signIn(env, BUYER), body: { ref: out.body.ref, signature } });
   eq('one signature pays for everything', done.status, 200);
   eq('and every line is paid', done.body.items.filter((i) => (i.booking || i).status === 'paid').length, 3);
   eq('the basket itself is paid', env._db.prepare('SELECT status FROM cart_groups WHERE ref = ?').get(out.body.ref).status, 'paid');
@@ -782,8 +819,17 @@ section('the basket — several things, one payment');
   eq('paying twice records one payment', payments(env), 1);
 
   const again = await call(env, 'POST', '/api/cart/confirm',
-    { token: signIn(env, wallet(40)), body: { ref: out.body.ref, signature } });
+    { token: signIn(env, BUYER), body: { ref: out.body.ref, signature } });
   eq('confirming again is harmless', [again.status, String(again.body.alreadyPaid)].join(','), '200,true');
+
+  // security fix 2026-10-29: somebody else's hold cannot go in your basket,
+  // and nobody checks out signed out
+  const theirs = await call(env, 'POST', '/api/booking/hold',
+    { token: signIn(env, wallet(41)), body: { type: 'space', startsAt: (await slots(env, 'space')).filter((x) => !x.rush)[9].starts, ...guest } });
+  eq('another wallet\'s hold is refused from my basket',
+    (await basket([{ kind: 'booking', ref: theirs.body.ref }])).status, 403);
+  eq('and a signed-out checkout is asked to sign in',
+    (await call(env, 'POST', '/api/cart/checkout', { token: null, body: { items: [{ kind: 'booking', ref: theirs.body.ref }], name: 'x', contact: '@x' } })).status, 401);
 }
 
 section('the basket — a line that goes while you are checking out');
@@ -828,17 +874,24 @@ section('after paying — the details I actually need');
   const brief = (ref, details) => call(env, 'POST', '/api/booking/brief', { body: { ref, details } });
   eq('details before paying are refused', (await brief(h.body.ref, 'guests: @a')).status, 409);
 
-  const sig = pay({ from: wallet(50), usdc: h.body.usdc, reference: h.body.reference });
-  await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, wallet(50)), body: { ref: h.body.ref, signature: sig } });
+  const sig = pay({ from: BUYER, usdc: h.body.usdc, reference: h.body.reference });
+  await call(env, 'POST', '/api/booking/confirm', { token: signIn(env, BUYER), body: { ref: h.body.ref, signature: sig } });
   eq('once paid they are taken', (await brief(h.body.ref, 'guests: @a, @b · topic: launch')).status, 200);
   eq('and stored against the booking',
     env._db.prepare('SELECT details FROM bookings WHERE ref = ?').get(h.body.ref).details, 'guests: @a, @b · topic: launch');
   eq('an empty note is refused', (await brief(h.body.ref, '   ')).status, 400);
   eq('a reference nobody holds is refused', (await brief('NOPE', 'x')).status, 404);
 
-  const look = await call(env, 'GET', '/api/booking/lookup?ref=' + h.body.ref);
+  eq('a different wallet cannot write the details', (await call(env, 'POST', '/api/booking/brief', { token: signIn(env, wallet(51)), body: { ref: h.body.ref, details: 'x' } })).status, 403);
+  const look = await call(env, 'GET', '/api/booking/lookup?ref=' + h.body.ref, { token: signIn(env, BUYER) });
   eq('lookup finds the booking', look.body.kind, 'booking');
   eq('and returns what was told to me', look.body.details, 'guests: @a, @b · topic: launch');
+  // security fix 2026-10-29: the reference alone shows the booking, not who
+  // made it, the transaction, or the private brief
+  const stranger = await call(env, 'GET', '/api/booking/lookup?ref=' + h.body.ref);
+  eq('a stranger with the reference sees the booking', stranger.body.booking.status, 'paid');
+  eq('but not the brief', stranger.body.details, null);
+  ok('nor the name or the signature', !('name' in stranger.body.booking) && !('signature' in stranger.body.booking));
 
   const ad = await adHold(env, 1);
   const adLook = await call(env, 'GET', '/api/booking/lookup?ref=' + ad.body.ref);
@@ -888,6 +941,43 @@ section('the consulting hour');
     !/no calendar needed/i.test(noLink.meta || ''), noLink.meta);
   ok('it says a time is agreed after booking', /after you book/.test(noLink.meta), noLink.meta);
   eq('and the button asks for an hour', noLink.cta, 'Book an hour');
+}
+
+
+section('ad slot — approval is of the exact artwork reviewed (security fix 2026-10-29)');
+{
+  const env = freshEnv({ ADMIN_TOKEN: 'admin-test' });
+  const a = await adHold(env, 1);
+  await call(env, 'POST', '/api/banner/confirm', { token: a.token, body: { ref: a.body.ref, signature: pay({ from: a.who, usdc: a.body.usdc, reference: a.body.reference }) } });
+  const send = (headline) => call(env, 'POST', '/api/banner/creative', {
+    token: a.token, body: { ref: a.body.ref, sponsor: 'Sponsor', headline, url: 'https://example.com' } });
+  eq('the owner sends artwork', (await send('First')).status, 200);
+  const list = await call(env, 'GET', '/api/admin/banner', { token: 'admin-test' });
+  const seen = list.body.bookings.find((x) => x.ref === a.body.ref);
+  ok('the admin list shows a fingerprint of the artwork', /^[0-9a-f]{64}$/.test(seen.creativeHash || ''));
+  ok('and the public live banner never carries the reference', !JSON.stringify((await call(env, 'GET', '/api/banner/live')).body).includes(a.body.ref));
+  eq('the artwork is changed after review', (await send('Swapped')).status, 200);
+  const approve = (hash) => call(env, 'POST', '/api/admin/banner/approve', { token: 'admin-test', body: { ref: a.body.ref, approved: true, creativeHash: hash } });
+  eq('approving with no fingerprint is refused', (await approve(undefined)).status, 409);
+  eq('approving the fingerprint of the old artwork is refused', (await approve(seen.creativeHash)).status, 409);
+  eq('so nothing went live unseen', adRow(env, a.body.ref).approved, 0);
+  const fresh = (await call(env, 'GET', '/api/admin/banner', { token: 'admin-test' })).body.bookings.find((x) => x.ref === a.body.ref);
+  eq('approving what is there now works', (await approve(fresh.creativeHash)).status, 200);
+  eq('it is approved', adRow(env, a.body.ref).approved, 1);
+  const late = await send('Bait and switch');
+  eq('once approved, the artwork is locked', late.status, 409);
+  eq('and the live headline is the approved one', adRow(env, a.body.ref).headline, 'Swapped');
+  eq('approving without the admin token is refused', (await call(env, 'POST', '/api/admin/banner/approve', { body: { ref: a.body.ref, approved: true } })).status, 401);
+  eq('once paid, the same wallet can hold its next run', (await adHold(env, 1, { token: a.token })).status, 200);
+  eq('but not two unpaid at once', (await adHold(env, 1, { token: a.token })).status, 409);
+}
+
+section('the calendar self-test is admin only (security fix 2026-10-29)');
+{
+  const env = freshEnv({ ADMIN_TOKEN: 'admin-test' });
+  eq('without the admin token it is refused', (await call(env, 'GET', '/api/admin/calendar/test')).status, 401);
+  eq('with a wrong token too', (await call(env, 'GET', '/api/admin/calendar/test', { token: 'nope' })).status, 401);
+  ok('with the token it answers (here, that the calendar is not set up)', (await call(env, 'GET', '/api/admin/calendar/test', { token: 'admin-test' })).status !== 401);
 }
 
 finish();

@@ -121,7 +121,9 @@ it. Resume with the same command; don't start over.
 signed by the Seeker, not by a laptop key. That rules out a CLI script — hence
 a browser page.
 
-1. Commit and push `stake-init.html`.
+1. `stake-init.html` is kept off the public site by `.vercelignore` (security
+   fix 2026-10-29, L10). Remove that line, deploy, and put it back (and deploy
+   again) as soon as step 6 is done.
 2. Open **https://solquicks.com/stake-init.html** on the Seeker, inside the
    wallet app's browser. It must be that domain — the RPC proxy's CORS
    allowlist contains only `https://solquicks.com`, so the page will fail to

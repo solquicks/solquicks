@@ -6,7 +6,7 @@ solquicks.com takes itself out of your Calendly availability — no integration
 between the two, just one calendar with two writers.
 
 Nothing here is required. Without it, bookings work exactly as before and simply
-never appear on a calendar. `/api/health` reports `calendar: "off"` so the
+never appear on a calendar. `/api/health` (with the admin token) reports `calendar: "off"` so the
 difference between "not set up" and "broken" is visible.
 
 ## Why a service account and not "Sign in with Google"

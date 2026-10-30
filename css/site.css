@@ -607,6 +607,9 @@
       font-size: 1.5rem; line-height: 1.2; margin-bottom: 10px;
     }
     .soon-what { color: var(--muted); font-size: 0.95rem; line-height: 1.6; margin: 0; }
+    /* The way out of an unclaimed address, in the site's own link style. */
+    .soon-what a, .no-site-link { color: var(--orange-deep); font-weight: 800; text-decoration: none; }
+    .soon-what a:hover, .no-site-link:hover { text-decoration: underline; }
     .soon-with {
       margin-top: 18px; padding-top: 14px; border-top: var(--line);
       font-size: 0.8rem; font-weight: 800; color: var(--ink-soft);
@@ -2511,6 +2514,11 @@
       .powered-by { font-size: 0.5rem; }
       .powered-name { font-size: 0.72rem; }
       .back-to-top { bottom: 88px; right: 14px; }
+      /* Scrolling down on a phone, the corner steps aside so it does not sit
+         on the link cards' arrows (js/app.js, cornerTuck). */
+      .powered, .back-to-top { transition: transform 0.2s ease, opacity 0.2s ease; }
+      body.corner-tucked .powered,
+      body.corner-tucked .back-to-top { transform: translateY(170%); opacity: 0; pointer-events: none; }
       .container { padding: 14px 12px 50px; }
       .handle { font-size: 1.35rem; }
       .avatar { width: 140px; height: 140px; }

@@ -616,8 +616,16 @@ const whoseSite = (async function () {
       '<div class="soon-tag">Nothing here yet</div>' +
       '<div class="soon-lead">No site at this address</div>' +
       '<p class="soon-what">This name has not been claimed. ' +
-      '<a href="https://' + SITE_ROOT + '/launch">Launch your own website</a>.</p></div>';
+      '<a class="no-site-link" href="https://' + SITE_ROOT + '/launch">Launch your own website</a>.</p></div>';
     document.body.appendChild(cover);
+    // The tab and the description were still mine, which made an empty
+    // address look like it belonged to me.
+    document.title = 'No site at this address | ' + SITE_ROOT;
+    const desc = document.querySelector('meta[name="description"]');
+    if (desc) desc.setAttribute('content', 'This name has not been claimed on ' + SITE_ROOT + ' yet. Launch your own website.');
+    let robots = document.querySelector('meta[name="robots"]');
+    if (!robots) { robots = document.createElement('meta'); robots.name = 'robots'; document.head.appendChild(robots); }
+    robots.setAttribute('content', 'noindex');
     return null;
   } catch (e) {
     return null;   // the main site is what is left, which is a safe default
@@ -706,6 +714,31 @@ setInterval(() => { slideIdx = (slideIdx + 1) % 3; goSlide(slideIdx); }, 3500);
     if (window.scrollY > 300) { btn.classList.add('visible'); }
     else { btn.classList.remove('visible'); }
   }, { passive: true });
+})();
+
+// ── THE CORNER, ON A PHONE ──
+// On a phone the badge and the back-to-top button sit over the arrow column
+// of the link cards. While somebody is scrolling down through the page they
+// step out of the way; scrolling back up, or reaching the top or the bottom
+// (where the footer is padded to clear them), brings them straight back. The
+// badge never goes away for good — it is how the next creator finds the
+// Launchpad.
+const CORNER_NARROW = '(max-width: 480px)';
+function cornerTuck(prevY) {
+  const y = window.scrollY;
+  const narrow = window.matchMedia && window.matchMedia(CORNER_NARROW).matches;
+  const nearTop = y < 120;
+  const nearEnd = y + window.innerHeight >= document.documentElement.scrollHeight - 160;
+  const body = document.body;
+  if (!narrow || nearTop || nearEnd) body.classList.remove('corner-tucked');
+  else if (y > prevY + 4) body.classList.add('corner-tucked');
+  else if (y < prevY - 4) body.classList.remove('corner-tucked');
+  return y;
+}
+(function() {
+  let lastY = window.scrollY;
+  window.addEventListener('scroll', function() { lastY = cornerTuck(lastY); }, { passive: true });
+  window.addEventListener('resize', function() { lastY = cornerTuck(lastY); }, { passive: true });
 })();
   
 // ── STAT COUNTERS (was referenced but never defined) ──
@@ -902,7 +935,7 @@ const FoxPoints = {
     this.token = null; this.server = null;
     // These are one wallet's earnings and its own code. They belong to
     // nobody the moment that wallet is gone.
-    for (const id of ['iv-card', 'iv-enter-card']) {
+    for (const id of ['iv-card', 'iv-enter-card', 'gp-card']) {
       const el = document.getElementById(id);
       if (el) el.hidden = true;
     }
@@ -941,6 +974,7 @@ const FoxPoints = {
     if (typeof loadMission === 'function') loadMission();
     if (typeof loadSwapPoints === 'function') loadSwapPoints().then(flushSwapPoints);
     if (typeof loadInvite === 'function') loadInvite();
+    if (typeof loadGamePoints === 'function') loadGamePoints();
   },
 
   render() {
@@ -973,12 +1007,14 @@ const FoxPoints = {
       return;
     }
     logEl.innerHTML = log.map(function (item) {
-      const cfg = FOX_EVENTS[item.e] || { label: item.e };
+      // Unknown event types fall back to the raw type, which comes from the
+      // server: escape it rather than trust it as markup (I6).
+      const cfg = FOX_EVENTS[item.e] || { label: escapeHtml(String(item.e)) };
       const d = new Date(item.t);
       const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       return '<div class="lb-log-row"><span class="lb-log-what">' + cfg.label +
         '</span><span class="lb-log-when">' + when +
-        '</span><span class="lb-log-pts">+' + item.p + '</span></div>';
+        '</span><span class="lb-log-pts">+' + (Number(item.p) || 0) + '</span></div>';
     }).join('');
   },
 
@@ -1319,6 +1355,14 @@ const Wallet = {
     this.active = null;
     this.pubkey = null;
     rangerCount = null;
+    // End the session on the server too (security fix 2026-10-29, L6), not
+    // just forget it here. Best effort: a failed call still signs out locally.
+    if (FoxPoints.token) {
+      try {
+        fetch(POINTS_API + '/api/logout', { method: 'POST', keepalive: true,
+          headers: { 'Authorization': 'Bearer ' + FoxPoints.token } }).catch(function () {});
+      } catch (e) {}
+    }
     FoxPoints.clearToken();
     if (forget) { try { localStorage.removeItem('wallet_last'); } catch (e) {} }
     this.render();
@@ -1993,6 +2037,8 @@ async function loadDefiRate() {
   try {
     const r = await fetch(POINTS_API + '/api/reflect/apy');
     const b = await r.json();
+    // No rate published comes back as a 200 with apy null and
+    // published false; only a real fault is an error status.
     if (!r.ok || typeof b.apy !== 'number') {
       const err = new Error(b.error || 'no rate');
       err.notPublished = b.published === false;
@@ -5538,6 +5584,33 @@ function renderAdForm() {
 
 function pickWeeks(w) { adWeeks = w; renderAdForm(); }
 
+/// Holding a time, a run or a bundle, and acting on one you own, needs a
+/// signed-in wallet now (security fix 2026-10-29). Every such call goes
+/// through here: it sends the session when there is one, and when the worker
+/// says sign in first it opens the wallet picker and says what to do next,
+/// rather than showing a bare error.
+const SIGN_IN_FIRST = 'Connect your wallet first — it keeps this booking tied to you. Then press the button again.';
+function bookingHeaders() {
+  return Object.assign({ 'Content-Type': 'application/json' },
+    FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {});
+}
+async function bookingApi(path, body) {
+  const init = body === undefined
+    ? { headers: bookingHeaders() }
+    : { method: 'POST', headers: bookingHeaders(), body: JSON.stringify(body) };
+  const res = await fetch(POINTS_API + path, init);
+  let d;
+  try { d = await res.json(); } catch (e) { d = { error: 'Something went wrong — try again.' }; }
+  if ((res.status === 401 || res.status === 403) && d && d.signIn) {
+    if (res.status === 401) FoxPoints.token = null;
+    try { connectWallet(); } catch (e) { /* no picker on this page */ }
+    const err = new Error(res.status === 401 ? SIGN_IN_FIRST : d.error);
+    err.signIn = true;
+    throw err;
+  }
+  return d;
+}
+
 async function submitAd(toBasket) {
   const btn = document.getElementById(toBasket ? 'ad-add' : 'ad-submit');
   const msg = document.getElementById('ad-msg');
@@ -5553,13 +5626,7 @@ async function submitAd(toBasket) {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/banner/hold', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({ weeks: adWeeks, name: name, contact: contact }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/banner/hold', withSite({ weeks: adWeeks, name: name, contact: contact }));
     if (d.error) throw new Error(d.error);
     const runs = new Date(d.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
       ' – ' + new Date(d.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -5612,18 +5679,13 @@ async function sendAdCreative(ref) {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    const res = await fetch(POINTS_API + '/api/banner/creative', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ref: ref,
-        sponsor: (document.getElementById('ad-sponsor').value || '').trim(),
-        headline: (document.getElementById('ad-headline').value || '').trim(),
-        url: (document.getElementById('ad-url').value || '').trim(),
-        image: (document.getElementById('ad-image').value || '').trim()
-      })
+    const d = await bookingApi('/api/banner/creative', {
+      ref: ref,
+      sponsor: (document.getElementById('ad-sponsor').value || '').trim(),
+      headline: (document.getElementById('ad-headline').value || '').trim(),
+      url: (document.getElementById('ad-url').value || '').trim(),
+      image: (document.getElementById('ad-image').value || '').trim()
     });
-    const d = await res.json();
     if (d.error) throw new Error(d.error);
     document.getElementById('bk-flow').innerHTML = '<div class="bk-flow bk-done">' +
       '<div class="bk-tick">🪧</div><div class="bk-lead">Sent for approval</div>' +
@@ -5681,7 +5743,7 @@ function renderRateCard() {
   const lookup = '<div class="bk-lookup">' +
     '<label for="bk-find">Already booked something?</label>' +
     '<div class="bk-hint">Put your reference in to see it, book a session from a bundle, or finish sending a banner.</div>' +
-    '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-XXXXXX or PACK-XXXXX" spellcheck="false">' +
+    '<div class="bk-find-row"><input id="bk-find" placeholder="FOX-… or PACK-…" spellcheck="false">' +
     '<button onclick="findBooking()">Find it</button></div>' +
     '<div class="bk-msg" id="bk-find-msg"></div></div>';
 
@@ -5736,8 +5798,7 @@ async function findBooking() {
   if (!ref) { msg.className = 'bk-msg bad'; msg.textContent = 'Put your reference in first.'; return; }
   msg.textContent = 'Looking…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/lookup?ref=' + encodeURIComponent(ref));
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/lookup?ref=' + encodeURIComponent(ref));
     if (d.error) throw new Error(d.error);
     msg.textContent = '';
     // A reference is just a reference to whoever typed it, so the worker
@@ -5900,13 +5961,7 @@ async function cartPay() {
   btn.textContent = 'Working…';
   try {
     const items = cartRead().map(function (i) { return { kind: i.kind, ref: i.ref }; });
-    const res = await fetch(POINTS_API + '/api/cart/checkout', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({ items: items, name: name, contact: contact }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/cart/checkout', withSite({ items: items, name: name, contact: contact }));
     if (d.error) {
       // A line that went while they were deciding is dropped by name,
       // rather than failing the whole basket with nothing to act on.
@@ -6094,12 +6149,7 @@ async function submitBooking(toBasket) {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/hold', Object.assign({
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {})
-    }, { body: JSON.stringify(withSite({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief })) }));
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/hold', withSite({ type: t.id, startsAt: bkPick.startsAt, name: name, contact: contact, brief: brief }));
     if (d.error) throw new Error(d.error);
 
     if (t.mode === 'enquiry') { showBookingDone(d, true); return; }
@@ -6433,19 +6483,13 @@ async function submitBundle() {
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/hold', {
-      method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' },
-        FoxPoints.token ? { Authorization: 'Bearer ' + FoxPoints.token } : {}),
-      body: JSON.stringify(withSite({
-        bundle: b.id, name: name, contact: contact, brief: brief,
-        // Left out entirely when the credits are booked later: an empty
-        // list and no list mean the same thing to the worker, and sending
-        // neither keeps that true.
-        slots: packPick.mode === 'now' ? packPick.slots : undefined
-      }))
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/hold', withSite({
+      bundle: b.id, name: name, contact: contact, brief: brief,
+      // Left out entirely when the credits are booked later: an empty
+      // list and no list mean the same thing to the worker, and sending
+      // neither keeps that true.
+      slots: packPick.mode === 'now' ? packPick.slots : undefined
+    }));
     if (d.error) throw new Error(d.error);
     renderPayment(d, 'bundle', b.name, function (sig) { showBundleDone(d, sig); });
   } catch (e) {
@@ -6488,8 +6532,7 @@ async function findBundle(ref) {
   flow.hidden = false;
   flow.innerHTML = '<div class="bk-flow">Loading…</div>';
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref));
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/lookup?ref=' + encodeURIComponent(ref));
     if (d.error) throw new Error(d.error);
     showBundle(d);
   } catch (e) {
@@ -6552,7 +6595,7 @@ async function redeemPick(ref) {
     '<button class="bk-back" onclick="findBundle(\'' + escapeHtml(ref) + '\')">← Back to your bundle</button>' +
     '<div class="bk-step">Pick a time</div><div id="redeem-slots">Loading times…</div></div>';
   try {
-    const look = await (await fetch(POINTS_API + '/api/bundle/lookup?ref=' + encodeURIComponent(ref))).json();
+    const look = await bookingApi('/api/bundle/lookup?ref=' + encodeURIComponent(ref));
     const res = await fetch(POINTS_API + '/api/booking/slots?type=' + look.bundle.type);
     const d = await res.json();
     const slots = d.slots || [];
@@ -6592,11 +6635,7 @@ async function redeemCreditNow(ref, startsAt, el) {
   if (el) { el.disabled = true; el.classList.add('on'); }
   if (msg) { msg.className = 'bk-msg'; msg.textContent = 'Booking…'; }
   try {
-    const res = await fetch(POINTS_API + '/api/bundle/redeem', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: ref, startsAt: startsAt || undefined })
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/bundle/redeem', { ref: ref, startsAt: startsAt || undefined });
     if (d.error) throw new Error(d.error);
     showBundleSessionDone(d, ref);
   } catch (e) {
@@ -6644,11 +6683,7 @@ async function sendBrief(ref) {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    const res = await fetch(POINTS_API + '/api/booking/brief', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: ref, details: details })
-    });
-    const d = await res.json();
+    const d = await bookingApi('/api/booking/brief', { ref: ref, details: details });
     if (d.error) throw new Error(d.error);
     msg.className = 'bk-msg good';
     msg.textContent = 'Got it — thank you.';
@@ -7031,6 +7066,51 @@ function inviteLinkFor(code) {
 /// Everything this wallet has earned by inviting people, and the box for
 /// anyone who arrived with a code of their own. Both cards stay hidden
 /// until there is a wallet, because neither means anything without one.
+// ── Moon Rangers game points: earned → claimed → approved ──
+// The game queues points; the player asks for review here; the admin approves
+// (a Moon Rangers holder gets 1.25x, checked on-chain at approval).
+function renderGamePoints(d) {
+  const card = document.getElementById('gp-card');
+  if (!card) return;
+  if (!FoxPoints.token || !d || !d.totals) { card.hidden = true; return; }
+  const t = d.totals;
+  const any = (t.earned || 0) + (t.claimed || 0) + (t.approved || 0) + (t.rejected || 0) > 0;
+  card.hidden = !any;
+  if (!any) return;
+  const boost = Math.round(((d.holderBoost || 1.25) - 1) * 100);
+  document.getElementById('gp-lead').innerHTML = t.earned > 0
+    ? 'You have <strong>' + t.earned.toLocaleString() + '</strong> points from the game ready to claim. ' +
+      'Claimed points are checked, then added to your balance — Moon Rangers holders get <strong>+' + boost + '%</strong>.'
+    : 'Points from the game are checked before they reach your balance. Moon Rangers holders get <strong>+' + boost + '%</strong>.';
+  document.getElementById('gp-stats').innerHTML =
+    '<span><b>' + (t.earned || 0).toLocaleString() + '</b> ready to claim</span> · ' +
+    '<span><b>' + (t.claimed || 0).toLocaleString() + '</b> in review</span> · ' +
+    '<span><b>' + (t.approved || 0).toLocaleString() + '</b> added</span>';
+  document.getElementById('gp-claim').hidden = !(t.earned > 0);
+}
+
+async function loadGamePoints() {
+  if (!FoxPoints.token) { renderGamePoints(null); return; }
+  const d = await FoxPoints.api('/api/game/pending').catch(function () { return null; });
+  renderGamePoints(d);
+}
+
+async function claimGamePoints() {
+  const btn = document.getElementById('gp-claim');
+  const msg = document.getElementById('gp-msg');
+  btn.disabled = true;
+  try {
+    const d = await FoxPoints.api('/api/game/pending/claim', { method: 'POST', body: {} });
+    if (!d || d.error) throw new Error((d && d.error) || 'Could not claim just now');
+    msg.textContent = d.claimed > 0
+      ? 'Claimed — your points are in review and will be added once approved.'
+      : 'Nothing new to claim.';
+    renderGamePoints(d);
+  } catch (e) {
+    msg.textContent = e.message || 'Could not claim just now';
+  } finally { btn.disabled = false; }
+}
+
 async function loadInvite() {
   const card = document.getElementById('iv-card');
   const enter = document.getElementById('iv-enter-card');
@@ -7845,6 +7925,7 @@ export {
   chooseToken,
   clShow,
   claimDaily,
+  claimGamePoints,
   claimInvite,
   claimReward,
   claimStakePoints,
@@ -7869,6 +7950,7 @@ export {
   loadDefiBalances,
   loadDefiRate,
   loadInvite,
+  loadGamePoints,
   loadPointsPacks,
   loadReferrals,
   loadStore,

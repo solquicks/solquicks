@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { vercelHeaders } from './vercel-headers.mjs';
 
 const ROOT = path.resolve(new URL('../../', import.meta.url).pathname);
 const WORKER = 'https://solquicks-points.solquicks-45c.workers.dev';
@@ -57,7 +58,7 @@ const server = http.createServer((req, res) => {
   const creator = /^\/c\/[a-z0-9-]{3,32}\/?$/.test(rel);
   const file = path.join(ROOT, rel === '/' || creator ? 'index.html' : (CLEAN[rel] || rel));
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
+  res.writeHead(200, { ...vercelHeaders(VERCEL, rel), 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -215,6 +216,12 @@ function workerAnswer(p, url, body) {
       treasury: '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey',
       topTabs: ['swap', 'store', 'book'], moreTabs: ['cleanup']
     } } : { site: null };
+  }
+  if (p === '/api/game/pending' || p === '/api/game/pending/claim') {
+    const g = net.game || (net.game = { earned: 80, claimed: 0, approved: 50 });
+    if (p === '/api/game/pending/claim') { net.gameClaims = (net.gameClaims || 0) + 1; const n = g.earned ? 1 : 0; g.claimed += g.earned; g.earned = 0;
+      return { ok: true, claimed: n, items: [], totals: Object.assign({ rejected: 0 }, g), holderBoost: 1.25 }; }
+    return { items: [], totals: Object.assign({ rejected: 0 }, g), holderBoost: 1.25 };
   }
   if (p === '/api/invite') return inviteState();
   if (p === '/api/invite/bind') {
@@ -527,7 +534,7 @@ async function standIns(context) {
       // ends is what lets the signature the page actually sends be inspected,
       // rather than a signature the test made for itself.
       if (u.pathname === '/api/reflect/apy') {
-        if (net.reflectUnpublished) return json(route, { error: 'no rate published yet', published: false }, 503);
+        if (net.reflectUnpublished) return json(route, { apy: null, published: false });
         if (net.reflectMeasured) {
           return json(route, { apy: 7.4, at: new Date().toISOString(), measured: true,
             since: Date.now() - 3 * 86400000, readings: 144 });
@@ -557,6 +564,10 @@ async function standIns(context) {
         net.reflectBuilds.push({ path: u.pathname, body: b });
         return json(route, { transaction: net.reflectTx, wallet: b.wallet, amount: b.amount });
       }
+      if (u.pathname === '/api/logout') {
+        net.logouts = (net.logouts || []).concat([req.headers()['authorization'] || null]);
+        return json(route, { ok: true });
+      }
       if (u.pathname === '/api/nonce') {
         return json(route, { nonce: 'n-1', message: 'prove it' });
       }
@@ -585,6 +596,12 @@ async function standIns(context) {
             ? { error: 'too many quotes at once — trying again in a moment', retry: true }
             : { error: 'no route for that pair right now' })
         });
+      }
+      // What the worker now says to a hold with no session (security fix
+      // 2026-10-29): sign in first. The page has to say so and open the picker.
+      if (net.holdNeedsSignIn && /^\/api\/(booking|banner|bundle)\/hold$/.test(u.pathname)) {
+        net.signInAsks = (net.signInAsks || 0) + 1;
+        return json(route, { error: 'Connect your wallet first — it keeps this booking tied to you.', signIn: true }, 401);
       }
       if (u.pathname === '/api/swap/quote') {
         net.lastQuote = u.searchParams.get('in');
@@ -1440,6 +1457,33 @@ try {
     ok('and that longer needs its own package', /longer needs its own package/.test(noteText), noteText);
     eq('and it is not a ticked inclusion',
       await mc.locator('.bk-inc li', { hasText: 'up to 2 days' }).count(), 0);
+  }
+
+  section('booking: a hold without a session asks you to connect, not a bare error');
+  {
+    await page.evaluate(() => { try { localStorage.removeItem('sq.book.cart'); } catch (e) {} });
+    await page.evaluate(() => { switchTab('book'); if (typeof backToRateCard === 'function') backToRateCard(); });
+    await page.waitForSelector('.bk-card', { timeout: 15000 });
+    await page.locator('.bk-card', { hasText: 'Hosted X Space' }).locator('button.bk-go').click();
+    await page.waitForSelector('.bk-slot', { timeout: 10000 });
+    await page.locator('.bk-slot').first().click();
+    await page.fill('#bk-name', 'Test Guest');
+    await page.fill('#bk-contact', '@guest');
+    const tokenWas = await page.evaluate(() => FoxPoints.token);
+    net.holdNeedsSignIn = true;
+    const before = net.signInAsks || 0;
+    await page.click('#bk-submit');
+    await page.waitForFunction(() => /Connect your wallet first/.test(document.getElementById('bk-msg').textContent), null, { timeout: 10000 });
+    net.holdNeedsSignIn = false;
+    eq('the worker was asked once', (net.signInAsks || 0) - before, 1);
+    const m = await page.textContent('#bk-msg');
+    ok('it says what to do next', /press the button again/i.test(m), m);
+    eq('and no payment screen opens', await page.evaluate(() => {
+      const f = document.querySelector('.bk-pay, #bk-pay'); return !!(f && f.offsetParent);
+    }), false);
+    ok('and the wallet picker opens', await page.evaluate(() => !!document.getElementById('wm-backdrop')));
+    // Put things back as they were for the sections after this one.
+    await page.evaluate((t) => { const w = document.getElementById('wm-backdrop'); if (w) w.remove(); FoxPoints.token = t; if (typeof backToRateCard === 'function') backToRateCard(); }, tokenWas);
   }
 
   section('booking: a basket survives wandering off and coming back');
@@ -2348,9 +2392,14 @@ try {
       if (ext) await Wallet.connect(ext);
     });
     await page.waitForFunction(() => !!Wallet.pubkey, null, { timeout: 10000 });
-    await page.evaluate(() => Wallet.disconnect());
+    net.logouts = [];
+    await page.evaluate(() => { FoxPoints.token = 't-logout'; Wallet.disconnect(); });
     eq('asking to disconnect forgets it',
       await page.evaluate(() => localStorage.getItem('wallet_last')), null);
+    // Security fix 2026-10-29 (L6): the session is ended on the server too.
+    await page.waitForFunction(() => true);
+    for (let i = 0; i < 50 && !net.logouts.length; i++) await new Promise((r) => setTimeout(r, 100));
+    eq('and ends the session on the server, not just in this browser', net.logouts[0], 'Bearer t-logout');
 
     await page.evaluate(async () => {
       const ext = Wallet.discover().find((w) => w.kind === 'standard');
@@ -2867,6 +2916,9 @@ try {
     eq('the tokens swapped here are ticked', tickedNow.join(','), 'BONK,WIF');
     ok('and nothing else is', ticks.every((t) => t.ticked === (t.symbol === 'BONK' || t.symbol === 'WIF')));
 
+    // The table is painted before the simulations finish, so the summary
+    // line is waited for rather than read the instant the table appears.
+    await fees.waitForFunction(() => /pay their rent back/.test(document.getElementById('log').textContent), null, { timeout: 20000 }).catch(() => {});
     const logged = await fees.textContent('#log');
     ok('the page names the ones that would pay their rent back', /BONK/.test(logged) && /pay their rent back/.test(logged), logged);
     ok('and no longer says a human has to be told about it', !/Tell Claude/.test(await fees.content()));
@@ -3057,6 +3109,24 @@ try {
     await page.evaluate(() => FoxPoints.clearToken());
     eq('signing out hides the card',
       await page.evaluate(() => document.getElementById('iv-card').hidden), true);
+  }
+
+  section('game points: claimed for review, not credited');
+  {
+    await page.evaluate(() => { FoxPoints.clearToken(); switchTab('leaderboard'); return loadGamePoints(); });
+    eq('signed out there is no game points card', await page.evaluate(() => document.getElementById('gp-card').hidden), true);
+    await page.evaluate(() => { FoxPoints.token = 'test-session'; return loadGamePoints(); });
+    await page.waitForSelector('#gp-card', { state: 'visible', timeout: 10000 });
+    const lead = await page.textContent('#gp-lead');
+    ok('it says how much is ready to claim', /80/.test(lead) && /ready to claim/.test(lead), lead);
+    ok('and that holders get +25%', /\+25%/.test(lead), lead);
+    ok('the stats show what was already added', /50 added/.test(await page.textContent('#gp-stats')), await page.textContent('#gp-stats'));
+    await page.click('#gp-claim');
+    await page.waitForFunction(() => /in review/.test(document.getElementById('gp-msg').textContent), null, { timeout: 10000 });
+    ok('claiming says the points are in review', /approved/.test(await page.textContent('#gp-msg')));
+    ok('the stats move them to review', /80 in review/.test(await page.textContent('#gp-stats')), await page.textContent('#gp-stats'));
+    eq('and the claim button goes away', await page.evaluate(() => document.getElementById('gp-claim').hidden), true);
+    await page.evaluate(() => FoxPoints.clearToken());
   }
 
   section('invite: arriving on somebody else\'s link');
@@ -3392,6 +3462,55 @@ try {
     await page.waitForTimeout(300);
     eq('and on a desktop too', (await clears()).join(','), '');
 
+    // On a phone the corner sat over the link cards' arrows. Scrolling down
+    // through the cards, it steps aside; scrolling up brings it back.
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.evaluate(() => switchTab('links'));
+    await page.waitForTimeout(300);
+    const settle = () => page.evaluate(async () => {
+      for (let last = -1; last !== window.scrollY;) {
+        last = window.scrollY;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
+    });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await settle();
+    ok('at the top of a phone page the badge is there', !(await page.evaluate(() => document.body.classList.contains('corner-tucked'))));
+    for (const y of [200, 320, 440]) {
+      await page.evaluate((y) => window.scrollTo({ top: y, behavior: 'instant' }), y);
+      await settle();
+    }
+    const tucked = await page.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+      const b = document.getElementById('powered');
+      const r = b.getBoundingClientRect();
+      const arrows = [...document.querySelectorAll('.link-arrow')].filter((a) => {
+        const q = a.getBoundingClientRect();
+        return q.height && !(q.right < r.left || r.right < q.left || q.bottom < r.top || r.bottom < q.top);
+      }).length;
+      return { cls: document.body.classList.contains('corner-tucked'),
+               opacity: getComputedStyle(b).opacity, pe: getComputedStyle(b).pointerEvents,
+               blocking: arrows && getComputedStyle(b).opacity !== '0' };
+    });
+    ok('scrolling down on a phone, the corner steps aside', tucked.cls, JSON.stringify(tucked));
+    eq('so it is not drawn over the cards', tucked.opacity, '0');
+    eq('and taps go through to the card underneath', tucked.pe, 'none');
+    ok('no link arrow sits under a visible badge', !tucked.blocking, JSON.stringify(tucked));
+    await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }));
+    await settle();
+    await page.waitForTimeout(350);
+    ok('scrolling back up brings it straight back', await page.evaluate(() =>
+      !document.body.classList.contains('corner-tucked') && getComputedStyle(document.getElementById('powered')).opacity === '1'));
+    ok('and it is still the way to the Launchpad', await badge.isVisible());
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => window.scrollTo({ top: 600, behavior: 'instant' }));
+    await settle();
+    await page.evaluate(() => window.scrollTo({ top: 900, behavior: 'instant' }));
+    await settle();
+    ok('on a desktop the corner never tucks away', !(await page.evaluate(() => document.body.classList.contains('corner-tucked'))));
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await settle();
+
     // It has to go to the Launchpad from whatever page you were on.
     eq('it points at the Launchpad, by its clean URL', await page.locator('#powered').getAttribute('href'), '/launch');
 
@@ -3700,6 +3819,24 @@ try {
     ok('an unclaimed address says so rather than showing mine', true);
     ok('and points them at the Launchpad, by its clean URL',
       /\/launch"/.test(await page.evaluate(() => document.body.innerHTML)));
+    eq('its tab says there is nothing here, not my name',
+      await page.evaluate(() => document.title), 'No site at this address | solquicks.com');
+    ok('its description is not mine either',
+      /not been claimed/.test(await page.evaluate(() => document.querySelector('meta[name="description"]').content)));
+    eq('and search engines are asked not to index it',
+      await page.evaluate(() => document.querySelector('meta[name="robots"]').content), 'noindex');
+    const nsLink = await page.evaluate(() => {
+      const a = document.querySelector('#no-site a');
+      const cs = getComputedStyle(a);
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--orange-deep)';
+      document.body.appendChild(probe);
+      const want = getComputedStyle(probe).color;
+      probe.remove();
+      return { color: cs.color, want, deco: cs.textDecorationLine };
+    });
+    eq('the Launchpad link wears the site link colour', nsLink.color, nsLink.want);
+    eq('without the browser default underline', nsLink.deco, 'none');
 
     await page.goto(SITE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });

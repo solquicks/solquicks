@@ -9,9 +9,21 @@
 
 import fs from 'node:fs';
 import {
-  MIN, HOUR, clock, advance, TREASURY, chain, pay, freshEnv, call, runScheduled,
+  MIN, HOUR, clock, advance, TREASURY, chain, pay, freshEnv, call as rawCall, runScheduled,
   wallet, signIn, ok, eq, section, finish
 } from './harness.mjs';
+
+// Holding anything now needs a signed-in wallet (security fix 2026-10-29).
+// Tests that are not about who is signed in hold as one stand-in buyer; a test
+// that is about it passes its own token, or token: null to hold signed out.
+export const BUYER = wallet(77);
+const NEEDS_SESSION = /^\/api\/(booking\/hold|banner\/hold|banner\/creative|bundle\/hold|bundle\/redeem|booking\/brief|cart\/checkout)$/;
+async function call(env, method, path, opts = {}) {
+  if (NEEDS_SESSION.test(path) && opts.token === undefined) {
+    opts = Object.assign({}, opts, { token: signIn(env, BUYER) });
+  }
+  return rawCall(env, method, path, opts);
+}
 
 const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 
@@ -53,7 +65,8 @@ const sessionsOf = (env, ref) =>
 // Confirm needs the paying wallet connected, exactly as a single booking does.
 let payerSeq = 20;
 async function payAndConfirm(env, held) {
-  const who = wallet(++payerSeq);
+  // the wallet that held it pays: a bundle is now bound to its buyer
+  const who = BUYER;
   pay({ from: who, usdc: held.body.usdc, reference: held.body.reference });
   const sig = chain.byRef.get(held.body.reference)[0].signature;
   return call(env, 'POST', '/api/bundle/confirm', {
@@ -408,7 +421,7 @@ section('paying twice does not buy twice');
 {
   const env = freshEnv();
   const r = await call(env, 'POST', '/api/bundle/hold', { body: { bundle: 'space-4', ...guest } });
-  const who = wallet(7);
+  const who = BUYER;
   const tok = signIn(env, who);
   pay({ from: who, usdc: r.body.usdc, reference: r.body.reference });
   const sig = chain.byRef.get(r.body.reference)[0].signature;
@@ -437,6 +450,28 @@ section('the sweep finds a bundle paid after the page closed');
   ok('and confirms its sessions',
     sessionsOf(env, r.body.ref).every((b) => b.status === 'confirmed'));
   ok('and tells the fox', chain.alerts.some((a) => a.includes(r.body.ref)));
+}
+
+section('a bundle belongs to the wallet that bought it (security fix 2026-10-29)');
+{
+  const env = freshEnv();
+  eq('signed out, a bundle cannot be held', (await call(env, 'POST', '/api/bundle/hold', { token: null, body: { bundle: 'space-4', ...guest } })).status, 401);
+  const r = await call(env, 'POST', '/api/bundle/hold', { body: { bundle: 'space-4', ...guest } });
+  await payAndConfirm(env, r);
+  const open = await slots(env, 'space');
+  const other = signIn(env, wallet(9));
+  eq('another wallet with the reference cannot spend a credit',
+    (await call(env, 'POST', '/api/bundle/redeem', { token: other, body: { ref: r.body.ref, startsAt: open[0].starts } })).status, 403);
+  eq('nor signed out', (await call(env, 'POST', '/api/bundle/redeem', { token: null, body: { ref: r.body.ref, startsAt: open[0].starts } })).status, 403);
+  const look = await call(env, 'GET', '/api/bundle/lookup?ref=' + r.body.ref);
+  ok('a stranger\'s lookup leaves out the name and signature', !('name' in look.body.bundle) && !('signature' in look.body.bundle));
+  const mine = await call(env, 'GET', '/api/bundle/lookup?ref=' + r.body.ref, { token: signIn(env, BUYER) });
+  eq('the owner sees their name', mine.body.bundle.name, guest.name);
+  // two open bundle holds at once is the most one wallet may sit on
+  const h1 = await call(env, 'POST', '/api/bundle/hold', { body: { bundle: 'space-4', ...guest } });
+  const h2 = await call(env, 'POST', '/api/bundle/hold', { body: { bundle: 'space-4', ...guest } });
+  const h3 = await call(env, 'POST', '/api/bundle/hold', { body: { bundle: 'space-4', ...guest } });
+  eq('two open bundle holds are allowed, a third is not', [h1.status, h2.status, h3.status].join(), '200,200,409');
 }
 
 finish();

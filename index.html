@@ -13,7 +13,7 @@
   <meta property="og:image:height" content="400"/>
   <meta name="twitter:image" content="https://solquicks.com/avatar.png"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://*.workers.dev https://sender.helius-rpc.com https://auth.privy.io; frame-src https://auth.privy.io;"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://solflare.com https://*.solflare.com https://api.mainnet-beta.solana.com https://api.devnet.solana.com https://solquicks-points.solquicks-45c.workers.dev https://solquicks-rpc-proxy.solquicks-45c.workers.dev https://sender.helius-rpc.com https://auth.privy.io; frame-src https://auth.privy.io; object-src 'none'; base-uri 'self'; form-action 'self';"/>
   <!-- Root-absolute on purpose, here and throughout: /c/<slug> serves this same
        file, and a relative path would resolve under /c/ and miss. -->
   <link rel="icon" type="image/png" sizes="32x32" href="/avatar.png"/>
@@ -252,6 +252,16 @@
         <div class="lb-points-label">Your Fox Points</div>
         <p class="lb-rank-note" id="lb-rank-note">Everything you do here earns points. Stack 'em.</p>
         <button class="daily-claim" id="daily-claim" onclick="claimDaily()" hidden></button>
+      </div>
+
+      <!-- Moon Rangers game points. The game no longer credits the balance
+           directly: what it earned waits here to be claimed, then reviewed. -->
+      <div class="lb-card gp-card" id="gp-card" hidden>
+        <div class="lb-title">🎮 Moon Rangers points</div>
+        <p class="iv-lead" id="gp-lead"></p>
+        <div class="iv-stats" id="gp-stats"></div>
+        <button class="iv-copy gp-claim" id="gp-claim" onclick="claimGamePoints()" hidden>Claim for review</button>
+        <div class="bk-msg" id="gp-msg"></div>
       </div>
 
       <!-- Invite. Sits with the rest of what a wallet has earned, and stays

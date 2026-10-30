@@ -12,3 +12,6 @@ tools
 test
 *.md
 wrangler.toml
+# Admin-only page for the one-off moon-stake initialise (security fix
+# 2026-10-29, L10). Phase 2 of program/MAINNET.md says when to serve it again.
+stake-init.html

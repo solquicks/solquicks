@@ -521,7 +521,10 @@ section('Moon Ranger holders pay half');
   eq('and told the full rate, to show the saving', h.r.body.fullFeeBps + ' holder=' + h.r.body.holder, '20 holder=true');
   const n = await q(regular);
   eq('anyone else is quoted 0.2%', n.r.body.feeBps, 20);
-  eq('a staked Ranger counts as held', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?)').run(wallet(22), 'm1', 1), (await q(wallet(22))).r.body.feeBps), 10);
+  // Only a stake the chain confirmed in the last day counts (security fix
+  // 2026-10-29): an old row says nothing about who holds the Ranger now.
+  eq('a staked Ranger the chain confirmed today counts as held', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, ?, ?)').run(wallet(22), 'm1', 1, Date.now()), (await q(wallet(22))).r.body.feeBps), 10);
+  eq('an unverified stake row does not', (env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?)').run(wallet(23), 'm2', 1), (await q(wallet(23))).r.body.feeBps), 20);
 
   eq('a holder swapping at the holder rate is built', (await buildAs(holder, h.r.body.quote)).status, 200);
   eq('a holder quote used by a different wallet is refused', (await buildAs(regular, h.r.body.quote)).status, 409);
@@ -647,7 +650,7 @@ section('weekly swap leaderboard');
   env._db.prepare('INSERT INTO holder_positions (wallet, count, first_seen, updated_at) VALUES (?, 2, 1, 1)').run(a);
   env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(b, 'asset-b', 'sig-b');
   env._db.prepare('INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, 1, 250)').run(a, 'asset-a', 'sig-a');
-  env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, 1)').run(c, 'staked-c');
+  env._db.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, 1, ?)').run(c, 'staked-c', Date.now());
   const boardRes = await call(env, 'GET', '/api/swap/leaderboard');
   eq('the board still answers once there are badges to work out', boardRes.status, 200);
   const badged = boardRes.body.top;
@@ -655,7 +658,7 @@ section('weekly swap leaderboard');
   eq('a Ranger holder is badged as one', tierOf(a), 'ranger');
   eq('holding both shows the Ranger badge only', tierOf(a), 'ranger');
   eq('a collectible holder gets its own badge', tierOf(b), 'collectible');
-  eq('a staked Ranger still counts', tierOf(c), 'ranger');
+  eq('a staked Ranger the chain confirmed today still counts', tierOf(c), 'ranger');
   eq('everyone else has no badge', tierOf(d), null);
   ok('and no chain call was made for any of it',
     !chain.rpcCalls.slice(-6).includes('searchAssets'), chain.rpcCalls.slice(-6).join(','));
@@ -714,6 +717,63 @@ section('points still check who signed the swap');
   eq('your own $150 swap earns 150 points', r2.body.awarded, 150);
 }
 
+section('the daily swap points cap holds under parallel awards');
+{
+  // Security fix 2026-10-29 (M1): the room left under the cap is worked out
+  // inside the insert, so parallel awards cannot each see the same room.
+  const env = freshEnv();
+  const me = wallet(7);
+  const token = signIn(env, me);
+  env._db.prepare('INSERT INTO players (wallet, points, created_at, updated_at) VALUES (?, 0, 0, 0)').run(me);
+  const sigs = ['S', 'T', 'U', 'V', 'W'].map((c) => swapTx(c.repeat(88), me, { solSpent: 1, get: { mint: USDC, amount: 150 } }));
+  const r = await Promise.all(sigs.map((sig) => call(env, 'POST', '/api/swap/award', { token, body: { signature: sig } })));
+  const total = r.reduce((n, x) => n + (x.body.awarded || 0), 0);
+  eq('five $150 swaps at once earn the daily cap, not 750', total, 500);
+  eq('and the balance agrees', env._db.prepare('SELECT points FROM players WHERE wallet = ?').get(me).points, 500);
+}
+
+section('cleanup pays only for real cleanup (L1)');
+{
+  const env = freshEnv();
+  const me = wallet(96);
+  const token = signIn(env, me);
+  const farm = 'Z'.repeat(88);
+  chain.txs.set(farm, {
+    blockTime: 1789400000,
+    transaction: { message: {
+      accountKeys: [{ pubkey: me }],
+      instructions: [
+        { parsed: { type: 'create', info: { account: 'fresh1' } } },
+        { parsed: { type: 'createAccount', info: { newAccount: 'fresh2' } } },
+        { parsed: { type: 'initializeAccount3', info: { account: 'fresh2' } } },
+        { parsed: { type: 'burn', info: { account: 'fresh1', amount: '5' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'fresh1' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'fresh2' } } },
+        { parsed: { type: 'burnChecked', info: { account: 'old1', tokenAmount: { amount: '0' } } } },
+        { parsed: { type: 'burn', info: { account: 'old2', amount: '0' } } }
+      ]
+    } },
+    meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [],
+      innerInstructions: [] }
+  });
+  const r = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: farm } });
+  eq('opening accounts and closing them in one go, or burning nothing, earns nothing', r.body.awarded, 0);
+  const real = 'Y'.repeat(88);
+  chain.txs.set(real, {
+    blockTime: 1789400000,
+    transaction: { message: {
+      accountKeys: [{ pubkey: me }],
+      instructions: [
+        { parsed: { type: 'burnChecked', info: { account: 'old3', tokenAmount: { amount: '42' } } } },
+        { parsed: { type: 'closeAccount', info: { account: 'old3' } } }
+      ]
+    } },
+    meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [] }
+  });
+  const r2 = await call(env, 'POST', '/api/cleanup/award', { token, body: { signature: real } });
+  eq('burning real dust from an old account and closing it still pays', r2.body.awarded, BURN_POINTS);
+}
+
 section('cleanup points are paid once, not twice');
 {
   const env = freshEnv();
@@ -724,7 +784,8 @@ section('cleanup points are paid once, not twice');
     blockTime: 1789400000,
     transaction: { message: {
       accountKeys: [{ pubkey: me }],
-      instructions: [{ parsed: { type: 'burn' } }, { parsed: { type: 'closeAccount' } }, { parsed: { type: 'closeAccount' } }]
+      instructions: [{ parsed: { type: 'burn', info: { account: 'acctA', amount: '12' } } },
+        { parsed: { type: 'closeAccount', info: { account: 'acctA' } } }, { parsed: { type: 'closeAccount', info: { account: 'acctB' } } }]
     } },
     meta: { err: null, fee: 5000, preBalances: [1e9], postBalances: [1e9], preTokenBalances: [], postTokenBalances: [] }
   });
@@ -924,6 +985,15 @@ section('the soulbound collectible');
 
   const stolen = await claim({ wallet: nobody, asset: asset, signature: 'D'.repeat(88) });
   eq("another wallet cannot claim someone else's collectible", stolen.status, 403);
+
+  // Passed on to another wallet after it was claimed: the asset is unique, and
+  // that used to surface as a 500 (I5).
+  const was = assets[asset].ownership.owner;
+  assets[asset].ownership.owner = nobody;
+  const passedOn = await claim({ wallet: nobody, asset: asset, signature: 'H'.repeat(88) });
+  eq('a collectible claimed once and passed on is a plain 409, not a 500', passedOn.status, 409);
+  eq('and pays nothing', (env._db.prepare('SELECT COUNT(*) AS n FROM collectibles WHERE wallet = ?').get(nobody)).n, 0);
+  assets[asset].ownership.owner = was;
 
   assets[wallet(125)] = { id: wallet(125), ownership: { owner: nobody }, grouping: [{ group_key: 'collection', group_value: wallet(126) }] };
   const imposter = await claim({ wallet: nobody, asset: wallet(125), signature: 'E'.repeat(88) });

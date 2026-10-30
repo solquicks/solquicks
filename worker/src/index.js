@@ -2,11 +2,13 @@
 // Points live here, not in the visitor's browser. Every award is decided
 // server-side; the client can only ask, never assert a balance.
 
-import { handleGameRequest } from './game/routes.js';
+import { handleGameRequest, adminListPending, adminDecidePending } from './game/routes.js';
 
 const DAY_MS = 86400000;
 const STAKE_RATE_PER_DAY = 100;
-const SESSION_TTL_MS = 30 * DAY_MS;
+// Was 30 days with no way to end one early (L6). A week, and /api/logout now
+// ends it on the server when someone disconnects.
+const SESSION_TTL_MS = 7 * DAY_MS;
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const FLIP_MIN = 10;
 const FLIP_MAX = 1000;   // caps how fast a balance can swing in one go
@@ -64,29 +66,17 @@ function isWallet(w) {
   try { return b58decode(w).length === 32; } catch (e) { return false; }
 }
 
-/// Every creator's site is a subdomain of the launch root and calls this
-/// worker, so the exact-match list is not enough on its own.
-///
-/// Matched against the parsed hostname rather than the origin string. A test
-/// like origin.endsWith('.solquicks.com') is the usual way to get this wrong —
-/// "https://solquicks.com.attacker.dev" does not end with it, but
-/// "https://evil-solquicks.com" passes a sloppier suffix check, and a match on
-/// the raw string would also wave through "http://" and odd ports.
+/// An exact allowlist, nothing else. Creator sites are served at /c/<slug> on
+/// the main origin, so they need no entry of their own. Any https subdomain of
+/// the launch root used to be allowed as well; that was dropped (security fix
+/// 2026-10-29) so a subdomain handed to anyone else, or taken over, can never
+/// read API answers with somebody's session. If wildcard creator subdomains
+/// are ever switched on, add each one to ALLOWED_ORIGINS explicitly.
 function originAllowed(origin, env) {
   if (!origin) return false;
-  const exact = (env.ALLOWED_ORIGINS || '').split(',').map(function (s) { return s.trim(); });
-  if (exact.indexOf(origin) >= 0) return true;
-
-  const root = env.LAUNCH_ROOT || 'solquicks.com';
-  let u;
-  try { u = new URL(origin); } catch (e) { return false; }
-  if (u.protocol !== 'https:' || u.port) return false;
-  // Exactly one label in front of the root, and a label that could really be a
-  // subdomain we issued.
-  const suffix = '.' + root;
-  if (!u.hostname.endsWith(suffix)) return false;
-  const label = u.hostname.slice(0, -suffix.length);
-  return /^[a-z0-9-]{1,63}$/.test(label);
+  const exact = (env.ALLOWED_ORIGINS || '').split(',').map(function (s) { return s.trim(); })
+    .filter(Boolean);
+  return exact.indexOf(origin) >= 0;
 }
 
 function corsHeaders(request, env) {
@@ -113,11 +103,16 @@ function randomToken() {
   return [...b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
-function signInMessage(wallet, nonce) {
+// The time the nonce was issued is part of what is signed (L6), so a
+// signature shown to a user is plainly dated and only good for the five
+// minutes its nonce lives. Derived from the nonce's own expiry, so nothing
+// new is stored.
+function signInMessage(wallet, nonce, expires) {
   return 'solquicks.com wants you to sign in.\n\n' +
     'This proves you own this wallet. It is free and does not move any funds.\n\n' +
     'Wallet: ' + wallet + '\n' +
-    'Nonce: ' + nonce;
+    'Nonce: ' + nonce + '\n' +
+    'Issued at: ' + new Date(expires - NONCE_TTL_MS).toISOString();
 }
 
 async function verifySignature(wallet, message, signatureB64) {
@@ -136,6 +131,37 @@ async function getSession(request, env) {
   const row = await env.DB.prepare('SELECT wallet, expires FROM sessions WHERE token = ?').bind(token).first();
   if (!row || row.expires < Date.now()) return null;
   return row.wallet;
+}
+
+/// A paid-for thing that holds a slot, a run or credits now needs a signed-in
+/// wallet (security fix 2026-10-29). Before, anyone could hold every free hour
+/// and the whole ad calendar without one, and a booking with no owner could be
+/// steered by whoever had its reference. The page signs in and retries on this.
+function signInFirst(request, env) {
+  return json(request, env, {
+    error: 'Connect your wallet first — it keeps this booking tied to you.',
+    signIn: true
+  }, 401);
+}
+
+/// How many unpaid, unexpired holds one wallet may sit on at once. Enough for
+/// a full basket; not enough to empty the calendar.
+const MAX_OPEN_HOLDS = { bookings: 12, banner_bookings: 1, bundles: 2 };
+
+async function tooManyHolds(env, table, wallet) {
+  const r = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM ' + table + " WHERE wallet = ? AND status = 'held' AND hold_until > ?"
+  ).bind(wallet, Date.now()).first();
+  return !!r && r.n >= MAX_OPEN_HOLDS[table];
+}
+
+/// Owner-bound actions on a reference: when the row has an owner, only that
+/// wallet may act. A row with no owner (an enquiry, or a hold made before
+/// sign-in was required) still works by reference alone.
+async function ownsRow(request, env, row) {
+  if (!row || !row.wallet) return true;
+  const who = await getSession(request, env).catch(function () { return null; });
+  return who === row.wallet;
 }
 
 async function ensurePlayer(env, wallet) {
@@ -261,8 +287,13 @@ async function stakedMints(env, wallet) {
 }
 
 // Verify a SOL payment on-chain before it unlocks anything.
+//
+// Fails closed (security fix 2026-10-29): a fee that is due but cannot be
+// checked because the treasury is not configured is a refusal, never a pass.
+// A fee of zero is a free action and needs no payment at all.
 async function verifyPayment(env, wallet, signature, minLamports, purpose) {
-  if (!env.TREASURY_WALLET || !minLamports) return { ok: true, skipped: true };
+  if (!minLamports) return { ok: true, skipped: true };
+  if (!env.TREASURY_WALLET || !env.HELIUS_API_KEY) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
 
   const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
@@ -291,12 +322,18 @@ async function verifyPayment(env, wallet, signature, minLamports, purpose) {
     if (keys.indexOf(wallet) !== 0) return { ok: false, error: 'payment was not sent by your wallet' };
   }
   const payer = keys[0];
+  if (payer === env.TREASURY_WALLET) return { ok: false, error: 'payment did not come from your wallet' };
 
   const delta = (tx.meta.postBalances[treasuryIdx] || 0) - (tx.meta.preBalances[treasuryIdx] || 0);
   if (delta < minLamports) return { ok: false, error: 'payment was too small' };
 
-  await env.DB.prepare('INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?)')
-    .bind(signature, wallet || payer, delta, purpose, Date.now()).run();
+  // The check above and this insert are separate calls, so two requests racing
+  // one signature can both get here. The primary key lets only one win.
+  const rec = await env.DB.prepare(
+    'INSERT INTO payments (signature, wallet, lamports, purpose, ts) VALUES (?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(signature) DO NOTHING'
+  ).bind(signature, wallet || payer, delta, purpose, Date.now()).run();
+  if (rec && rec.meta && rec.meta.changes === 0) return { ok: false, error: 'this payment was already used' };
   return { ok: true, lamports: delta, payer: payer };
 }
 
@@ -317,6 +354,56 @@ async function saveStake(env, wallet, s) {
     'INSERT INTO stakes (wallet, staked, since, count, banked) VALUES (?, ?, ?, ?, ?) ' +
     'ON CONFLICT(wallet) DO UPDATE SET staked=excluded.staked, since=excluded.since, count=excluded.count, banked=excluded.banked'
   ).bind(wallet, s.staked ? 1 : 0, s.since, s.count, s.banked).run();
+}
+
+/// Drops Rangers from a wallet's stake and banks what the wallet has earned.
+///
+/// Security fix 2026-10-29 (H1): a Ranger that has left the wallet earns only
+/// up to the last time the worker actually saw it there (verified_at), not up
+/// to now — otherwise selling a Ranger kept it earning until the next check.
+/// The Rangers that stay earn up to now, and their clock restarts.
+async function dropStakedMints(env, wallet, drop) {
+  const rows = ((await env.DB.prepare(
+    'SELECT mint, verified_at FROM staked_nfts WHERE wallet = ?'
+  ).bind(wallet).all()).results) || [];
+  const s = await loadStake(env, wallet);
+  const now = Date.now();
+  const gone = rows.filter(function (r) { return drop.indexOf(r.mint) >= 0; });
+  const kept = rows.length - gone.length;
+  let banked = s.banked || 0;
+  if (s.staked && s.since) {
+    banked += Math.max(0, Math.floor(((now - s.since) / DAY_MS) * STAKE_RATE_PER_DAY * kept));
+    for (const g of gone) {
+      const until = Math.min(now, g.verified_at || 0);
+      if (until > s.since) banked += Math.floor(((until - s.since) / DAY_MS) * STAKE_RATE_PER_DAY);
+    }
+  }
+  if (gone.length) {
+    await env.DB.batch(gone.map(function (g) {
+      return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, g.mint);
+    }));
+  }
+  await saveStake(env, wallet, { staked: kept > 0 ? 1 : 0, since: kept > 0 ? now : 0, count: kept, banked: banked });
+  return { kept: kept, banked: banked };
+}
+
+/// Re-checks a wallet's stake against what it holds on-chain right now:
+/// Rangers no longer there stop earning (and are dropped), the ones still
+/// there are stamped as verified. `owned` is listRangers' answer and must not
+/// be null — an unavailable check is the caller's to refuse, never a pass.
+async function reconcileStake(env, wallet, owned) {
+  const ownedMints = owned.map(function (r) { return r.mint; });
+  const staked = await stakedMints(env, wallet);
+  const stale = staked.filter(function (m) { return ownedMints.indexOf(m) < 0; });
+  if (stale.length) await dropStakedMints(env, wallet, stale);
+  const still = staked.filter(function (m) { return ownedMints.indexOf(m) >= 0; });
+  if (still.length) {
+    const now = Date.now();
+    await env.DB.batch(still.map(function (m) {
+      return env.DB.prepare('UPDATE staked_nfts SET verified_at = ? WHERE wallet = ? AND mint = ?').bind(now, wallet, m);
+    }));
+  }
+  return { stale: stale, still: still };
 }
 
 async function playerState(env, wallet) {
@@ -384,6 +471,8 @@ const RATE_RULES = [
   { match: ['/api/swap/tokens', '/api/swap/earned', '/api/swap/top', '/api/swap/traded'], name: 'swapread', by: 'ip', limit: 60, windowMs: 60000 },
   { match: ['/api/swap/search', '/api/swap/prices', '/api/swap/token'], name: 'swaplookup', by: 'ip', limit: 90, windowMs: 60000 },
   { match: ['/api/swap/failed'], name: 'swapfail', by: 'ip', limit: 20, windowMs: 60000 },
+  // and all callers together, so rotating addresses cannot fill error_log (L4)
+  { match: ['swapfail:all'], name: 'swapfailall', by: 'global', limit: 500, windowMs: 3600000 },
   { match: ['/api/swap/holdings'], name: 'swapholdings', by: 'ip', limit: 30, windowMs: 60000 },
   { match: ['/api/swap/record'], name: 'swaprecord', by: 'ip', limit: 20, windowMs: 60000 },
   { match: ['/api/swap/history'], name: 'swaphistory', by: 'ip', limit: 30, windowMs: 60000 },
@@ -415,6 +504,13 @@ const RATE_RULES = [
   // Each claim is once per period anyway; this only stops anyone hammering it.
   { match: ['/api/game/points', '/api/game/challenge-complete', '/api/game/share-reward'], name: 'gameplayer', by: 'wallet', limit: 30, windowMs: 60000 },
   { match: ['/api/banner/event'], name: 'event', by: 'ip', limit: 40, windowMs: 60000 },
+  // One view and one click per address per slot per ten minutes count; the
+  // rest are answered but not recorded, so a script cannot inflate the stats.
+  { match: ['banner:dedupe'], name: 'eventdedupe', by: 'ip', limit: 1, windowMs: 600000 },
+  // Fox Points earned in the game wait here to be claimed and approved.
+  { match: ['/api/game/pending', '/api/game/pending/claim'], name: 'gamepending', by: 'wallet', limit: 30, windowMs: 60000 },
+  { match: ['/api/logout'], name: 'logout', by: 'ip', limit: 20, windowMs: 60000 },
+  { match: ['/api/health'], name: 'health', by: 'ip', limit: 30, windowMs: 60000 },
   // Guessing a code is infeasible (32^10), so this is not the thing standing
   // between an attacker and the points — it just stops anyone hammering it.
   { match: ['/api/plushie/redeem'], name: 'plushie', by: 'ip', limit: 10, windowMs: 60000 },
@@ -448,19 +544,44 @@ function tokenMatches(header, secret) {
   return diff === 0;
 }
 
-async function rateLimited(request, env, path, wallet) {
+/// The part of an address that identifies one subscriber. An IPv6 user is
+/// handed a whole /64 and can rotate through it freely, so keying on the full
+/// address let one person count as billions (security fix 2026-10-29).
+function ipKey(ip) {
+  const raw = String(ip || 'unknown');
+  if (raw.indexOf(':') < 0) return raw;
+  // expand a "::" so the first four groups are the real ones
+  const halves = raw.toLowerCase().split('::');
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  const groups = halves.length > 1
+    ? head.concat(new Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), tail)
+    : head;
+  return groups.slice(0, 4).map(function (g) { return g.replace(/^0+(?=.)/, ''); }).join(':') + '::/64';
+}
+
+/// Limits that guard money, points or a secret refuse when the counter cannot
+/// be read, rather than waving everyone through (security fix 2026-10-29).
+/// Read-only routes still fail open so a D1 hiccup does not take the site down.
+const FAIL_CLOSED = ['auth', 'admin', 'flip', 'write', 'mission', 'bookwrite', 'bundlewrite',
+  'pointsbuy', 'bundleredeem', 'bookbrief', 'cartwrite', 'adwrite', 'cleanaward', 'swapaward',
+  'swapfail', 'launchinvite', 'launchcreate', 'invitewrite', 'gameplayer', 'plushie',
+  'collectibleclaim', 'eventdedupe', 'swapfailall'];
+
+/// `extra` narrows the key further, for "once per thing per caller" limits.
+async function rateLimited(request, env, path, wallet, extra) {
   const rule = RATE_RULES.find(function (r) { return r.match.indexOf(path) >= 0; });
   if (!rule) return false;
 
   // A global budget has no IP to key on and can be spent from deep inside a
   // request, where the Request object is not to hand.
-  const ip = (request && request.headers.get('CF-Connecting-IP')) || 'unknown';
+  const ip = ipKey((request && request.headers.get('CF-Connecting-IP')) || 'unknown');
   const who = rule.by === 'global'
     ? 'all'
     : (rule.by === 'wallet' && wallet) ? 'w:' + wallet : 'i:' + ip;
   const now = Date.now();
   const window = Math.floor(now / rule.windowMs);
-  const key = rule.name + ':' + who + ':' + window;
+  const key = rule.name + ':' + who + (extra ? ':' + String(extra).slice(0, 80) : '') + ':' + window;
   const expires = (window + 1) * rule.windowMs;
 
   try {
@@ -474,7 +595,7 @@ async function rateLimited(request, env, path, wallet) {
     ).bind(key, expires).first();
     return !!row && row.n > rule.limit;
   } catch (e) {
-    return false; // fail open rather than lock everyone out of a working site
+    return FAIL_CLOSED.indexOf(rule.name) >= 0;
   }
 }
 
@@ -526,6 +647,7 @@ async function alert(env, text) {
 
 const REQUIRED_SETTINGS = ['HELIUS_API_KEY', 'JUPITER_API_KEY', 'ADMIN_TOKEN', 'TREASURY_WALLET', 'ALLOWED_ORIGINS'];
 
+let publicHealth = null;   // { at, ok, env } — see /api/health
 async function healthCheck(env) {
   const detail = {};
   let ok = true;
@@ -554,7 +676,10 @@ async function healthCheck(env) {
 
   try {
     const since = Date.now() - 3600000;
-    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM error_log WHERE ts > ?').bind(since).first();
+    // Client-reported swap failures are anyone's to send, so they do not count
+    // towards an outage (security fix 2026-10-29, L4): a flood of them used to
+    // trip the threshold and page the owner for nothing.
+    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM error_log WHERE ts > ? AND route IS NOT 'swap.client'").bind(since).first();
     detail.errorsLastHour = r ? r.n : 0;
     if (detail.errorsLastHour > 25) ok = false;
   } catch (e) { /* already covered by the db check */ }
@@ -575,7 +700,15 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'game-routes-1';
+const BUILD = 'security-2026-10-29';
+
+// The routes that sit behind the session gate (see I11 in the router).
+const SESSION_ROUTES = new Set([
+  '/api/logout', '/api/me', '/api/claim', '/api/visit', '/api/mission', '/api/mission/claim',
+  '/api/flip', '/api/flip/stats', '/api/swap/points', '/api/swap/award', '/api/cleanup/award',
+  '/api/invite', '/api/invite/bind', '/api/invite/claim', '/api/rangers', '/api/stake',
+  '/api/unstake', '/api/plushie/redeem',
+]);
 
 const TICKETS_PER_RANGER_DAY = 1;
 // Missions launch with Q1 2027. Until then the card shows the rules and a
@@ -1210,11 +1343,16 @@ async function analyticsPayload(env) {
 
 
 
-/// Looks for a payment tagged with this booking's reference. This is what makes
-/// the flow survive a closed tab: the money is on chain either way, and the
-/// reference is how we find it again.
-async function findPaymentByReference(env, reference) {
-  if (!env.HELIUS_API_KEY || !reference) return null;
+/// Every successful transaction tagged with this booking's reference. This is
+/// what makes the flow survive a closed tab: the money is on chain either way,
+/// and the reference is how we find it again.
+///
+/// All of them, not just the newest (security fix 2026-10-29): anyone can tag
+/// a dust transaction with a reference they have seen on chain, and taking only
+/// the newest let that "shadow" the real payment. Callers try each in turn and
+/// settle on the first one that really pays the invoice.
+async function findPaymentsByReference(env, reference) {
+  if (!env.HELIUS_API_KEY || !reference) return [];
   const res = await fetch('https://mainnet.helius-rpc.com/?api-key=' + env.HELIUS_API_KEY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1223,14 +1361,10 @@ async function findPaymentByReference(env, reference) {
       params: [reference, { limit: 10 }]
     })
   });
-  if (!res.ok) return null;
+  if (!res.ok) return [];
   const data = await res.json();
   const list = (data && data.result) || [];
-  for (const s of list) {
-    if (s.err) continue;
-    return s.signature;
-  }
-  return null;
+  return list.filter(function (s) { return !s.err && s.signature; }).map(function (s) { return s.signature; });
 }
 
 
@@ -1315,7 +1449,23 @@ async function signedBy(env, signature, wallet) {
   const keys = (tx.transaction.message.accountKeys || []).map(function (k) { return k.pubkey || k; });
   // The fee payer is the first key and always signed. Anything else could be a
   // wallet that merely appears in somebody else's transaction.
-  return keys[0] === wallet;
+  return keys[0] === wallet ? tx : false;
+}
+
+// How much USDC (in whole USDC) a wallet gained in a transaction, negative for
+// spent, read from the token balances the chain recorded before and after.
+function usdcMovedFor(tx, wallet) {
+  const sum = function (list) {
+    let n = 0;
+    for (const b of list || []) {
+      if (b && b.mint === USDC_MINT && b.owner === wallet) {
+        n += Number((b.uiTokenAmount && b.uiTokenAmount.amount) || 0);
+      }
+    }
+    return n;
+  };
+  const meta = tx.meta || {};
+  return (sum(meta.postTokenBalances) - sum(meta.preTokenBalances)) / Math.pow(10, USDC_DECIMALS);
 }
 
 async function reflect(env, method, path, body) {
@@ -1840,6 +1990,7 @@ const INVITE_CLAIM_MIN_USD = 10;
 // later, never less. Stored per site at launch so a later change of policy
 // cannot quietly rewrite what somebody signed up to.
 const LAUNCH_USDC_MAX_PCT = 50;
+const LAUNCH_DOMAIN_RE = /^[a-z0-9-]{2,63}\.[a-z]{2,24}$/;
 const LAUNCH_PLATFORM_PCT = 1;
 // Names that must never become somebody's subdomain: they are either already
 // something here, or they are the kind of thing used to impersonate it.
@@ -2131,20 +2282,21 @@ async function awardSwapPointsFor(env, signature, wallet) {
   }
 
   const dayStart = Date.now() - (Date.now() % 86400000);
-  const today = await env.DB.prepare(
-    'SELECT COALESCE(SUM(points), 0) AS n FROM swap_awards WHERE wallet = ? AND ts >= ?'
-  ).bind(wallet, dayStart).first();
-  const used = (today && today.n) || 0;
-  const room = Math.max(0, SWAP_POINTS_DAILY_CAP - used);
-  const points = Math.min(room, Math.round(v.usd * SWAP_POINTS_PER_USD));
+  const want = Math.round(v.usd * SWAP_POINTS_PER_USD);
 
   // The insert is the lock: two awards for one signature cannot both land, so
-  // the page and the sweep racing each other is harmless.
+  // the page and the sweep racing each other is harmless. The daily cap is
+  // worked out inside the same statement (security fix 2026-10-29, M1), so
+  // parallel awards for different swaps cannot each see the same room.
   const wrote = await env.DB.prepare(
-    'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+    'INSERT INTO swap_awards (signature, wallet, usd, points, ts) ' +
+    'SELECT ?, ?, ?, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM swap_awards WHERE wallet = ? AND ts >= ?))), ? WHERE 1 ' +
     'ON CONFLICT(signature) DO NOTHING'
-  ).bind(signature, wallet, v.usd, points, Date.now()).run();
+  ).bind(signature, wallet, v.usd, want, SWAP_POINTS_DAILY_CAP, wallet, dayStart, Date.now()).run();
   if (wrote.meta.changes !== 1) return { ok: true, awarded: 0, already: true };
+  const got = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?').bind(signature).first();
+  const points = (got && got.points) || 0;
+  const room = points < want ? points : SWAP_POINTS_DAILY_CAP;
   if (points > 0) await addPoints(env, wallet, 'swap', points);
   return { ok: true, awarded: points, usd: v.usd, cappedOut: points === 0 && room === 0, room: room };
 }
@@ -2621,44 +2773,84 @@ async function inspectPayment(env, signature, treasury) {
   const idx = keys.indexOf(treasury);
   if (idx >= 0) sol = (tx.meta.postBalances[idx] || 0) - (tx.meta.preBalances[idx] || 0);
 
-  // token balances are keyed by account index, and the "before" row is absent
-  // entirely when the account was created by this very transaction
-  const amountOf = function (rows) {
+  // Every USDC account the treasury owns, summed by account index — not just
+  // the first row found (security fix 2026-10-29). Moving USDC between two of
+  // the treasury's own accounts then nets to zero instead of looking like a
+  // payment. The "before" row is absent when this very transaction created
+  // the account, which reads as zero.
+  const byIndex = function (rows) {
+    const out = {};
     for (const r of rows || []) {
       if (r.mint === USDC_MINT && r.owner === treasury) {
-        return Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
+        out[r.accountIndex] = Number((r.uiTokenAmount && r.uiTokenAmount.amount) || 0);
       }
     }
-    return 0;
+    return out;
   };
-  const usdc = amountOf(tx.meta.postTokenBalances) - amountOf(tx.meta.preTokenBalances);
+  const pre = byIndex(tx.meta.preTokenBalances);
+  const post = byIndex(tx.meta.postTokenBalances);
+  let usdc = 0;
+  const seen = {};
+  for (const k of Object.keys(pre).concat(Object.keys(post))) {
+    if (seen[k]) continue;
+    seen[k] = true;
+    usdc += (post[k] || 0) - (pre[k] || 0);
+  }
 
-  return { found: true, payer: payer, sol: sol, usdc: usdc };
+  return {
+    found: true, payer: payer, sol: sol, usdc: usdc, keys: keys,
+    blockTime: typeof tx.blockTime === 'number' ? tx.blockTime * 1000 : null
+  };
 }
 
-/// One gate for both currencies. `wallet` null means the caller already proved
+// How far a transaction's block time may sit before the invoice was written,
+// allowing for clocks that disagree. Anything older is a payment for
+// something else.
+const INVOICE_CLOCK_SKEW_MS = 5 * 60000;
+
+/// One gate for every invoice. `wallet` null means the caller already proved
 /// which invoice this is with a Solana Pay reference.
-async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury) {
+///
+/// `invoice` ties the payment to this one invoice (security fix 2026-10-29):
+///   reference  — the Solana Pay reference key, which must be in the tx;
+///   createdAt  — when the invoice was written; an older tx cannot pay it.
+/// The amount must be exact: the treasury's USDC must rise by precisely what
+/// was invoiced. An overpayment is flagged for a refund rather than silently
+/// accepted, so a transfer for something else can never be reused here.
+async function verifyInvoice(env, wallet, signature, minUsdc, purpose, treasury, invoice) {
   // Defaulted rather than assumed: a caller that forgets to say whose booking
   // this is gets this site's treasury, which is the old behaviour.
   const payTo = treasury || env.TREASURY_WALLET;
   if (!payTo) return { ok: false, error: 'payments are not switched on yet' };
   if (!signature) return { ok: false, error: 'payment required' };
+  const inv = invoice || {};
 
   const seen = await env.DB.prepare('SELECT signature FROM payments WHERE signature = ?').bind(signature).first();
   if (seen) return { ok: false, error: 'this payment was already used' };
 
   const p = await inspectPayment(env, signature, payTo);
   if (!p.found || p.error) return { ok: false, error: p.error || 'payment not found yet' };
-  if (wallet !== null && p.payer !== wallet) {
+  if (wallet !== null && wallet !== undefined && p.payer !== wallet) {
     return { ok: false, error: 'payment was not sent by your wallet' };
+  }
+  if (p.payer === payTo) return { ok: false, error: 'payment did not come from your wallet' };
+  if (inv.reference && p.keys.indexOf(inv.reference) < 0) {
+    return { ok: false, error: 'that payment is not for this order' };
+  }
+  if (inv.createdAt && p.blockTime !== null && p.blockTime < inv.createdAt - INVOICE_CLOCK_SKEW_MS) {
+    return { ok: false, error: 'that payment was made before this order existed' };
   }
 
   // USDC only. SOL is deliberately not accepted, even if someone sends the
   // right value by hand — bookings are priced and settled in dollars.
-  if (!(p.usdc >= minUsdc)) {
+  if (p.usdc !== minUsdc) {
     if (p.usdc === 0 && p.sol > 0) {
       return { ok: false, error: 'this was paid in SOL — bookings are USDC only. Get in touch with your reference for a refund' };
+    }
+    if (p.usdc > minUsdc) {
+      await alert(env, '⚠️ Overpayment not settled — ' + purpose + ' expected ' + minUsdc +
+        ' micro-USDC, got ' + p.usdc + ' from ' + p.payer + '. signature ' + signature);
+      return { ok: false, error: 'that payment is more than this order costs — get in touch with your reference for a refund' };
     }
     return { ok: false, error: p.usdc > 0 ? 'payment was too small' : 'payment did not go to the right wallet' };
   }
@@ -2937,9 +3129,11 @@ async function isRangerHolder(env, wallet) {
   ).bind(wallet).first();
   if (row && row.count > 0) return true;
   // a Ranger locked in the vault is still held, even if the snapshot lags
+  // Only a stake the worker has seen on-chain in the last day counts (H1):
+  // an off-chain stake row says nothing about who holds the Ranger today.
   const staked = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ?'
-  ).bind(wallet).first();
+    'SELECT COUNT(*) AS n FROM staked_nfts WHERE wallet = ? AND verified_at > ?'
+  ).bind(wallet, Date.now() - DAY_MS).first();
   return !!(staked && staked.n > 0);
 }
 
@@ -3006,8 +3200,8 @@ async function badgesFor(env, wallets) {
   // in it, and the box quietly vanished from the page.
   const rangers = await env.DB.prepare(
     'SELECT wallet FROM holder_positions WHERE count > 0 AND wallet IN (' + marks + ') ' +
-    'UNION SELECT wallet FROM staked_nfts WHERE wallet IN (' + marks + ')'
-  ).bind(...wallets, ...wallets).all();
+    'UNION SELECT wallet FROM staked_nfts WHERE verified_at > ? AND wallet IN (' + marks + ')'
+  ).bind(...wallets, Date.now() - DAY_MS, ...wallets).all();
   for (const r of rangers.results || []) out[r.wallet] = 'ranger';
   const collectors = await env.DB.prepare(
     'SELECT wallet FROM collectibles WHERE wallet IN (' + marks + ')'
@@ -3102,19 +3296,20 @@ async function accrueInvite(env, row) {
   const usd = Math.round(feeUsd * pct / 100 * 1000000) / 1000000;
 
   const dayStart = Date.now() - (Date.now() % 86400000);
-  const today = await env.DB.prepare(
-    'SELECT COALESCE(SUM(points), 0) AS n FROM invite_earnings WHERE referrer = ? AND ts >= ?'
-  ).bind(link.referrer, dayStart).first();
-  const room = Math.max(0, INVITE_POINTS_DAILY_CAP - ((today && today.n) || 0));
-  const points = Math.min(room, Math.round(row.usd * SWAP_POINTS_PER_USD * INVITE_POINTS_PCT / 100));
+  const want = Math.round(row.usd * SWAP_POINTS_PER_USD * INVITE_POINTS_PCT / 100);
 
+  // The cap is applied inside the insert (M1), so racing accruals for one
+  // referrer cannot each see the same room.
   const wrote = await env.DB.prepare(
     'INSERT INTO invite_earnings (signature, referrer, referee, usd, points, share_pct, fee_usd, ts) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(signature) DO NOTHING'
-  ).bind(row.signature, link.referrer, row.wallet, usd, points,
+    'SELECT ?, ?, ?, ?, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM invite_earnings WHERE referrer = ? AND ts >= ?))), ?, ?, ? WHERE 1 ' +
+    'ON CONFLICT(signature) DO NOTHING'
+  ).bind(row.signature, link.referrer, row.wallet, usd, want, INVITE_POINTS_DAILY_CAP, link.referrer, dayStart,
     pct, Math.round(feeUsd * 1000000) / 1000000, Date.now()).run();
   // Already paid for. Nothing below this line may run twice.
   if (wrote.meta.changes !== 1) return;
+  const got = await env.DB.prepare('SELECT points FROM invite_earnings WHERE signature = ?').bind(row.signature).first();
+  const points = (got && got.points) || 0;
 
   // addPoints only adds to a row that exists: without this a wallet with no
   // player row would have the award written to its event log and nothing added
@@ -3315,7 +3510,8 @@ async function settlePayment(env, kind, b, signature, wallet) {
   // the request instead would let somebody hold on one site and settle
   // against another's treasury.
   const treasury = await treasuryFor(env, b.site_slug);
-  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose, treasury);
+  const v = await verifyInvoice(env, wallet, signature, usdcUnits(b.total_usd), purpose, treasury,
+    { reference: b.reference, createdAt: b.created_at });
   if (!v.ok) {
     // a concurrent request may have settled this exact payment a moment ago
     const cur = await env.DB.prepare('SELECT status, signature FROM ' + kind.table + ' WHERE ref = ?').bind(b.ref).first();
@@ -3421,9 +3617,14 @@ async function reconcilePayments(env) {
       'AND created_at > ? ORDER BY created_at DESC LIMIT 50'
     ).bind(Date.now() - RECONCILE_HOURS * 3600000).all();
     for (const b of rows.results || []) {
-      const sig = await findPaymentByReference(env, b.reference);
-      if (!sig) continue;
-      const settled = await settlePayment(env, kind, b, sig, null);
+      const sigs = await findPaymentsByReference(env, b.reference);
+      let settled = null, sig = null;
+      for (const cand of sigs) {
+        settled = await settlePayment(env, kind, b, cand, null);
+        sig = cand;
+        if (settled.status !== 'unpaid') break;
+      }
+      if (!settled) continue;
       // A basket found this way has to pass the payment on to its lines, the
       // same as when the page confirms it.
       if (kind === CHECKOUTS.cart && settled.status === 'paid') await markCartPaid(env, b.ref, sig);
@@ -3449,21 +3650,42 @@ async function watchPayment(request, env, kind, ref) {
   }
   const unpaid = b.status === 'held' ? 'waiting' : 'expired';
 
-  const sig = await findPaymentByReference(env, b.reference);
-  if (!sig) return json(request, env, { status: unpaid });
+  const sigs = await findPaymentsByReference(env, b.reference);
+  if (!sigs.length) return json(request, env, { status: unpaid });
 
-  const s = await settlePayment(env, kind, b, sig, null);
+  // try each tagged payment: a dust transfer carrying the same reference must
+  // not hide the real one
+  let s = null, sig = null;
+  for (const cand of sigs) {
+    s = await settlePayment(env, kind, b, cand, null);
+    sig = cand;
+    if (s.status !== 'unpaid') break;
+  }
   if (s.status === 'unpaid') return json(request, env, { status: unpaid, note: s.error });
   if (s.status === 'settling') return json(request, env, { status: unpaid });
   return json(request, env, { status: s.status, signature: sig });
 }
 
-function bookingRef() {
-  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let out = 'FOX-';
-  const bytes = crypto.getRandomValues(new Uint8Array(6));
-  for (const b of bytes) out += s[b % s.length];
+/// A reference that is hard to guess. Ten characters from 31 is about 8×10^14
+/// (it was six, about 9×10^8, which a patient script could walk), drawn without
+/// modulo bias (security fix 2026-10-29). Old six- and five-character
+/// references stay valid; only new ones are longer.
+const REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REF_LENGTH = 10;
+function refCode(prefix, n) {
+  let out = prefix;
+  while (out.length < prefix.length + n) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    for (const b of bytes) {
+      // 248 is the largest multiple of 31 below 256; above it would skew
+      if (b < 248 && out.length < prefix.length + n) out += REF_ALPHABET[b % 31];
+    }
+  }
   return out;
+}
+
+function bookingRef() {
+  return refCode('FOX-', REF_LENGTH);
 }
 
 
@@ -3887,11 +4109,16 @@ async function redeemCredit(env, row, type, startsAt, status, holdUntil) {
 }
 
 function bundleRef() {
-  const s = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let out = 'PACK-';
-  const bytes = crypto.getRandomValues(new Uint8Array(5));
-  for (const b of bytes) out += s[b % s.length];
-  return out;
+  return refCode('PACK-', REF_LENGTH);
+}
+
+/// What a reference shows to someone who is not its owner: when and what, not
+/// who or with which transaction (security fix 2026-10-29).
+function redactForStranger(o) {
+  if (!o) return o;
+  const c = Object.assign({}, o);
+  delete c.name; delete c.signature;
+  return c;
 }
 
 function publicBundle(row, credits) {
@@ -3976,10 +4203,21 @@ async function bannerNextFree(env, weeks) {
   return earliestBannerStart(await bannerRuns(env, soonest), soonest, weeks);
 }
 
+/// Fingerprint of one run's artwork, so an approval is of exactly what was
+/// reviewed. Hex SHA-256 of the four fields, joined by a separator none of
+/// them can contain unescaped.
+async function creativeHash(b) {
+  const text = JSON.stringify([b.sponsor || '', b.headline || '', b.url || '', b.image_url || '']);
+  const h = await sha256(new TextEncoder().encode(text));
+  return Array.from(h).map(function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+}
+
 async function bannerLive(env) {
   const now = Date.now();
   return await env.DB.prepare(
-    "SELECT ref, sponsor, headline, url, image_url, starts_at, ends_at FROM banner_bookings " +
+    // No ref: it is the only key to the booking's page and its creative, and
+    // this answer is public (security fix 2026-10-29).
+    "SELECT sponsor, headline, url, image_url, starts_at, ends_at FROM banner_bookings " +
     "WHERE status = 'paid' AND approved = 1 AND starts_at <= ? AND ends_at > ? " +
     'ORDER BY starts_at ASC LIMIT 1'
   ).bind(now, now).first();
@@ -4190,6 +4428,15 @@ export default {
         const slot = String(body.slot || '').slice(0, 64);
         const kind = body.kind === 'click' ? 'clicks' : 'views';
         if (!slot) return json(request, env, { ok: false }, 400);
+        // Only the campaign actually running can be counted (security fix
+        // 2026-10-29): any string used to be accepted, so stats could be
+        // written for slots that never ran, or inflated at will. A run sold
+        // off-platform through banner.json is not counted here.
+        const live = await bannerLive(env);
+        if (!live || slot !== 'ad:' + live.sponsor) return json(request, env, { ok: false, counted: false }, 400);
+        if (await rateLimited(request, env, 'banner:dedupe', null, slot + ':' + kind)) {
+          return json(request, env, { ok: true, counted: false });
+        }
         const day = new Date().toISOString().slice(0, 10);
         await env.DB.prepare(
           'INSERT INTO banner_stats (slot, day, ' + kind + ') VALUES (?, ?, 1) ' +
@@ -4359,9 +4606,22 @@ export default {
 
       // ── health ──
       if (path === '/api/health' && request.method === 'GET') {
-        const h = await healthCheck(env);
-        h.build = BUILD;
-        return json(request, env, h, h.ok ? 200 : 503);
+        // Security fix 2026-10-29 (L3): the public answer is up/down and the
+        // build, from a check run at most once a minute per isolate, so the
+        // endpoint cannot be used to burn the Helius quota or read which
+        // settings are missing and how many players and errors there are.
+        // The full detail is for the admin token.
+        if (tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          const h = await healthCheck(env);
+          h.build = BUILD;
+          return json(request, env, h, h.ok ? 200 : 503);
+        }
+        const now = Date.now();
+        if (!publicHealth || now - publicHealth.at > 60000 || publicHealth.env !== env) {
+          const h = await healthCheck(env);
+          publicHealth = { at: now, ok: !!h.ok, env: env };
+        }
+        return json(request, env, { ok: publicHealth.ok, build: BUILD }, publicHealth.ok ? 200 : 503);
       }
 
       // What is owed, so a payout run is one page rather than a query. Paying
@@ -4369,7 +4629,29 @@ export default {
       // Proves the whole chain in one call: the key parses, Google accepts the
       // JWT, and the calendar is actually shared with the service account.
       // Each of those fails differently and all three look like "it is broken".
+      // ── admin: game points review queue (security fix 2026-10-29, H3) ──
+      if (path === '/api/admin/game/pending' || path === '/api/admin/game/pending/decide') {
+        if (!tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
+        if (path === '/api/admin/game/pending' && request.method === 'GET') {
+          return json(request, env, await adminListPending(env, { listRangers }, url.searchParams.get('status') || 'claimed'));
+        }
+        if (path === '/api/admin/game/pending/decide' && request.method === 'POST') {
+          const body = await request.json().catch(function () { return null; });
+          if (!body || typeof body !== 'object') return json(request, env, { error: 'bad request' }, 400);
+          const r = await adminDecidePending(env, { listRangers, ensurePlayer, addPoints }, body);
+          return json(request, env, r.body, r.status);
+        }
+        return json(request, env, { error: 'method not allowed' }, 405);
+      }
+
       if (path === '/api/admin/calendar/test' && request.method === 'GET') {
+        // Admin only (security fix 2026-10-29): it used to answer anyone, and
+        // each call signs a JWT and writes a test event to the calendar.
+        if (!tokenMatches(request.headers.get('Authorization') || '', env.ADMIN_TOKEN)) {
+          return json(request, env, { error: 'not authorised' }, 401);
+        }
         if (!gcalConfigured(env)) {
           return json(request, env, {
             ok: false,
@@ -4451,7 +4733,11 @@ export default {
         const rows = await env.DB.prepare(
           "SELECT * FROM banner_bookings WHERE status IN ('paid','refund') ORDER BY starts_at ASC"
         ).all();
-        return json(request, env, { bookings: rows.results || [] });
+        const list = [];
+        for (const r of rows.results || []) {
+          list.push(Object.assign({}, r, { creativeHash: await creativeHash(r) }));
+        }
+        return json(request, env, { bookings: list });
       }
 
       if (path === '/api/admin/banner/approve' && request.method === 'POST') {
@@ -4462,10 +4748,25 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const ref = String(body.ref || '').trim();
         const ok = body.approved ? 1 : 0;
+        const cur = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
+        if (!cur) return json(request, env, { error: 'no such booking' }, 404);
+        // Approval is of the exact artwork reviewed (security fix 2026-10-29).
+        // The reviewer sends back the hash shown in the admin list; if the
+        // creative changed in between, nothing goes live unseen.
+        if (ok) {
+          if (cur.status !== 'paid') return json(request, env, { error: 'only a paid run can be approved' }, 409);
+          if (!cur.sponsor || !cur.headline || !cur.url) {
+            return json(request, env, { error: 'no artwork has been sent for this run yet' }, 409);
+          }
+          const want = await creativeHash(cur);
+          if (String(body.creativeHash || '') !== want) {
+            return json(request, env, { error: 'the artwork changed since you looked — reload and review it again', creativeHash: want }, 409);
+          }
+        }
         const r = await env.DB.prepare(
-          'UPDATE banner_bookings SET approved = ? WHERE ref = ?'
-        ).bind(ok, ref).run();
-        if (!r.meta || r.meta.changes === 0) return json(request, env, { error: 'no such booking' }, 404);
+          'UPDATE banner_bookings SET approved = ? WHERE ref = ?' + (ok ? ' AND sponsor IS ? AND headline IS ? AND url IS ? AND image_url IS ?' : '')
+        ).bind(...[ok, ref].concat(ok ? [cur.sponsor, cur.headline, cur.url, cur.image_url] : [])).run();
+        if (!r.meta || r.meta.changes === 0) return json(request, env, { error: 'the artwork changed — review it again' }, 409);
         return json(request, env, { ok: true, ref: ref, approved: !!ok });
       }
 
@@ -4650,8 +4951,15 @@ export default {
         // a retry or two tabs at once still pay exactly once.
         await env.DB.prepare(
           'INSERT INTO collectibles (wallet, asset, signature, minted_at, points) VALUES (?, ?, ?, ?, 0) ' +
-          'ON CONFLICT(wallet) DO NOTHING'
+          'ON CONFLICT DO NOTHING'
         ).bind(who, asset, signature, Date.now()).run();
+        // The asset is unique too. One that was claimed by a wallet and then
+        // passed on used to hit that constraint and answer 500 (security fix
+        // 2026-10-29, I5); it is a plain "already claimed" now.
+        const mine = await env.DB.prepare('SELECT asset FROM collectibles WHERE wallet = ?').bind(who).first();
+        if (!mine) {
+          return json(request, env, { error: 'that collectible was already claimed by another wallet', already: true }, 409);
+        }
         const paid = await env.DB.prepare(
           'UPDATE collectibles SET points = ? WHERE wallet = ? AND points = 0'
         ).bind(COLLECTIBLE_POINTS, who).run();
@@ -4734,7 +5042,8 @@ export default {
       // useless ("Internal error"). Recording them is the only way to find out
       // what actually went wrong for someone else.
       if (path === '/api/swap/failed' && request.method === 'POST') {
-        const body = await request.json().catch(function () { return {}; });
+        if (await rateLimited(request, env, 'swapfail:all', null)) return json(request, env, { ok: true, logged: false });
+        const body = (await request.json().catch(function () { return null; })) || {};
         await logError(env, 'swap.client', JSON.stringify({
           message: String(body.message || '').slice(0, 240),
           in: String(body.inMint || '').slice(0, 44),
@@ -5048,7 +5357,7 @@ export default {
       // that will not answer is reported as unknown, never as available.
       if (path === '/api/launch/domain' && request.method === 'GET') {
         const name = String(url.searchParams.get('name') || '').trim().toLowerCase();
-        if (!/^[a-z0-9-]{2,63}\.[a-z]{2,24}$/.test(name)) {
+        if (!LAUNCH_DOMAIN_RE.test(name)) {
           return json(request, env, { name: name, status: 'invalid', reason: 'that is not a domain name' });
         }
         const mine = await env.DB.prepare('SELECT slug FROM sites WHERE domain = ?').bind(name).first();
@@ -5065,7 +5374,15 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const code = String(body.code || '').trim().toUpperCase();
         const slug = String(body.slug || '').trim().toLowerCase();
-        const wallet = String(body.wallet || '').trim();
+        // Security fix 2026-10-29 (M4): the wallet a site pays into is the
+        // one that signed in, not whatever the form sent. Otherwise anyone
+        // holding an invite could launch a site paying a wallet they do not
+        // control, or claim to be somebody else's site.
+        const wallet = await getSession(request, env);
+        if (!wallet) return json(request, env, { error: 'sign in with the wallet that will be paid first', signIn: true }, 401);
+        if (body.wallet && String(body.wallet).trim() !== wallet) {
+          return json(request, env, { error: 'that is not the wallet you signed in with' }, 403);
+        }
         const name = String(body.name || '').trim().slice(0, 60);
         // Not sliced to length before being checked: truncating four choices
         // to three would silently drop one of them and launch a site the
@@ -5098,6 +5415,11 @@ export default {
         const socials = cleanSocials(body.socials);
 
         const domain = body.domain ? String(body.domain).trim().toLowerCase() : null;
+        // Same shape /api/launch/domain checks against the registry, so a site
+        // cannot carry a "domain" that is markup or a URL (M4).
+        if (domain !== null && !LAUNCH_DOMAIN_RE.test(domain)) {
+          return json(request, env, { error: 'that is not a domain name' }, 400);
+        }
 
         // The invite is spent in the same statement that checks it, so two
         // people holding the same code cannot both get through.
@@ -5182,15 +5504,17 @@ export default {
               { apy: own.apy, at: new Date(own.to).toISOString(), measured: true,
                 since: own.from, readings: own.readings });
           }
-          return json(request, env,
-            { error: r.error, published: r.status === 404 ? false : undefined },
-            r.status === 404 ? 503 : r.status);
+          // Nobody has published a rate is an answer, not a failure: a 200
+          // with no number, so the page says so and the browser does not log
+          // an error on every visit. Only a real fault upstream is an error.
+          if (r.status === 404) return json(request, env, { apy: null, published: false });
+          return json(request, env, { error: r.error }, r.status);
         }
         // Only the one product this site offers. Handing back every index
         // would invite the page to display a rate for something it cannot
         // actually deposit into.
         const row = (r.body.data || []).find(function (d) { return d.index === REFLECT_INDEX; });
-        if (!row) return json(request, env, { error: 'no rate published yet', published: false }, 503);
+        if (!row) return json(request, env, { apy: null, published: false });
         return json(request, env, { apy: row.apy, at: row.timestamp });
       }
 
@@ -5258,8 +5582,20 @@ export default {
         // And the transaction has to be theirs. The wallet and the signature
         // both arrive from whoever is posting, so taking them on trust let
         // anyone write rows into anyone's history.
-        if (!(await signedBy(env, signature, wallet))) {
+        const tx = await signedBy(env, signature, wallet);
+        if (!tx) {
           return json(request, env, { error: 'that transaction is not yours' }, 403);
+        }
+        // Security fix 2026-10-29 (L11): any transaction of theirs used to do,
+        // with any amount and either direction. The USDC their wallet actually
+        // paid in (or got back) has to match what is being written down. A
+        // withdrawal returns a little more than went in, so it may be larger.
+        const moved = usdcMovedFor(tx, wallet);
+        const fits = side === 'in'
+          ? (-moved >= amount * 0.99 && -moved <= amount * 1.01)
+          : (moved >= amount * 0.99 && moved <= amount * 2);
+        if (!fits) {
+          return json(request, env, { error: 'that transaction did not move that much USDC' }, 400);
         }
         // The signature is the key, so a page that retries cannot write twice.
         await env.DB.prepare(
@@ -5498,7 +5834,11 @@ export default {
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
         const wallet = await getSession(request, env).catch(function () { return null; });
-        const ref = bookingRef().replace('FOX-', 'AD-');
+        if (!wallet) return signInFirst(request, env);
+        if (await tooManyHolds(env, 'banner_bookings', wallet)) {
+          return json(request, env, { error: 'you already have an ad run waiting for payment — pay for it or let it lapse first' }, 409);
+        }
+        const ref = refCode('AD-', REF_LENGTH);
         const reference = newReference();
         const now = Date.now();
 
@@ -5579,7 +5919,19 @@ export default {
         const ref = String(body.ref || '').trim();
         const b = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        // The reference alone used to be enough to rewrite a live, approved
+        // banner (security fix 2026-10-29). Now only the wallet that booked the
+        // run may send its creative, and once approved it is locked: a change
+        // after that is a new review, arranged with me directly.
+        const who = await getSession(request, env).catch(function () { return null; });
+        if (!who) return signInFirst(request, env);
+        if (b.wallet && who !== b.wallet) {
+          return json(request, env, { error: 'only the wallet that booked this run can send its artwork' }, 403);
+        }
         if (b.status !== 'paid') return json(request, env, { error: 'that booking is not paid yet' }, 409);
+        if (b.approved) {
+          return json(request, env, { error: 'this banner is approved and locked — get in touch to change it', locked: true }, 409);
+        }
 
         const sponsor = String(body.sponsor || '').trim().slice(0, 60);
         const headline = String(body.headline || '').trim().slice(0, 90);
@@ -5592,7 +5944,8 @@ export default {
         if (image && !/^https:\/\//.test(image)) return json(request, env, { error: 'the image must be https' }, 400);
 
         await env.DB.prepare(
-          'UPDATE banner_bookings SET sponsor = ?, headline = ?, url = ?, image_url = ?, approved = 0 WHERE ref = ?'
+          'UPDATE banner_bookings SET sponsor = ?, headline = ?, url = ?, image_url = ?, approved = 0 ' +
+          "WHERE ref = ? AND status = 'paid' AND (approved IS NULL OR approved = 0)"
         ).bind(sponsor, headline, link, image || null, ref).run();
         await alert(env, '🖼 Creative submitted for ' + ref + '\n' + sponsor + ' — ' + headline +
           '\n' + link + '\nApprove it before it runs.');
@@ -5667,6 +6020,14 @@ export default {
         }
 
         const wallet = await getSession(request, env).catch(function () { return null; });
+        // An enquiry holds nothing and takes no money, so it still works
+        // signed out. Anything that holds an hour needs a wallet.
+        if (type.mode !== 'enquiry') {
+          if (!wallet) return signInFirst(request, env);
+          if (await tooManyHolds(env, 'bookings', wallet)) {
+            return json(request, env, { error: 'you are holding as many times as anyone can at once — pay for those or let them lapse first' }, 409);
+          }
+        }
         const holder = wallet ? await perkTier(env, wallet) : null;
         const q = quoteFor(type, startsAt, holder);
         // Paid in USDC, so no exchange rate is needed — and a SOL price feed
@@ -5742,6 +6103,8 @@ export default {
         if (!items.length) return json(request, env, { error: 'the basket is empty' }, 400);
         if (!name || !contact) return json(request, env, { error: 'name and a way to reach you are both needed' }, 400);
 
+        const cartWallet = await getSession(request, env).catch(function () { return null; });
+        if (!cartWallet) return signInFirst(request, env);
         const now = Date.now();
         const rows = [];
         for (const it of items) {
@@ -5753,6 +6116,11 @@ export default {
           if (row.status === 'paid') return json(request, env, { error: ref + ' is already paid for', ref: ref, gone: true }, 409);
           if (row.status !== 'held') return json(request, env, { error: ref + ' is no longer held', ref: ref, gone: true }, 409);
           if (row.group_ref) return json(request, env, { error: ref + ' is already in a basket', ref: ref, gone: true }, 409);
+          // Only your own holds go in your basket (security fix 2026-10-29);
+          // a seen reference used to be enough to take somebody else's.
+          if (row.wallet && row.wallet !== cartWallet) {
+            return json(request, env, { error: ref + ' is not one of yours', ref: ref, gone: true }, 403);
+          }
           rows.push({ kind: kind, row: row });
         }
 
@@ -5769,7 +6137,7 @@ export default {
         if (cartSite && !cartPayTo) return json(request, env, { error: 'this site cannot take payments yet' }, 503);
 
         const total = Math.round(rows.reduce(function (sum, r) { return sum + Number(r.row.total_usd || 0); }, 0) * 100) / 100;
-        const wallet = await getSession(request, env).catch(function () { return null; });
+        const wallet = cartWallet;
         const ref = bookingRef();
         const reference = newReference();
         const holdUntil = now + HOLD_MINUTES * 60000;
@@ -5783,9 +6151,9 @@ export default {
         // the first thing added does not expire while the last is chosen.
         for (const r of rows) {
           const claimed = await env.DB.prepare(
-            'UPDATE ' + r.kind.table + ' SET group_ref = ?, hold_until = ?, name = ?, contact = ? ' +
-            "WHERE ref = ? AND status = 'held' AND group_ref IS NULL"
-          ).bind(ref, holdUntil, name, contact, r.row.ref).run();
+            'UPDATE ' + r.kind.table + ' SET group_ref = ?, hold_until = ?, name = ?, contact = ?, wallet = COALESCE(wallet, ?) ' +
+            "WHERE ref = ? AND status = 'held' AND group_ref IS NULL AND (wallet IS NULL OR wallet = ?)"
+          ).bind(ref, holdUntil, name, contact, wallet, r.row.ref, wallet).run();
           if (claimed.meta.changes !== 1) {
             // someone else took it in the last moment: undo and say which
             await env.DB.prepare('UPDATE bookings SET group_ref = NULL WHERE group_ref = ?').bind(ref).run();
@@ -5892,8 +6260,11 @@ export default {
         const details = String(body.details || '').trim().slice(0, 4000);
         if (!ref || !details) return json(request, env, { error: 'reference and details are both needed' }, 400);
 
-        const b = await env.DB.prepare('SELECT ref, type_id, status, name, contact FROM bookings WHERE ref = ?').bind(ref).first();
+        const b = await env.DB.prepare('SELECT ref, wallet, type_id, status, name, contact FROM bookings WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no booking with that reference' }, 404);
+        if (!(await ownsRow(request, env, b))) {
+          return json(request, env, { error: 'sign in with the wallet that booked this to add details', signIn: true }, 403);
+        }
         if (b.status !== 'paid' && b.status !== 'enquiry') {
           return json(request, env, { error: 'that booking is not paid for yet' }, 409);
         }
@@ -5968,7 +6339,7 @@ export default {
         // The money is checked against the chain, for the exact amount, tagged
         // with this purchase. Nothing here trusts the page.
         const v = await verifyInvoice(env, row.wallet, signature, usdcUnits(row.usd),
-          'points:' + row.ref, env.TREASURY_WALLET);
+          'points:' + row.ref, env.TREASURY_WALLET, { reference: row.reference, createdAt: row.created_at });
         if (!v.ok) return json(request, env, { error: v.error }, 402);
 
         // The update is the lock: only the request that flips it off 'held'
@@ -6050,6 +6421,10 @@ export default {
         }
 
         const wallet = await getSession(request, env).catch(function () { return null; });
+        if (!wallet) return signInFirst(request, env);
+        if (await tooManyHolds(env, 'bundles', wallet)) {
+          return json(request, env, { error: 'you already have bundles waiting for payment — pay for those or let them lapse first' }, 409);
+        }
         const holder = wallet ? await perkTier(env, wallet) : null;
         const q = bundleQuote(bundle, holder);
 
@@ -6151,6 +6526,11 @@ export default {
 
         const b = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
         if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
+        // A seen reference used to be enough to spend somebody's credits
+        // (security fix 2026-10-29). Owned bundles now need their wallet.
+        if (!(await ownsRow(request, env, b))) {
+          return json(request, env, { error: 'sign in with the wallet that bought this bundle to use it', signIn: true }, 403);
+        }
         if (b.status !== 'paid') return json(request, env, { error: 'that bundle is not paid for yet' }, 409);
 
         const credits = await bundleCredits(env, b);
@@ -6201,10 +6581,12 @@ export default {
         if (!b) return json(request, env, { error: 'no bundle with that reference' }, 404);
         const credits = await bundleCredits(env, b);
         const type = bookingType(b.type_id);
+        const mine = b.wallet ? await ownsRow(request, env, b) : false;
+        const sess = await bundleSessions(env, ref);
         return json(request, env, {
           kind: 'bundle',
-          bundle: publicBundle(b, credits),
-          sessions: await bundleSessions(env, ref),
+          bundle: mine ? publicBundle(b, credits) : redactForStranger(publicBundle(b, credits)),
+          sessions: mine ? sess : sess.map(redactForStranger),
           typeName: type ? type.name : b.type_id,
           minutes: type ? type.minutes : null,
           mode: type ? type.mode : null
@@ -6215,7 +6597,14 @@ export default {
         const ref = String(url.searchParams.get('ref') || '').trim();
         if (!ref) return json(request, env, { error: 'which booking?' }, 400);
         const b = await env.DB.prepare('SELECT * FROM bookings WHERE ref = ?').bind(ref).first();
-        if (b) return json(request, env, { kind: 'booking', booking: publicBooking(b), details: b.details || null });
+        if (b) {
+          // The brief can hold private detail; the owner sees it, a stranger
+          // holding the reference sees only the booking itself.
+          const mine = b.wallet ? await ownsRow(request, env, b) : false;
+          return json(request, env, mine
+            ? { kind: 'booking', booking: publicBooking(b), details: b.details || null }
+            : { kind: 'booking', booking: redactForStranger(publicBooking(b)), details: null, hasDetails: !!b.details });
+        }
         // An advertiser looking for the run they paid for, most likely to
         // finish the artwork they left behind.
         const a = await env.DB.prepare('SELECT * FROM banner_bookings WHERE ref = ?').bind(ref).first();
@@ -6234,10 +6623,12 @@ export default {
         const p = await env.DB.prepare('SELECT * FROM bundles WHERE ref = ?').bind(ref).first();
         if (p) {
           const type = bookingType(p.type_id);
+          const mineP = p.wallet ? await ownsRow(request, env, p) : false;
+          const sessP = await bundleSessions(env, p.ref);
           return json(request, env, {
             kind: 'bundle',
-            bundle: publicBundle(p, await bundleCredits(env, p)),
-            sessions: await bundleSessions(env, p.ref),
+            bundle: mineP ? publicBundle(p, await bundleCredits(env, p)) : redactForStranger(publicBundle(p, await bundleCredits(env, p))),
+            sessions: mineP ? sessP : sessP.map(redactForStranger),
             typeName: type ? type.name : p.type_id,
             minutes: type ? type.minutes : null,
             mode: type ? type.mode : null
@@ -6294,18 +6685,22 @@ export default {
 
       // ── step 1: request a nonce ──
       if (path === '/api/nonce' && request.method === 'POST') {
-        const { wallet } = await request.json();
+        // Malformed or empty JSON is a 400, not a 500 (I10).
+        const { wallet } = (await request.json().catch(function () { return null; })) || {};
         if (!isWallet(wallet)) return json(request, env, { error: 'bad wallet' }, 400);
         const nonce = randomToken();
+        const nonceExpires = Date.now() + NONCE_TTL_MS;
         await env.DB.prepare('INSERT INTO nonces (nonce, wallet, expires) VALUES (?, ?, ?)')
-          .bind(nonce, wallet, Date.now() + NONCE_TTL_MS).run();
-        return json(request, env, { nonce, message: signInMessage(wallet, nonce) });
+          .bind(nonce, wallet, nonceExpires).run();
+        return json(request, env, { nonce, message: signInMessage(wallet, nonce, nonceExpires) });
       }
 
       // ── step 2: exchange a signature for a session ──
       if (path === '/api/session' && request.method === 'POST') {
-        const { wallet, nonce, signature } = await request.json();
-        if (!isWallet(wallet) || !nonce || !signature) return json(request, env, { error: 'missing fields' }, 400);
+        const { wallet, nonce, signature } = (await request.json().catch(function () { return null; })) || {};
+        if (!isWallet(wallet) || typeof nonce !== 'string' || !nonce || typeof signature !== 'string' || !signature) {
+          return json(request, env, { error: 'missing fields' }, 400);
+        }
         const row = await env.DB.prepare('SELECT wallet, expires FROM nonces WHERE nonce = ?').bind(nonce).first();
         if (!row || row.wallet !== wallet || row.expires < Date.now()) {
           return json(request, env, { error: 'nonce invalid or expired' }, 401);
@@ -6314,7 +6709,7 @@ export default {
         await env.DB.prepare('DELETE FROM nonces WHERE nonce = ?').bind(nonce).run();
 
         let ok = false;
-        try { ok = await verifySignature(wallet, signInMessage(wallet, nonce), signature); } catch (e) { ok = false; }
+        try { ok = await verifySignature(wallet, signInMessage(wallet, nonce, row.expires), signature); } catch (e) { ok = false; }
         if (!ok) return json(request, env, { error: 'signature did not verify' }, 401);
 
         const token = randomToken();
@@ -6332,16 +6727,30 @@ export default {
       // ones that touch a player's points still require a session.
       if (path.startsWith('/api/game/')) {
         const gameRes = await handleGameRequest(path, request, env, {
-          json, getSession, ensurePlayer, addPoints, isWallet, badgesFor, rateLimited, tooMany
+          json, getSession, ensurePlayer, addPoints, isWallet, badgesFor, rateLimited, tooMany, alert
         });
         return gameRes || json(request, env, { error: 'not found' }, 404);
       }
+
+      // Every route past the session gate, by name. A path that is none of
+      // them is a 404 rather than "not signed in", which sent people and
+      // scanners the wrong way (I11). test/hardening.test.mjs reads the
+      // routes below the gate out of this file and fails if this list drifts.
+      if (!SESSION_ROUTES.has(path)) return json(request, env, { error: 'not found' }, 404);
 
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
       if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
 
       if (await rateLimited(request, env, path, wallet)) return tooMany(request, env);
+
+      // ── sign out (L6) ── ends this session on the server, not just in the
+      // browser that held it.
+      if (path === '/api/logout' && request.method === 'POST') {
+        const auth = request.headers.get('Authorization') || '';
+        await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(auth.slice(7)).run();
+        return json(request, env, { ok: true });
+      }
 
       // ── coin flip (points only) ──
       // No money in or out — points are staked against points. The outcome is
@@ -6362,9 +6771,15 @@ export default {
           return json(request, env, { error: 'Not enough points. You have ' + balance + '.' }, 400);
         }
 
-        // take the wager first, so a crash mid-flip can never pay out for free
-        await env.DB.prepare('UPDATE players SET points = points - ?, updated_at = ? WHERE wallet = ?')
-          .bind(wager, Date.now(), wallet).run();
+        // take the wager first, so a crash mid-flip can never pay out for free.
+        // The balance check is part of the write (security fix 2026-10-29,
+        // M1): two flips racing past the SELECT above used to both deduct and
+        // drive the balance negative. Only a write that changed a row may flip.
+        const took = await env.DB.prepare('UPDATE players SET points = points - ?, updated_at = ? WHERE wallet = ? AND points >= ?')
+          .bind(wager, Date.now(), wallet, wager).run();
+        if (!took.meta || took.meta.changes !== 1) {
+          return json(request, env, { error: 'Not enough points for that wager.' }, 400);
+        }
 
         const buf = new Uint32Array(1);
         let v;
@@ -6473,10 +6888,28 @@ export default {
           if (tx.meta && tx.meta.err) return json(request, env, { error: 'that transaction failed' }, 400);
           const keys = tx.transaction.message.accountKeys.map(function (k) { return k.pubkey || k; });
           if (keys[0] !== wallet) return json(request, env, { error: 'that was not signed by your wallet' }, 400);
+          // Security fix 2026-10-29 (L1): only real cleanup is paid. An
+          // account opened in this same transaction and closed again costs
+          // nothing once the rent comes back, and burning zero tokens burns
+          // nothing, so both used to be free points up to the daily cap.
+          const all = (tx.transaction.message.instructions || []).slice();
+          for (const inner of (tx.meta && tx.meta.innerInstructions) || []) {
+            for (const ix of inner.instructions || []) all.push(ix);
+          }
+          const openedHere = new Set();
+          for (const ix of all) {
+            const t = ix.parsed && ix.parsed.type, info = (ix.parsed && ix.parsed.info) || {};
+            if (t === 'createAccount' || t === 'createAccountWithSeed') { if (info.newAccount) openedHere.add(info.newAccount); }
+            else if (t === 'initializeAccount' || t === 'initializeAccount2' || t === 'initializeAccount3' ||
+                     t === 'create' || t === 'createIdempotent') { if (info.account) openedHere.add(info.account); }
+          }
           for (const ix of tx.transaction.message.instructions || []) {
-            const t = ix.parsed && ix.parsed.type;
-            if (t === 'burn' || t === 'burnChecked') burns++;
-            else if (t === 'closeAccount') closes++;
+            const t = ix.parsed && ix.parsed.type, info = (ix.parsed && ix.parsed.info) || {};
+            if (info.account && openedHere.has(info.account)) continue;
+            if (t === 'burn' || t === 'burnChecked') {
+              const amt = String(info.amount != null ? info.amount : (info.tokenAmount && info.tokenAmount.amount) || '0');
+              if (/^[0-9]+$/.test(amt) && /[1-9]/.test(amt)) burns++;
+            } else if (t === 'closeAccount') closes++;
           }
         } catch (e) {
           await logError(env, 'cleanup.award', (e && e.message) || e);
@@ -6489,21 +6922,23 @@ export default {
         if (earned === 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
 
         const dayStart = Date.now() - (Date.now() % 86400000);
-        const today = await env.DB.prepare(
-          "SELECT COALESCE(SUM(points), 0) AS n FROM events WHERE wallet = ? AND type IN ('burn','cleanup') AND ts >= ?"
-        ).bind(wallet, dayStart).first();
-        const room = Math.max(0, BURN_POINTS_DAILY_CAP - ((today && today.n) || 0));
-        const points = Math.min(room, earned);
 
         // A page that retries, or two tabs at once, used to hit the primary key and
         // hand the person a 500 for a cleanup that had already been paid.
+        // The daily cap is applied inside the insert (security fix 2026-10-29,
+        // M1). Cleanup rows are the usd = 0 rows of swap_awards, one per paid
+        // cleanup, so they are what the cap counts.
         const wrote = await env.DB.prepare(
-          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) VALUES (?, ?, ?, ?, ?) ' +
+          'INSERT INTO swap_awards (signature, wallet, usd, points, ts) ' +
+          'SELECT ?, ?, 0, MIN(?, MAX(0, ? - (SELECT COALESCE(SUM(points), 0) FROM swap_awards WHERE wallet = ? AND usd = 0 AND ts >= ?))), ? WHERE 1 ' +
           'ON CONFLICT(signature) DO NOTHING'
-        ).bind(signature, wallet, 0, points, Date.now()).run();
+        ).bind(signature, wallet, earned, BURN_POINTS_DAILY_CAP, wallet, dayStart, Date.now()).run();
         if (wrote.meta.changes !== 1) {
           return json(request, env, { awarded: 0, already: true, player: await playerState(env, wallet) });
         }
+        const got = await env.DB.prepare('SELECT points FROM swap_awards WHERE signature = ?').bind(signature).first();
+        const points = (got && got.points) || 0;
+        const room = points < earned ? points : BURN_POINTS_DAILY_CAP;
         if (points > 0) await addPoints(env, wallet, 'cleanup', points);
 
         return json(request, env, {
@@ -6677,7 +7112,13 @@ export default {
         if (p && p.last_visit === today) {
           return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
         }
-        await env.DB.prepare('UPDATE players SET last_visit = ? WHERE wallet = ?').bind(today, wallet).run();
+        // The update is the lock (L7): two racing visits both pass the SELECT,
+        // but only the one that changed last_visit is paid.
+        await ensurePlayer(env, wallet);
+        const mark = await env.DB.prepare('UPDATE players SET last_visit = ? WHERE wallet = ? AND last_visit IS NOT ?').bind(today, wallet, today).run();
+        if (!mark.meta || mark.meta.changes !== 1) {
+          return json(request, env, { awarded: 0, player: await playerState(env, wallet) });
+        }
         await addPoints(env, wallet, 'visit', AWARDS.visit);
         return json(request, env, { awarded: AWARDS.visit, player: await playerState(env, wallet) });
       }
@@ -6696,18 +7137,8 @@ export default {
       if (path === '/api/rangers' && request.method === 'GET') {
         const owned = await listRangers(env, wallet);
         if (owned === null) return json(request, env, { rangers: [], staked: [], verified: false });
-        const staked = await stakedMints(env, wallet);
-        const ownedMints = owned.map(function (r) { return r.mint; });
-        // drop anything that has since left the wallet
-        const stale = staked.filter(function (m) { return ownedMints.indexOf(m) < 0; });
-        if (stale.length) {
-          const s = await loadStake(env, wallet);
-          const remaining = staked.length - stale.length;
-          await saveStake(env, wallet, { staked: remaining > 0 ? 1 : 0, since: remaining > 0 ? Date.now() : 0, count: remaining, banked: stakeAccrued(s) });
-          await env.DB.batch(stale.map(function (m) {
-            return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
-          }));
-        }
+        // drop anything that has since left the wallet, and stamp the rest
+        await reconcileStake(env, wallet, owned);
         // when each one was locked, so the page can show days staked and what
         // that Ranger has earned so far
         const sinceRows = await env.DB.prepare(
@@ -6736,6 +7167,7 @@ export default {
         want = want.filter(function (m) { return ownedMints.indexOf(m) >= 0; });
         if (!want.length) return json(request, env, { error: 'those Rangers are not in this wallet' }, 403);
 
+        await reconcileStake(env, wallet, owned);
         const already = await stakedMints(env, wallet);
         const toAdd = want.filter(function (m) { return already.indexOf(m) < 0; });
         if (!toAdd.length) return json(request, env, { player: await playerState(env, wallet), added: 0 });
@@ -6745,14 +7177,31 @@ export default {
         const pay = await verifyPayment(env, wallet, body.paymentSignature, fee, 'stake');
         if (!pay.ok) return json(request, env, { error: pay.error, feeLamports: fee }, 402);
 
-        const s = await loadStake(env, wallet);
+        // One active stake per Ranger (H1). A Ranger still staked under some
+        // other wallet is one that wallet no longer holds — this one does, the
+        // chain says so a few lines up. That stake ends now: the old wallet
+        // keeps what it earned up to its last verified check, and no more.
+        const marks = toAdd.map(function () { return '?'; }).join(',');
+        const others = ((await env.DB.prepare(
+          'SELECT wallet, mint FROM staked_nfts WHERE wallet != ? AND mint IN (' + marks + ')'
+        ).bind(wallet, ...toAdd).all()).results) || [];
+        const byWallet = {};
+        for (const o of others) (byWallet[o.wallet] = byWallet[o.wallet] || []).push(o.mint);
+        for (const w of Object.keys(byWallet)) await dropStakedMints(env, w, byWallet[w]);
+
+        // Bank this wallet's earnings at the old count before the count grows.
+        await dropStakedMints(env, wallet, []);
         const now = Date.now();
         await env.DB.batch(toAdd.map(function (m) {
-          return env.DB.prepare('INSERT INTO staked_nfts (wallet, mint, since) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(wallet, m, now);
+          return env.DB.prepare('INSERT INTO staked_nfts (wallet, mint, since, verified_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING').bind(wallet, m, now, now);
         }));
-        const total = already.length + toAdd.length;
-        await saveStake(env, wallet, { staked: 1, since: now, count: total, banked: stakeAccrued(s) });
-        return json(request, env, { player: await playerState(env, wallet), added: toAdd.length, staked: await stakedMints(env, wallet) });
+        // The count is what is actually in the table, not arithmetic on what
+        // was asked for: a racing stake of the same Ranger elsewhere loses at
+        // the unique index and must not be counted here.
+        const s = await loadStake(env, wallet);
+        const total = (await stakedMints(env, wallet)).length;
+        await saveStake(env, wallet, { staked: total > 0 ? 1 : 0, since: total > 0 ? now : 0, count: total, banked: s.banked || 0 });
+        return json(request, env, { player: await playerState(env, wallet), added: total - already.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/unstake' && request.method === 'POST') {
@@ -6763,21 +7212,24 @@ export default {
           : already;
         if (!drop.length) return json(request, env, { player: await playerState(env, wallet), removed: 0 });
 
-        const s = await loadStake(env, wallet);
-        await env.DB.batch(drop.map(function (m) {
-          return env.DB.prepare('DELETE FROM staked_nfts WHERE wallet = ? AND mint = ?').bind(wallet, m);
-        }));
-        const remaining = already.length - drop.length;
-        await saveStake(env, wallet, {
-          staked: remaining > 0 ? 1 : 0,
-          since: remaining > 0 ? Date.now() : 0,
-          count: remaining,
-          banked: stakeAccrued(s)
-        });
+        // Unstaking always works, even when the chain cannot be asked. With a
+        // fresh check, Rangers still here are stamped as seen now and earn up
+        // to now; without one, each earns only to its last verified sighting.
+        const ownedU = await listRangers(env, wallet).catch(function () { return null; });
+        if (ownedU) await reconcileStake(env, wallet, ownedU);
+        await dropStakedMints(env, wallet, drop);
         return json(request, env, { player: await playerState(env, wallet), removed: drop.length, staked: await stakedMints(env, wallet) });
       }
 
       if (path === '/api/claim' && request.method === 'POST') {
+        // Ownership is re-checked at claim (H1): staking points are paid only
+        // for Rangers still in this wallet, and an unavailable check is a
+        // refusal, not a pass.
+        if (await stakedMints(env, wallet).then(function (m) { return m.length; })) {
+          const owned = await listRangers(env, wallet).catch(function () { return null; });
+          if (owned === null) return json(request, env, { error: 'Could not check your Rangers just now — try again in a minute.' }, 503);
+          await reconcileStake(env, wallet, owned);
+        }
         const s = await loadStake(env, wallet);
         const pending = stakeAccrued(s);
         if (pending <= 0) return json(request, env, { awarded: 0, player: await playerState(env, wallet) });

@@ -12,6 +12,12 @@
 // Nothing here creates schema at request time.
 //
 // Points always go through addPoints, so every credit has its row in `events`.
+//
+// Security fix 2026-10-29 (H3): nothing the game reports is credited straight
+// away any more. Matches, challenges and the share bonus land in
+// game_pending_points as 'earned'; the player claims them on the Fox Points
+// dashboard, and the admin approves or rejects each one. A Moon Rangers holder
+// gets HOLDER_BOOST at approval, after a fresh on-chain ownership check.
 
 const KILL_FP = 10;   // Fox Points per kill
 const WIN_FP = 50;    // bonus for the winning team
@@ -39,6 +45,9 @@ export const WEEKLY_CHALLENGES = [{ id: 'play_10', fp: 50 }];
 // id no challenge can have, so "once per wallet per day" is the same primary key.
 const SHARE_CLAIM_ID = 'share:daily_tweet';
 const SHARE_REWARD_FP = 25;
+
+export const HOLDER_BOOST = 1.25;
+const PENDING_SOURCES = ['match', 'challenge', 'share'];
 
 const LEADERBOARD_PERIODS = { all: 0, weekly: 7 * DAY_MS, daily: DAY_MS };
 const LEADERBOARD_DEFAULT_LIMIT = 100;
@@ -86,17 +95,41 @@ function serverAuthorized(request, env) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Claims one (wallet, id, period) and credits it. The INSERT OR IGNORE against
-/// the primary key is the lock: two racing requests both get here, only one
-/// row is written, and only the request that wrote it is paid.
-async function claimOnce(env, h, wallet, id, period, fp, eventType) {
+/// Records points the game says were earned, for review. Nothing is credited
+/// here. UNIQUE(wallet, source, source_id) means one match or one challenge
+/// period can only ever be queued once.
+async function queuePending(env, wallet, source, sourceId, fp) {
+  if (!(fp > 0)) return false;
+  const r = await env.DB.prepare(
+    "INSERT OR IGNORE INTO game_pending_points (wallet, source, source_id, base_fp, status, created_at) VALUES (?, ?, ?, ?, 'earned', ?)"
+  ).bind(wallet, source, sourceId, fp, Date.now()).run();
+  return !!(r.meta && r.meta.changes === 1);
+}
+
+/// Claims one (wallet, id, period) and queues its points for review. The
+/// INSERT OR IGNORE against the primary key is the lock: two racing requests
+/// both get here, only one row is written, and only that one is queued.
+async function claimOnce(env, h, wallet, id, period, fp, source) {
   await h.ensurePlayer(env, wallet);
   const r = await env.DB.prepare(
     'INSERT OR IGNORE INTO game_challenge_claims (wallet, challenge_id, fp_awarded, claimed_at, period_key) VALUES (?, ?, ?, ?, ?)'
   ).bind(wallet, id, fp, Date.now(), period).run();
   if (!r.meta || r.meta.changes !== 1) return false;
-  await h.addPoints(env, wallet, eventType, fp);
+  await queuePending(env, wallet, source, id + ':' + period, fp);
   return true;
+}
+
+async function pendingSummary(env, wallet) {
+  const rows = ((await env.DB.prepare(
+    'SELECT id, source, source_id, base_fp, status, boost, awarded_fp, note, created_at, claimed_at, decided_at ' +
+    'FROM game_pending_points WHERE wallet = ? ORDER BY id DESC LIMIT 100'
+  ).bind(wallet).all()).results) || [];
+  const totals = { earned: 0, claimed: 0, approved: 0, rejected: 0 };
+  const t = ((await env.DB.prepare(
+    'SELECT status, SUM(base_fp) AS base, SUM(COALESCE(awarded_fp, 0)) AS awarded FROM game_pending_points WHERE wallet = ? GROUP BY status'
+  ).bind(wallet).all()).results) || [];
+  for (const r of t) totals[r.status] = r.status === 'approved' ? (r.awarded || 0) : (r.base || 0);
+  return { items: rows, totals: totals, holderBoost: HOLDER_BOOST };
 }
 
 async function pointsOf(env, wallet) {
@@ -213,18 +246,22 @@ export async function handleGameRequest(path, request, env, h) {
       ).bind(matchId, wallet, team, hero, kills, deaths, won ? 1 : 0, fp, match.ended_at).run();
       if (!r.meta || r.meta.changes !== 1) { duplicates++; continue; }
 
+      // Queued for review, not credited (H3). fp_awarded on the match row is
+      // what the match was worth before review; the balance moves only when
+      // the admin approves it.
       if (fp > 0) {
         await h.ensurePlayer(env, wallet);
-        await h.addPoints(env, wallet, 'game_match', fp);
+        await queuePending(env, wallet, 'match', matchId, fp);
       }
-      awards.push({ wallet, kills, deaths, team, won, fp_awarded: fp });
+      awards.push({ wallet, kills, deaths, team, won, fp_awarded: fp, pending: fp > 0 });
     }
 
     return json({ match_id: matchId, winning_team: winningTeam, awards, duplicates });
   }
 
   // ── everything below is a player acting on their own account ──
-  const PLAYER_ROUTES = ['/api/game/points', '/api/game/challenge-complete', '/api/game/share-reward'];
+  const PLAYER_ROUTES = ['/api/game/points', '/api/game/challenge-complete', '/api/game/share-reward',
+    '/api/game/pending', '/api/game/pending/claim'];
   if (PLAYER_ROUTES.indexOf(path) < 0) return null;
 
   const wallet = await h.getSession(request, env);
@@ -245,19 +282,41 @@ export async function handleGameRequest(path, request, env, h) {
       kills: gp.kills,
       deaths: gp.deaths,
       matches_played: gp.matches_played,
-      matches_won: gp.matches_won
+      matches_won: gp.matches_won,
+      pending: (await pendingSummary(env, wallet)).totals
     });
+  }
+
+  // GET /api/game/pending — what the game has earned this wallet, and where
+  // each item is in review
+  if (path === '/api/game/pending' && request.method === 'GET') {
+    return json(await pendingSummary(env, wallet));
+  }
+
+  // POST /api/game/pending/claim — ask for review of everything earned so far
+  if (path === '/api/game/pending/claim' && request.method === 'POST') {
+    const r = await env.DB.prepare(
+      "UPDATE game_pending_points SET status = 'claimed', claimed_at = ? WHERE wallet = ? AND status = 'earned'"
+    ).bind(Date.now(), wallet).run();
+    const n = (r.meta && r.meta.changes) || 0;
+    if (n && h.alert) {
+      await h.alert(env, '🎮 Game points claimed — ' + wallet + ' · ' + n + ' item' + (n === 1 ? '' : 's') +
+        '\nReview with tools/game-points-admin.mjs or GET /api/admin/game/pending');
+    }
+    return json(Object.assign({ ok: true, claimed: n }, await pendingSummary(env, wallet)));
   }
 
   // POST /api/game/share-reward — the daily share bonus, once per UTC day
   if (path === '/api/game/share-reward' && request.method === 'POST') {
     const now = Date.now();
-    const paid = await claimOnce(env, h, wallet, SHARE_CLAIM_ID, dayKey(now), SHARE_REWARD_FP, 'share_reward');
+    const paid = await claimOnce(env, h, wallet, SHARE_CLAIM_ID, dayKey(now), SHARE_REWARD_FP, 'share');
     if (!paid) {
       const nextDay = (Math.floor(now / DAY_MS) + 1) * DAY_MS;
       return json({ error: 'already_claimed', next_claim_in: Math.ceil((nextDay - now) / 60000) + 'm' }, 429);
     }
-    return json({ ok: true, points_awarded: SHARE_REWARD_FP, total: await pointsOf(env, wallet) });
+    // points_awarded is kept for the game client; the points are pending
+    // review, so the balance (total) has not moved.
+    return json({ ok: true, pending: true, points_awarded: SHARE_REWARD_FP, total: await pointsOf(env, wallet) });
   }
 
   // POST /api/game/challenge-complete — a challenge from the list above, at the
@@ -276,13 +335,97 @@ export async function handleGameRequest(path, request, env, h) {
       period = dayKey(now);
     }
 
-    const paid = await claimOnce(env, h, wallet, challenge.id, period, challenge.fp, 'challenge_' + challenge.id);
+    const paid = await claimOnce(env, h, wallet, challenge.id, period, challenge.fp, 'challenge');
     if (!paid) return json({ ok: false, reason: 'already_claimed', challenge_id: challenge.id, period });
     return json({
-      ok: true, challenge_id: challenge.id, period,
+      ok: true, pending: true, challenge_id: challenge.id, period,
       points_awarded: challenge.fp, total: await pointsOf(env, wallet)
     });
   }
 
   return null;
 }
+
+// ── Admin: the review queue ─────────────────────────────────────────────────
+// Called from index.js after it has checked ADMIN_TOKEN, so nothing here
+// re-checks it. `h` adds listRangers (fresh DAS ownership) to the helpers.
+
+/// GET /api/admin/game/pending?status=claimed — the queue, with what each item
+/// is based on, so it can be judged rather than rubber-stamped.
+export async function adminListPending(env, h, status) {
+  const want = ['earned', 'claimed', 'approved', 'rejected'].indexOf(status) >= 0 ? status : 'claimed';
+  const rows = ((await env.DB.prepare(
+    'SELECT * FROM game_pending_points WHERE status = ? ORDER BY COALESCE(claimed_at, created_at) ASC, id ASC LIMIT 200'
+  ).bind(want).all()).results) || [];
+  const out = [];
+  for (const r of rows) {
+    let evidence = null;
+    if (r.source === 'match') {
+      const m = await env.DB.prepare('SELECT * FROM game_match_records WHERE id = ?').bind(r.source_id).first();
+      const a = await env.DB.prepare('SELECT team, hero, kills, deaths, won FROM game_match_awards WHERE match_id = ? AND wallet = ?')
+        .bind(r.source_id, r.wallet).first();
+      const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM game_match_awards WHERE match_id = ?').bind(r.source_id).first();
+      evidence = { match: m || null, player: a || null, playersInMatch: (n && n.n) || 0 };
+    } else {
+      const parts = String(r.source_id).split(':');
+      const period = parts.pop();
+      evidence = { challenge: parts.join(':'), period: period };
+    }
+    const stats = await env.DB.prepare(
+      'SELECT COUNT(*) AS matches, COALESCE(SUM(kills), 0) AS kills, COALESCE(SUM(won), 0) AS wins FROM game_match_awards WHERE wallet = ?'
+    ).bind(r.wallet).first();
+    out.push(Object.assign({}, r, { evidence: evidence, walletStats: stats }));
+  }
+  return { status: want, items: out, holderBoost: HOLDER_BOOST };
+}
+
+/// POST /api/admin/game/pending/decide { ids:[…], approve:true|false, note? }
+///
+/// Approving re-checks each wallet's Moon Rangers on-chain right then: a holder
+/// gets floor(base × HOLDER_BOOST), anyone else the base. If the check cannot
+/// be made, that wallet's items are left in the queue rather than paid at the
+/// wrong rate. The status change is a conditional write made before the
+/// credit, so approving the same item twice pays once.
+export async function adminDecidePending(env, h, body) {
+  const ids = (Array.isArray(body.ids) ? body.ids : []).map(Number).filter(function (n) { return Number.isInteger(n) && n > 0; }).slice(0, 200);
+  if (!ids.length) return { status: 400, body: { error: 'ids required' } };
+  const approve = body.approve === true;
+  if (!approve && body.approve !== false) return { status: 400, body: { error: 'approve must be true or false' } };
+  const note = typeof body.note === 'string' ? body.note.slice(0, 200) : null;
+  const marks = ids.map(function () { return '?'; }).join(',');
+  const rows = ((await env.DB.prepare(
+    'SELECT * FROM game_pending_points WHERE id IN (' + marks + ')'
+  ).bind(...ids).all()).results) || [];
+  const now = Date.now();
+  const done = [], skipped = [];
+  const holderOf = {};
+  for (const r of rows) {
+    if (!approve) {
+      const u = await env.DB.prepare(
+        "UPDATE game_pending_points SET status = 'rejected', note = ?, decided_at = ? WHERE id = ? AND status IN ('earned', 'claimed')"
+      ).bind(note, now, r.id).run();
+      if (u.meta && u.meta.changes === 1) done.push({ id: r.id, status: 'rejected' });
+      else skipped.push({ id: r.id, reason: 'already ' + r.status });
+      continue;
+    }
+    if (r.status !== 'claimed') { skipped.push({ id: r.id, reason: r.status === 'earned' ? 'not claimed by the player yet' : 'already ' + r.status }); continue; }
+    if (!(r.wallet in holderOf)) {
+      const owned = await h.listRangers(env, r.wallet).catch(function () { return null; });
+      holderOf[r.wallet] = owned === null ? null : owned.length > 0;
+    }
+    if (holderOf[r.wallet] === null) { skipped.push({ id: r.id, reason: 'holder check unavailable — left in the queue' }); continue; }
+    const boost = holderOf[r.wallet] ? HOLDER_BOOST : 1;
+    const awarded = Math.floor(r.base_fp * boost);
+    const u = await env.DB.prepare(
+      "UPDATE game_pending_points SET status = 'approved', boost = ?, awarded_fp = ?, note = ?, decided_at = ? WHERE id = ? AND status = 'claimed'"
+    ).bind(boost, awarded, note, now, r.id).run();
+    if (!u.meta || u.meta.changes !== 1) { skipped.push({ id: r.id, reason: 'decided by someone else just now' }); continue; }
+    await h.ensurePlayer(env, r.wallet);
+    await h.addPoints(env, r.wallet, 'game_' + r.source, awarded);
+    done.push({ id: r.id, status: 'approved', wallet: r.wallet, base: r.base_fp, boost: boost, awarded: awarded });
+  }
+  for (const id of ids) if (!rows.some(function (r) { return r.id === id; })) skipped.push({ id: id, reason: 'no such item' });
+  return { status: 200, body: { ok: true, decided: done, skipped: skipped } };
+}
+
+export { PENDING_SOURCES };

@@ -4,9 +4,12 @@
 
 ```bash
 curl https://solquicks-points.solquicks-45c.workers.dev/api/health
+# full detail needs the admin token:
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://solquicks-points.solquicks-45c.workers.dev/api/health
 ```
 
-Reports the database, Helius, and how many errors were logged in the last
+Without the token it answers only `{ok, build}` (checked at most once a
+minute). With it, it reports the database, Helius, and how many errors were logged in the last
 hour. A scheduled check runs every 30 minutes and records the result.
 
 ## Alerts (optional, ~2 minutes to enable)

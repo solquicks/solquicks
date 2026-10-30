@@ -61,8 +61,9 @@ section('the rate people are shown');
   serving({ apy: { success: true, data: [{ index: 7, apy: 99, timestamp: 'x' }] } });
   const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
   const r = await call(env, 'GET', '/api/reflect/apy');
-  eq('a rate for a different product is not shown as ours', r.status, 503);
-  ok('and says so rather than showing nothing', /no rate/.test(r.body.error), r.body.error);
+  eq('a rate for a different product is not shown as ours', r.body.apy, null);
+  eq('and says none is published, rather than showing nothing', r.body.published, false);
+  eq('which is an answer, not an error', r.status, 200);
 }
 
 // ── quotes ──────────────────────────────────────────────────────────────────
@@ -220,6 +221,14 @@ section('the key');
 }
 
 // ── what they did, and when ─────────────────────────────────────────────────
+// The USDC balances a transaction recorded for a wallet, before and after.
+function usdcMove(owner, usdc) {
+  const pre = 1000 * 1e6, post = pre + Math.round(usdc * 1e6);
+  const bal = (n) => [{ accountIndex: 1, mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', owner,
+    uiTokenAmount: { amount: String(n), decimals: 6 } }];
+  return { preTokenBalances: bal(pre), postTokenBalances: bal(post) };
+}
+
 section('a record of what happened');
 {
   reset(); serving();
@@ -228,8 +237,8 @@ section('a record of what happened');
 
   // The chain is asked whether this transaction is theirs. Without that, the
   // wallet and the signature both arrive from whoever is posting.
-  const onChain = (sig, payer, failed = false) => chain.txs.set(sig, {
-    meta: { err: failed ? { InstructionError: [0, 'Custom'] } : null },
+  const onChain = (sig, payer, failed = false, usdc = -25) => chain.txs.set(sig, {
+    meta: { err: failed ? { InstructionError: [0, 'Custom'] } : null, ...usdcMove(payer, usdc) },
     transaction: { message: { accountKeys: [{ pubkey: payer }, { pubkey: 'other' }] } }
   });
   onChain(SIG, WALLET);
@@ -260,6 +269,31 @@ section('a record of what happened');
 
   const other = await call(env, 'GET', '/api/reflect/history?wallet=' + wallet(2));
   eq('and one wallet cannot see another\'s', other.body.rows.length, 0);
+}
+
+section('the history has to match the USDC that really moved (L11)');
+{
+  reset(); serving();
+  const env = freshEnv({ REFLECT_API_KEY: 'k-1' });
+  const sig = (c) => c.repeat(64);
+  const tx = (s, usdc) => chain.txs.set(s, { meta: { err: null, ...usdcMove(WALLET, usdc) },
+    transaction: { message: { accountKeys: [{ pubkey: WALLET }] } } });
+  tx(sig('A'), 0);
+  const nothing = await call(env, 'POST', '/api/reflect/record', { body: { wallet: WALLET, signature: sig('A'), side: 'in', amount: 25 } });
+  eq('a transaction of theirs that moved no USDC is not a deposit', nothing.status, 400);
+  tx(sig('B'), -1);
+  const inflated = await call(env, 'POST', '/api/reflect/record', { body: { wallet: WALLET, signature: sig('B'), side: 'in', amount: 900 } });
+  eq('a $1 deposit cannot be written down as $900', inflated.status, 400);
+  tx(sig('C'), 30);
+  const wrongWay = await call(env, 'POST', '/api/reflect/record', { body: { wallet: WALLET, signature: sig('C'), side: 'in', amount: 30 } });
+  eq('USDC coming back is not a deposit', wrongWay.status, 400);
+  const out = await call(env, 'POST', '/api/reflect/record', { body: { wallet: WALLET, signature: sig('C'), side: 'out', amount: 29.8 } });
+  eq('but it is a withdrawal, a little larger than what was redeemed', out.status, 200);
+  tx(sig('D'), -40);
+  const dep = await call(env, 'POST', '/api/reflect/record', { body: { wallet: WALLET, signature: sig('D'), side: 'in', amount: 40 } });
+  eq('and a real deposit is still written down', dep.status, 200);
+  const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM savings').first();
+  eq('two rows, not five', rows.n, 2);
 }
 
 {
@@ -325,7 +359,9 @@ section('the rate, measured rather than borrowed');
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
     .bind(Date.now() - 30 * DAY, 1.0).run();
   let r = await call(env, 'GET', '/api/reflect/apy');
-  eq('one reading gives no rate', r.status, 503);
+  eq('one reading gives no rate', r.body.apy, null);
+  eq('said as an empty answer, not an error', r.status, 200);
+  eq('marked as not published', r.body.published, false);
 
   // Two, a month apart, with the token up 1% — about 12.7% a year compounded.
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
@@ -348,7 +384,8 @@ section('the rate, measured rather than borrowed');
   await env.DB.prepare('INSERT INTO savings_rate (ts, rate) VALUES (?, ?)')
     .bind(Date.now(), 1.004).run();
   const r = await call(env, 'GET', '/api/reflect/apy');
-  eq('ten minutes of movement is not an annual rate', r.status, 503);
+  eq('ten minutes of movement is not an annual rate', r.body.apy, null);
+  eq('still a 200 with nothing published', r.status, 200);
 }
 
 {
