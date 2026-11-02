@@ -600,8 +600,12 @@ async function rateLimited(request, env, path, wallet, extra) {
 }
 
 function tooMany(request, env) {
+  // the swap routes also carry a stable code (see swapError); the rest of the
+  // site's answers are left exactly as they were
+  const body = { error: 'Slow down a moment and try again.' };
+  if (isSwapApiPath(request)) body.code = 'RATE_LIMITED';
   return new Response(
-    JSON.stringify({ error: 'Slow down a moment and try again.' }),
+    JSON.stringify(body),
     { status: 429, headers: Object.assign({ 'Retry-After': '60' }, corsHeaders(request, env)) }
   );
 }
@@ -700,7 +704,7 @@ async function healthCheck(env) {
 // you tickets rather than locking you out. Longer and more Rangers both raise
 // weight, which is what decides both the guaranteed reward and the draw odds.
 // Bumped on every deploy so /api/health says which build is actually live.
-const BUILD = 'security-2026-10-29';
+const BUILD = 'swap-api-bots-2026-11-02';
 
 // The routes that sit behind the session gate (see I11 in the router).
 const SESSION_ROUTES = new Set([
@@ -1883,6 +1887,141 @@ const SWAP_SPEEDS = {
 };
 function swapPriority(speed) {
   return { priorityLevelWithMaxLamports: SWAP_SPEEDS[speed] || SWAP_SPEEDS.normal };
+}
+
+// ── the swap API, for the page and for bots ─────────────────────────────────
+// Every swap route answers a failure with the same two fields: `error`, the
+// sentence the page has always shown, and `code`, a stable name a program can
+// branch on without parsing English. The sentences can be reworded; the codes
+// must not be. HTTP statuses are unchanged from before the codes existed.
+function isSwapApiPath(request) {
+  try { return new URL(request.url).pathname.startsWith('/api/swap/'); } catch (e) { return false; }
+}
+function swapError(request, env, status, code, error, extra) {
+  return json(request, env, Object.assign({ error: error, code: code }, extra || {}), status);
+}
+
+// What inspectSwap, recordSwap and swapValueUsd say, mapped to codes. Anything
+// not listed falls back to whatever the route passes in.
+const SWAP_ERROR_CODES = {
+  'swap not found yet': 'NOT_FOUND',
+  'that swap failed': 'SWAP_FAILED',
+  'no swap found in that transaction': 'NOT_A_SWAP',
+  'that swap was not signed by your wallet': 'WRONG_WALLET',
+  'could not value that swap': 'UNPRICED'
+};
+function swapErrorCode(message, fallback) {
+  return SWAP_ERROR_CODES[message] || fallback;
+}
+
+// Jupiter route options a caller may pass through on /api/swap/quote. None is
+// sent unless asked for, so the page's quotes are exactly what they were.
+// maxAccounts is bounded: Jupiter's own default and ceiling is 64, and much
+// below 16 nothing routes at all — a smaller number is a typo, not a choice.
+const MAX_ACCOUNTS_MIN = 16;
+const MAX_ACCOUNTS_MAX = 64;
+function parseBoolParam(v) {
+  if (v === 'true' || v === '1') return true;
+  if (v === 'false' || v === '0') return false;
+  return undefined;
+}
+/// Reads the optional route options from a query string. Absent means "do
+/// not send it"; present but malformed is an error, never quietly ignored.
+function swapRouteOptions(params) {
+  const options = {};
+  for (const name of ['onlyDirectRoutes', 'restrictIntermediateTokens']) {
+    if (!params.has(name)) continue;
+    const b = parseBoolParam(params.get(name));
+    if (b === undefined) return { error: name + ' must be true or false' };
+    options[name] = b;
+  }
+  if (params.has('maxAccounts')) {
+    const raw = params.get('maxAccounts');
+    const n = /^[0-9]{1,3}$/.test(raw) ? Number(raw) : NaN;
+    if (!(n >= MAX_ACCOUNTS_MIN && n <= MAX_ACCOUNTS_MAX)) {
+      return { error: 'maxAccounts must be a whole number from ' + MAX_ACCOUNTS_MIN + ' to ' + MAX_ACCOUNTS_MAX };
+    }
+    options.maxAccounts = n;
+  }
+  return { options: options };
+}
+
+// ── what a swap costs in rent ───────────────────────────────────────────────
+// Jupiter's quote and swap answers say nothing about accounts the transaction
+// will create. The one a swap routinely creates is the wallet's own account for
+// the token it receives, when the wallet has never held that token: Jupiter
+// adds an idempotent create for it, and the wallet pays its rent. Everything
+// else nets to nothing — wrapped SOL is opened and closed inside the same
+// transaction, intermediate hops use Jupiter's shared accounts, and the input
+// account already exists because the wallet is spending from it.
+//
+// One RPC call answers it: the mint (whose owner says which token program the
+// account will live under) and both possible associated addresses. Cached per
+// wallet and mint so a page re-quoting on every keystroke asks once — an
+// account that exists rarely stops existing, one that does not may appear the
+// moment the first swap lands, so the miss is kept for less time.
+const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+const ATA_RENT_LAMPORTS = 2039280;        // 165 bytes, classic SPL token account
+const ATA_2022_RENT_LAMPORTS = 2074080;   // 170 bytes, Token-2022 with ImmutableOwner — more if the mint adds extensions
+const RENT_HIT_TTL_S = 600;
+const RENT_MISS_TTL_S = 30;
+
+async function associatedTokenAccount(owner, mint, tokenProgram) {
+  return programAddress([b58ToBytes(owner), b58ToBytes(tokenProgram), b58ToBytes(mint)], ATA_PROGRAM_ID);
+}
+
+function rentAnswer(fields) {
+  return Object.assign({
+    checked: false, needsNewTokenAccount: null, newTokenAccounts: null,
+    rentLamports: null, rentSol: null, tokenProgram: null, account: null, note: null
+  }, fields);
+}
+
+/// Will swapping into `mint` make `owner` pay for a new token account? Never
+/// throws and never fails a quote: an answer it cannot get is `checked: false`.
+async function outputAccountRent(env, owner, mint) {
+  if (!isWallet(owner)) return rentAnswer({ note: 'pass wallet to check whether a new token account is needed' });
+  if (!isWallet(mint)) return rentAnswer({ note: 'could not read that token' });
+  if (mint === SOL_MINT) {
+    return rentAnswer({
+      checked: true, needsNewTokenAccount: false, newTokenAccounts: 0, rentLamports: 0, rentSol: 0,
+      note: 'SOL arrives as native SOL; any wrapped-SOL account is opened and closed in the same transaction'
+    });
+  }
+  if (!env.HELIUS_API_KEY) return rentAnswer({ note: 'could not check right now' });
+  const cache = caches.default;
+  const key = new Request('https://swap-rent.cache/' + owner + '/' + mint);
+  try {
+    const hit = await cache.match(key);
+    if (hit) return await hit.json();
+    const classic = await associatedTokenAccount(owner, mint, TOKEN_PROGRAM_ID);
+    const t22 = await associatedTokenAccount(owner, mint, TOKEN_2022_PROGRAM_ID);
+    const got = await rpcCall(env, 'getMultipleAccounts',
+      [[mint, classic, t22], { encoding: 'base64', dataSlice: { offset: 0, length: 0 } }]);
+    const v = (got && got.value) || [];
+    const mintAcc = v[0];
+    const program = mintAcc && mintAcc.owner;
+    if (program !== TOKEN_PROGRAM_ID && program !== TOKEN_2022_PROGRAM_ID) {
+      return rentAnswer({ note: 'could not read that token' });      // not cached
+    }
+    const is2022 = program === TOKEN_2022_PROGRAM_ID;
+    const account = is2022 ? t22 : classic;
+    const exists = !!(is2022 ? v[2] : v[1]);
+    const lamports = exists ? 0 : (is2022 ? ATA_2022_RENT_LAMPORTS : ATA_RENT_LAMPORTS);
+    const answer = rentAnswer({
+      checked: true, needsNewTokenAccount: !exists, newTokenAccounts: exists ? 0 : 1,
+      rentLamports: lamports, rentSol: lamports / 1e9, tokenProgram: program, account: account,
+      note: exists ? null : (is2022
+        ? 'a new Token-2022 account is created for you; rent shown is the minimum and can be higher if the token uses extensions'
+        : 'a new token account is created for you; the rent comes back if you close it once empty')
+    });
+    await cache.put(key, new Response(JSON.stringify(answer), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=' + (exists ? RENT_HIT_TTL_S : RENT_MISS_TTL_S) }
+    }));
+    return answer;
+  } catch (e) {
+    return rentAnswer({ note: 'could not check right now' });
+  }
 }
 
 // Dollar stablecoins, for choosing a tight slippage when both sides hold their peg.
@@ -5202,7 +5341,7 @@ export default {
         // base58, and the length a real signature is — enough to keep nonsense
         // out of the table without pretending this is a check on authenticity.
         if (!/^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature)) {
-          return json(request, env, { error: 'that is not a signature' }, 400);
+          return swapError(request, env, 400, 'BAD_SIGNATURE', 'that is not a signature');
         }
         const already = await env.DB.prepare('SELECT signature FROM swaps WHERE signature = ?')
           .bind(signature).first();
@@ -5216,12 +5355,15 @@ export default {
       if (path === '/api/swap/record' && request.method === 'POST') {
         const body = await request.json().catch(function () { return {}; });
         const signature = String(body.signature || '').trim();
-        if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(signature)) return json(request, env, { error: 'which swap?' }, 400);
+        if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(signature)) return swapError(request, env, 400, 'BAD_SIGNATURE', 'which swap?');
         const seen = await env.DB.prepare('SELECT signature FROM swaps WHERE signature = ?').bind(signature).first();
         if (seen) return json(request, env, { ok: true, already: true });
-        if (!env.HELIUS_API_KEY) return json(request, env, { error: 'unavailable' }, 503);
+        if (!env.HELIUS_API_KEY) return swapError(request, env, 503, 'UNAVAILABLE', 'unavailable');
         const r = await recordSwap(env, signature);
-        if (!r.ok) return json(request, env, { error: r.error }, /not found yet/.test(r.error) ? 404 : 400);
+        if (!r.ok) {
+          const notYet = /not found yet/.test(r.error);
+          return swapError(request, env, notYet ? 404 : 400, swapErrorCode(r.error, notYet ? 'NOT_FOUND' : 'NOT_A_SWAP'), r.error);
+        }
         return json(request, env, { ok: true, swap: r.swap });
       }
 
@@ -5635,12 +5777,17 @@ export default {
         const slippageParam = url.searchParams.get('slippage');
         const who = url.searchParams.get('wallet');
         if (!isWallet(inputMint) || !isWallet(outputMint)) {
-          return json(request, env, { error: 'pick two tokens' }, 400);
+          return swapError(request, env, 400, 'BAD_MINT', 'pick two tokens');
         }
-        if (inputMint === outputMint) return json(request, env, { error: 'those are the same token' }, 400);
+        if (inputMint === outputMint) return swapError(request, env, 400, 'SAME_MINT', 'those are the same token');
         if (!/^[0-9]+$/.test(String(amount)) || Number(amount) <= 0) {
-          return json(request, env, { error: 'enter an amount' }, 400);
+          return swapError(request, env, 400, 'BAD_AMOUNT', 'enter an amount');
         }
+        const route = swapRouteOptions(url.searchParams);
+        if (route.error) return swapError(request, env, 400, 'BAD_OPTION', route.error);
+        // Started now so the account lookup runs alongside everything below
+        // rather than after it. It cannot throw, so leaving early is harmless.
+        const rentCheck = outputAccountRent(env, who, outputMint);
 
         // Slippage, the fee account and the holder check ask three different
         // services nothing to do with each other. Waiting for each in turn added
@@ -5658,6 +5805,7 @@ export default {
           amount: String(amount), slippageBps: String(slippageBps)
         });
         if (fee) q.set('platformFeeBps', String(feeBps));
+        for (const name in route.options) q.set(name, String(route.options[name]));
 
         const res = await jupFetch(env, '/swap/v1/quote?' + q.toString());
         if (!res.ok) {
@@ -5669,16 +5817,16 @@ export default {
           // Still rate limited after the retries. That is not the same thing as
           // there being no way to make this swap, and saying so sends people
           // off to find another site for a trade that would work in a second.
+          // The code tells a refusal (Jupiter found no route: a 4xx) apart from
+          // Jupiter itself failing (a 5xx), which the sentence never did.
           const busy = res.status === 429;
-          return json(request, env, {
-            error: busy
-              ? 'too many quotes at once — trying again in a moment'
-              : 'no route for that pair right now',
-            retry: busy
-          }, busy ? 429 : 502);
+          return swapError(request, env, busy ? 429 : 502,
+            busy ? 'UPSTREAM_BUSY' : res.status >= 500 ? 'UPSTREAM_ERROR' : 'NO_ROUTE',
+            busy ? 'too many quotes at once — trying again in a moment' : 'no route for that pair right now',
+            { retry: busy });
         }
         const quote = await res.json();
-        if (quote.error) return json(request, env, { error: quote.error }, 400);
+        if (quote.error) return swapError(request, env, 400, 'NO_ROUTE', String(quote.error));
         const feeLamports = fee ? 0 : await solFeeLamports(env, quote, swapFeeBpsFor(holder));
         const charged = fee || feeLamports > 0;
         // feeMint says which token the fee is really taken in: the quote always
@@ -5692,7 +5840,9 @@ export default {
           tier: holder,
           feeMint: fee ? fee.mint : feeLamports ? SOL_MINT : null,
           slippageBps: slippageBps,
-          autoSlippage: auto
+          autoSlippage: auto,
+          routeOptions: route.options,
+          rent: await rentCheck
         });
       }
 
@@ -5700,9 +5850,10 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const quote = body.quote;
         const user = body.user;
-        if (!quote || !quote.inputMint || !isWallet(user)) {
-          return json(request, env, { error: 'missing quote or wallet' }, 400);
+        if (!quote || typeof quote !== 'object' || !quote.inputMint) {
+          return swapError(request, env, 400, 'BAD_QUOTE', 'missing quote or wallet');
         }
+        if (!isWallet(user)) return swapError(request, env, 400, 'BAD_WALLET', 'missing quote or wallet');
         // Rebuild the fee account here rather than trusting the client with it.
         const fee = await swapFeeFor(env, quote.inputMint, quote.outputMint);
 
@@ -5714,7 +5865,7 @@ export default {
         if (fee) {
           const quoted = quote.platformFee ? Number(quote.platformFee.feeBps) : 0;
           if (quoted !== entitled) {
-            return json(request, env, { error: 'that price is out of date — getting a fresh one', requote: true }, 409);
+            return swapError(request, env, 409, 'QUOTE_EXPIRED', 'that price is out of date — getting a fresh one', { requote: true });
           }
         }
         const feeLamports = fee ? 0 : await solFeeLamports(env, quote, entitled);
@@ -5728,6 +5879,8 @@ export default {
           prioritizationFeeLamports: swapPriority(body.speed)
         };
         if (fee) payload.feeAccount = fee.account;
+        // Usually a cache hit: the quote for this wallet and token just asked.
+        const rentCheck = outputAccountRent(env, user, quote.outputMint);
 
         const res = await jupFetch(env, '/swap/v1/swap', {
           method: 'POST',
@@ -5741,17 +5894,17 @@ export default {
           // again, and this one happens with a quote already on screen and
           // somebody's finger on the button.
           const busy = res.status === 429;
-          return json(request, env, {
-            error: busy ? 'too many requests at once — try that again in a moment'
-                        : (out && out.error) || 'could not build that swap',
-            retry: busy
-          }, busy ? 429 : 502);
+          return swapError(request, env, busy ? 429 : 502, busy ? 'UPSTREAM_BUSY' : 'UPSTREAM_ERROR',
+            busy ? 'too many requests at once — try that again in a moment'
+                 : String((out && out.error) || 'could not build that swap'),
+            { retry: busy });
         }
         return json(request, env, {
           swapTransaction: out.swapTransaction,
           lastValidBlockHeight: out.lastValidBlockHeight,
           prioritizationFeeLamports: out.prioritizationFeeLamports,
-          feeTransfer: feeLamports ? { to: env.TREASURY_WALLET, lamports: feeLamports } : null
+          feeTransfer: feeLamports ? { to: env.TREASURY_WALLET, lamports: feeLamports } : null,
+          rent: await rentCheck
         });
       }
 
@@ -6740,7 +6893,11 @@ export default {
 
       // ── everything below needs a session ──
       const wallet = await getSession(request, env);
-      if (!wallet) return json(request, env, { error: 'not signed in' }, 401);
+      if (!wallet) {
+        return isSwapApiPath(request)
+          ? swapError(request, env, 401, 'NOT_SIGNED_IN', 'not signed in')
+          : json(request, env, { error: 'not signed in' }, 401);
+      }
 
       if (await rateLimited(request, env, path, wallet)) return tooMany(request, env);
 
@@ -6967,10 +7124,12 @@ export default {
       if (path === '/api/swap/award' && request.method === 'POST') {
         const body = await request.json().catch(function () { return {}; });
         const signature = String(body.signature || '').trim();
-        if (!signature) return json(request, env, { error: 'which swap?' }, 400);
+        if (!signature) return swapError(request, env, 400, 'BAD_SIGNATURE', 'which swap?');
 
         const a = await awardSwapPointsFor(env, signature, wallet);
-        if (!a.ok) return json(request, env, { error: a.error }, 400);
+        // always 400 here, "not found yet" included: the page retries on the
+        // sentence, and changing the status would change what it does
+        if (!a.ok) return swapError(request, env, 400, swapErrorCode(a.error, 'AWARD_FAILED'), a.error);
         if (a.tooSmall) {
           return json(request, env, {
             awarded: 0,
@@ -7273,7 +7432,9 @@ export default {
       // The detail is logged above, not returned. It used to be sent to the
       // caller, which handed an attacker table names, upstream providers and
       // which code path failed — the reconnaissance step before a real attempt.
-      return json(request, env, { error: 'server error' }, 500);
+      return isSwapApiPath(request)
+        ? swapError(request, env, 500, 'SERVER_ERROR', 'server error')
+        : json(request, env, { error: 'server error' }, 500);
     }
   }
 };

@@ -64,6 +64,9 @@ chain.jup = (u, init) => {
 // By default no token has a fee account beyond the ones written into the worker,
 // which is what the chain says for every mint nobody has created one for.
 chain.rpc.getAccountInfo = () => ({ value: null });
+// Every mint is a classic SPL token and no wallet holds an account for it yet,
+// which is what the rent check on a wallet's quote asks.
+chain.rpc.getMultipleAccounts = ([addrs]) => ({ value: addrs.map((a, i) => (i === 0 ? { owner: TOKEN, lamports: 1461600 } : null)) });
 
 const quote = async (env, inMint, outMint) => {
   const r = await call(env, 'GET', `/api/swap/quote?in=${inMint}&out=${outMint}&amount=1000000&slippage=50`);
@@ -1036,6 +1039,268 @@ section('before the collectible opens');
   eq('nobody counts as a holder', body.holder, false);
   eq('and claiming is refused', (await call(env, 'POST', '/api/collectible/claim',
     { body: { wallet: wallet(130), asset: wallet(131), signature: 'H'.repeat(88) } })).status, 503);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The swap API for bots: route options, the rent flag, and error codes.
+
+section('route options pass through to Jupiter, and only when asked');
+{
+  const env = freshEnv();
+  const base = `/api/swap/quote?in=${SOL}&out=${BONK}&amount=1000000&slippage=50`;
+  const lastQuote = () => new URL(chain.jupCalls.filter((c) => c.url.includes('/swap/v1/quote')).pop().url).searchParams;
+
+  const plain = await call(env, 'GET', base);
+  eq('a quote with no options still works', plain.status, 200);
+  const sentPlain = lastQuote();
+  ok('and sends none of them, so the page asks Jupiter exactly what it did before',
+    !sentPlain.has('onlyDirectRoutes') && !sentPlain.has('restrictIntermediateTokens') && !sentPlain.has('maxAccounts'),
+    sentPlain.toString());
+  eq('the page sees the same parameters it always sent', [...sentPlain.keys()].sort().join(','),
+    'amount,inputMint,outputMint,platformFeeBps,slippageBps'.split(',').filter((k) => sentPlain.has(k)).sort().join(','));
+  eq('and no options are reported as applied', JSON.stringify(plain.body.routeOptions), '{}');
+
+  const all = await call(env, 'GET', base + '&onlyDirectRoutes=true&restrictIntermediateTokens=false&maxAccounts=40');
+  eq('a quote with every option works', all.status, 200);
+  const sentAll = lastQuote();
+  eq('onlyDirectRoutes goes through', sentAll.get('onlyDirectRoutes'), 'true');
+  eq('restrictIntermediateTokens goes through', sentAll.get('restrictIntermediateTokens'), 'false');
+  eq('maxAccounts goes through', sentAll.get('maxAccounts'), '40');
+  eq('and the answer says which were applied', JSON.stringify(all.body.routeOptions),
+    '{"onlyDirectRoutes":true,"restrictIntermediateTokens":false,"maxAccounts":40}');
+
+  const digits = await call(env, 'GET', base + '&onlyDirectRoutes=1&restrictIntermediateTokens=0');
+  eq('1 and 0 are read as true and false', JSON.stringify(digits.body.routeOptions),
+    '{"onlyDirectRoutes":true,"restrictIntermediateTokens":false}');
+  eq('the edges of maxAccounts are allowed: 16', (await call(env, 'GET', base + '&maxAccounts=16')).status, 200);
+  eq('and 64', (await call(env, 'GET', base + '&maxAccounts=64')).status, 200);
+
+  const before = chain.jupCalls.length;
+  for (const [q, why] of [
+    ['onlyDirectRoutes=yes', 'a word that is not true or false'],
+    ['onlyDirectRoutes=', 'an empty value'],
+    ['restrictIntermediateTokens=TRUE', 'shouting'],
+    ['maxAccounts=abc', 'a maxAccounts that is not a number'],
+    ['maxAccounts=15', 'a maxAccounts below 16'],
+    ['maxAccounts=65', 'a maxAccounts above 64'],
+    ['maxAccounts=40.5', 'a fractional maxAccounts'],
+    ['maxAccounts=-20', 'a negative maxAccounts'],
+    ['maxAccounts=', 'an empty maxAccounts']
+  ]) {
+    const r = await call(env, 'GET', base + '&' + q);
+    eq('refused: ' + why, r.status + ' ' + r.body.code, '400 BAD_OPTION');
+    ok('  and says which option', /onlyDirectRoutes|restrictIntermediateTokens|maxAccounts/.test(r.body.error || ''), r.body.error);
+  }
+  eq('no refused option reached Jupiter', chain.jupCalls.length, before);
+
+  // They are quote options: the route is fixed in the quote by the time it is
+  // built, so the build call to Jupiter is unchanged.
+  const sent = await build(env, all.body.quote);
+  ok('building from such a quote sends Jupiter the same fields as always',
+    !('onlyDirectRoutes' in sent) && !('maxAccounts' in sent) && !('restrictIntermediateTokens' in sent),
+    JSON.stringify(Object.keys(sent)));
+  eq('and the route Jupiter chose travels inside the quote', sent.quoteResponse.outputMint, BONK);
+}
+
+section('the rent a swap costs when the wallet has never held the token');
+{
+  // Checked against @solana/spl-token's getAssociatedTokenAddressSync.
+  const OWNER = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+  const BONK_ATA = '5hpfC9VBxVcoW9opCnM2PqR6YWRLBzrBpabJTZnwwNiw';
+  const PYUSD_ATA_2022 = '897krAvWH3RbymaCYE3o9emopUwocieHuKTUk9nySpq6';
+  const WIF_ATA = '7XX64f8UKE1nxNCSwncCUj3c2FJYdXHmDV5xd5DRdFky';
+  const asked = [];
+  const owned = new Set();
+  const programs = { [PYUSD]: TOKEN22 };
+  const realRpc = chain.rpc.getMultipleAccounts;
+  chain.rpc.getMultipleAccounts = ([addrs, opts]) => {
+    asked.push({ addrs, opts });
+    return { value: addrs.map((a, i) => i === 0
+      ? (programs[a] === null ? null : { owner: programs[a] || TOKEN, lamports: 1461600 })
+      : owned.has(a) ? { owner: programs[addrs[0]] || TOKEN, lamports: 2039280 } : null) };
+  };
+  const q = (out, who, env) => call(env, 'GET', `/api/swap/quote?in=${USDC}&out=${out}&amount=1000000&slippage=50` + (who ? '&wallet=' + who : ''));
+
+  {
+    const env = freshEnv();
+    const r = await q(BONK, null, env);
+    eq('with no wallet, the quote is still a quote', r.status, 200);
+    eq('and the rent is marked unchecked', r.body.rent.checked, false);
+    eq('needsNewTokenAccount is unknown, not false', r.body.rent.needsNewTokenAccount, null);
+    eq('and nothing was looked up', asked.length, 0);
+  }
+  {
+    const env = freshEnv();
+    const r = await q(BONK, OWNER, env);
+    eq('a wallet that has never held the token needs a new account', r.body.rent.needsNewTokenAccount, true);
+    eq('one of them', r.body.rent.newTokenAccounts, 1);
+    eq('at the classic token account rent', r.body.rent.rentLamports, 2039280);
+    eq('which is about 0.00204 SOL', r.body.rent.rentSol, 0.00203928);
+    eq('at the right address', r.body.rent.account, BONK_ATA);
+    eq('under the classic token program', r.body.rent.tokenProgram, TOKEN);
+    eq('in one lookup', asked.length, 1);
+    eq('of the mint and both possible accounts', asked[0].addrs.length, 3);
+    eq('asking for no account data at all', JSON.stringify(asked[0].opts.dataSlice), '{"offset":0,"length":0}');
+    eq('the fee and the quote are untouched by it', r.body.feeBps + ' ' + !!r.body.quote, '20 true');
+
+    const again = await q(BONK, OWNER, env);
+    eq('quoting the same token again is answered from the cache', asked.length, 1);
+    eq('with the same answer', again.body.rent.needsNewTokenAccount, true);
+
+    const built = await call(env, 'POST', '/api/swap/build', { body: { quote: again.body.quote, user: OWNER } });
+    eq('the build carries the same rent answer', built.body.rent && built.body.rent.rentLamports, 2039280);
+    eq('without another lookup', asked.length, 1);
+  }
+  {
+    const env = freshEnv();
+    owned.add(WIF_ATA);
+    const r = await q(WIF, OWNER, env);
+    eq('a wallet that already holds the token needs no new account', r.body.rent.needsNewTokenAccount, false);
+    eq('so none are created', r.body.rent.newTokenAccounts, 0);
+    eq('and costs no rent', r.body.rent.rentLamports, 0);
+    eq('and it was checked', r.body.rent.checked, true);
+  }
+  {
+    const env = freshEnv();
+    const r = await q(PYUSD, OWNER, env);
+    eq('a Token-2022 token is found under its own program', r.body.rent.tokenProgram, TOKEN22);
+    eq('at its own address', r.body.rent.account, PYUSD_ATA_2022);
+    eq('at the larger Token-2022 rent', r.body.rent.rentLamports, 2074080);
+    ok('and says extensions can cost more', /extension/.test(r.body.rent.note || ''), r.body.rent.note);
+  }
+  {
+    const env = freshEnv();
+    const n = asked.length;
+    const r = await call(env, 'GET', `/api/swap/quote?in=${USDC}&out=${SOL}&amount=1000000&slippage=50&wallet=${OWNER}`);
+    eq('receiving SOL needs no new account', r.body.rent.needsNewTokenAccount, false);
+    eq('costs no rent', r.body.rent.rentLamports, 0);
+    eq('and needs no lookup', asked.length, n);
+  }
+  {
+    const env = freshEnv();
+    programs[HYPE] = null;   // the chain has no such mint
+    const r = await q(HYPE, OWNER, env);
+    eq('a mint the chain does not know leaves the rent unchecked', r.body.rent.checked, false);
+    eq('and the quote still answers', r.status, 200);
+    delete programs[HYPE];
+  }
+  {
+    const env = freshEnv();
+    chain.rpc.getMultipleAccounts = () => { throw new Error('node down'); };
+    const r = await q(BONK, OWNER, env);
+    eq('when the lookup fails, the quote does not', r.status, 200);
+    eq('the rent is unchecked', r.body.rent.checked, false);
+    eq('and nothing claims it is free', r.body.rent.rentLamports, null);
+  }
+  {
+    const env = freshEnv({ HELIUS_API_KEY: undefined });
+    const r = await q(BONK, OWNER, env);
+    eq('with no RPC configured, the quote still answers', r.status, 200);
+    eq('and the rent is unchecked', r.body.rent.checked, false);
+  }
+  {
+    const env = freshEnv();
+    const r = await q(BONK, 'not-a-wallet', env);
+    eq('a malformed wallet on a quote is not an error, as before', r.status, 200);
+    eq('it just leaves the rent unchecked', r.body.rent.checked, false);
+  }
+  chain.rpc.getMultipleAccounts = realRpc;
+}
+
+section('every swap error carries a stable code beside the sentence');
+{
+  const env = freshEnv();
+  const Q = (qs) => call(env, 'GET', '/api/swap/quote?' + qs);
+  const r1 = await Q(`in=nope&out=${BONK}&amount=1`);
+  eq('a bad mint', r1.status + ' ' + r1.body.code + ' ' + r1.body.error, '400 BAD_MINT pick two tokens');
+  const r2 = await Q(`in=${BONK}&out=${BONK}&amount=1`);
+  eq('the same token twice', r2.status + ' ' + r2.body.code + ' ' + r2.body.error, '400 SAME_MINT those are the same token');
+  for (const a of ['', '0', '-5', '1.5', 'abc']) {
+    const r = await Q(`in=${SOL}&out=${BONK}&amount=${a}`);
+    eq('a bad amount: ' + JSON.stringify(a), r.status + ' ' + r.body.code + ' ' + r.body.error, '400 BAD_AMOUNT enter an amount');
+  }
+
+  const realJup = chain.jup;
+  const answer = (status, body) => (u, init) => u.pathname === '/swap/v1/quote'
+    ? new Response(JSON.stringify(body), { status }) : realJup(u, init);
+  const ok200 = `in=${SOL}&out=${BONK}&amount=1000000&slippage=50`;
+
+  chain.jup = answer(429, { code: 429 });
+  const busy = await Q(ok200);
+  eq('Jupiter throttling us', busy.status + ' ' + busy.body.code, '429 UPSTREAM_BUSY');
+  eq('  keeps its sentence and retry flag', busy.body.error + ' ' + busy.body.retry, 'too many quotes at once — trying again in a moment true');
+  chain.jup = answer(400, { error: 'Could not find any route' });
+  const none = await Q(ok200);
+  eq('Jupiter finding no route', none.status + ' ' + none.body.code, '502 NO_ROUTE');
+  eq('  keeps its sentence and retry flag', none.body.error + ' ' + none.body.retry, 'no route for that pair right now false');
+  chain.jup = answer(500, { error: 'boom' });
+  const down = await Q(ok200);
+  eq('Jupiter itself failing', down.status + ' ' + down.body.code, '502 UPSTREAM_ERROR');
+  eq('  says the same thing to the page as before', down.body.error, 'no route for that pair right now');
+  chain.jup = answer(200, { error: 'No routes found' });
+  const inBody = await Q(ok200);
+  eq('a quote whose body is an error', inBody.status + ' ' + inBody.body.code + ' ' + inBody.body.error, '400 NO_ROUTE No routes found');
+  chain.jup = realJup;
+
+  // build
+  const B = (body) => call(env, 'POST', '/api/swap/build', { body });
+  const good = (await call(env, 'GET', `/api/swap/quote?in=${USDC}&out=${SOL}&amount=1000000&slippage=50`)).body.quote;
+  const b1 = await B({ user: wallet(1) });
+  eq('a build with no quote', b1.status + ' ' + b1.body.code + ' ' + b1.body.error, '400 BAD_QUOTE missing quote or wallet');
+  const b2 = await B({ quote: good, user: 'nope' });
+  eq('a build with a bad wallet', b2.status + ' ' + b2.body.code + ' ' + b2.body.error, '400 BAD_WALLET missing quote or wallet');
+  const stale = Object.assign({}, good, { platformFee: { amount: '1', feeBps: 5 } });
+  const b3 = await B({ quote: stale, user: wallet(1) });
+  eq('a quote at the wrong fee', b3.status + ' ' + b3.body.code, '409 QUOTE_EXPIRED');
+  eq('  still asks the page to requote', b3.body.requote, true);
+  const answerSwap = (status, body) => (u, init) => u.pathname === '/swap/v1/swap'
+    ? new Response(JSON.stringify(body), { status }) : realJup(u, init);
+  chain.jup = answerSwap(429, {});
+  const b4 = await B({ quote: good, user: wallet(1) });
+  eq('Jupiter too busy to build', b4.status + ' ' + b4.body.code + ' ' + b4.body.retry, '429 UPSTREAM_BUSY true');
+  chain.jup = answerSwap(400, { error: 'Invalid quote' });
+  const b5 = await B({ quote: good, user: wallet(1) });
+  eq('Jupiter refusing to build', b5.status + ' ' + b5.body.code + ' ' + b5.body.error, '502 UPSTREAM_ERROR Invalid quote');
+  chain.jup = realJup;
+
+  // pending, record, award
+  const p1 = await call(env, 'POST', '/api/swap/pending', { body: { signature: 'short' } });
+  eq('pending with a bad signature', p1.status + ' ' + p1.body.code + ' ' + p1.body.error, '400 BAD_SIGNATURE that is not a signature');
+  const rec = (signature, e = env) => call(e, 'POST', '/api/swap/record', { body: { signature } });
+  const r3 = await rec('0OIl');
+  eq('record with a bad signature', r3.status + ' ' + r3.body.code + ' ' + r3.body.error, '400 BAD_SIGNATURE which swap?');
+  const r4 = await rec('N'.repeat(88));
+  eq('record of a swap not on chain yet', r4.status + ' ' + r4.body.code + ' ' + r4.body.error, '404 NOT_FOUND swap not found yet');
+  const failed = swapTx('F'.repeat(88), wallet(40), { solSpent: 1, get: { mint: USDC, amount: 150 }, failed: true });
+  const r5 = await rec(failed);
+  eq('record of a failed swap', r5.status + ' ' + r5.body.code + ' ' + r5.body.error, '400 SWAP_FAILED that swap failed');
+  const r6 = await rec('N'.repeat(88), freshEnv({ HELIUS_API_KEY: undefined }));
+  eq('record with no RPC configured', r6.status + ' ' + r6.body.code, '503 UNAVAILABLE');
+
+  const a0 = await call(env, 'POST', '/api/swap/award', { body: { signature: 'N'.repeat(88) } });
+  eq('award without signing in', a0.status + ' ' + a0.body.code + ' ' + a0.body.error, '401 NOT_SIGNED_IN not signed in');
+  const token = signIn(env, wallet(41));
+  const award = (signature) => call(env, 'POST', '/api/swap/award', { token, body: { signature } });
+  const a1 = await award('');
+  eq('award with no signature', a1.status + ' ' + a1.body.code, '400 BAD_SIGNATURE');
+  const a2 = await award('M'.repeat(88));
+  eq('award of a swap not on chain yet keeps its 400, which the page retries on', a2.status + ' ' + a2.body.code + ' ' + a2.body.error,
+    '400 NOT_FOUND swap not found yet');
+  const theirs = swapTx('T'.repeat(88), wallet(42), { solSpent: 1, get: { mint: USDC, amount: 150 } });
+  const a3 = await award(theirs);
+  eq('award of someone else’s swap', a3.status + ' ' + a3.body.code, '400 WRONG_WALLET');
+
+  // rate limits: the swap routes say so in a code, the rest of the site is unchanged
+  let last;
+  for (let i = 0; i < 21; i++) last = await call(env, 'POST', '/api/swap/pending', { ip: '10.9.9.9', body: { signature: 'short' } });
+  eq('the 21st pending call in a minute is limited', last.status + ' ' + last.body.code, '429 RATE_LIMITED');
+  eq('  with the same sentence as before', last.body.error, 'Slow down a moment and try again.');
+  eq('  and the same Retry-After', last.headers.get('Retry-After'), '60');
+  for (let i = 0; i < 11; i++) last = await call(env, 'POST', '/api/nonce', { ip: '10.9.9.8', body: { wallet: wallet(43) } });
+  eq('a limited sign-in is still limited', last.status, 429);
+  eq('  but carries no new field, outside the swap routes', last.body.code, undefined);
+  const gate = await call(env, 'POST', '/api/flip', { body: {} });
+  eq('and the session gate elsewhere is unchanged', gate.status + ' ' + gate.body.code, '401 undefined');
 }
 
 finish();
