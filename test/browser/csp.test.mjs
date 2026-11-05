@@ -50,8 +50,19 @@ for (const p of ['/', '/fees', '/fees.html', '/launch', '/c/some-creator', '/gam
 }
 ok('the game pages may not run inline script beyond the one hashed leaderboard script',
   !/'unsafe-inline'/.test(csp('/games/moon-rangers/').match(/script-src[^;]*/)[0]));
-ok('scripts from jsdelivr are pinned to the two files the site uses, not the whole CDN',
-  !/cdn\.jsdelivr\.net(\s|;|$)/.test(csp('/')) && /web3\.js@1\.98\.0\/lib\/index\.iife\.min\.js/.test(csp('/')));
+// Both files the site used to pull from jsdelivr are vendored now, so the
+// policy names no third-party script host at all. A CDN the page cannot reach
+// is a page that does not finish loading, which is what this closes.
+ok('no third-party script host is allowed at all — every script is same-origin',
+  !/cdn\.jsdelivr\.net/.test(csp('/')) && /script-src 'self' 'unsafe-inline';/.test(csp('/')), csp('/'));
+// A page that also carries a <meta> CSP gets the INTERSECTION of both policies,
+// so a stricter meta silently overrode the header: the one removed here was
+// missing 'self' from font-src and blob: from img-src.
+{
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  ok('index.html does not set a second CSP of its own',
+    !/<meta[^>]+http-equiv="Content-Security-Policy"/i.test(html));
+}
 ok('X-Frame-Options is still DENY everywhere', vercelHeaders(VERCEL, '/games/moon-rangers/')['X-Frame-Options'] === 'DENY');
 ok('the asset cache rule still applies to the game files',
   /immutable/.test(vercelHeaders(VERCEL, '/games/moon-rangers/assets/a.js')['Cache-Control'] || ''));
@@ -188,11 +199,18 @@ section('and the policy does block what it should');
     return new Promise((r) => { s.onerror = () => r('blocked'); s.onload = () => r('allowed'); document.head.appendChild(s); });
   });
   ok('and so is any other package from jsdelivr', other === 'blocked');
-  const qr = await page.evaluate(async () => {
+  const qrCdn = await page.evaluate(async () => {
     const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    return new Promise((r) => { s.onerror = () => r('blocked'); s.onload = () => r('allowed'); document.head.appendChild(s); });
+  });
+  ok('the QR library is no longer reachable from the CDN either', qrCdn === 'blocked', qrCdn);
+  const qr = await page.evaluate(async () => {
+    const s = document.createElement('script');
+    s.src = '/vendor/qrcode-generator-1.4.4.js';
+    s.integrity = 'sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k';
     return new Promise((r) => { s.onerror = () => r('blocked'); s.onload = () => r(typeof qrcode); document.head.appendChild(s); });
   });
-  ok('while the QR code library the Solana Pay step loads still loads', qr === 'function', qr);
+  ok('and loads from our own origin, hash intact', qr === 'function', qr);
   await page.close();
 }
 

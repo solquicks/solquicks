@@ -5287,10 +5287,12 @@ function loadQrLib() {
   if (window._qrLoading) return window._qrLoading;
   window._qrLoading = new Promise(function (resolve, reject) {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
-    // pinned: a QR that encodes a different address is a stolen payment
+    // Served from our own origin. It used to come from jsdelivr, which meant a
+    // payment QR could not be drawn at all on a network that cannot reach the
+    // CDN. The hash is kept even same-origin: a QR that encodes a different
+    // address is a stolen payment, so a corrupted deploy must fail loudly.
+    s.src = '/vendor/qrcode-generator-1.4.4.js';
     s.integrity = 'sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k';
-    s.crossOrigin = 'anonymous';
     s.onload = resolve;
     s.onerror = reject;
     document.head.appendChild(s);
