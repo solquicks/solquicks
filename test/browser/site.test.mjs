@@ -794,8 +794,7 @@ try {
   await page.goto(SITE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.solanaWeb3 !== 'undefined', null, { timeout: 20000 });
   eq('the tab title', await page.title(), '@solquicks | The Most Famous Fox');
-  eq('Calendly links to the booking page',
-    await page.locator('a.link-card', { hasText: 'Calendly' }).getAttribute('href'), 'https://calendly.com/solquicks/30min');
+  ok('Calendly is gone', !/calendly/i.test(await page.content()));
   ok('WhatsApp is gone', !/whatsapp/i.test(await page.content()));
 
   section('every tab opens');
