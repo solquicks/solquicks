@@ -1,6 +1,0 @@
-{
-  "private": true,
-  "dependencies": {
-    "@d3-inc/d3-dna-vercel-middleware": "0.11.1"
-  }
-}
