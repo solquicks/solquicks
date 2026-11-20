@@ -349,3 +349,63 @@ jobs:
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # ── production ──────────────────────────────────────────────────────────────
+  # The job above publishes to GitHub Pages. Production is Vercel, and Vercel's
+  # own git integration deploys on every push to main, which means everything
+  # above it is not a gate but a parallel observer: the site goes live whether
+  # or not these checks passed. Two pushes on 2026-11-05 went out reporting
+  # "Bypassed rule violations: 4 of 4 required status checks are expected",
+  # because admin bypass applies to the branch rule as well. See
+  # docs/audits/infra-2026-11-20.md, INFRA-11.
+  #
+  # This job makes CI the deploy path instead, so `needs:` below is the gate.
+  #
+  # It is deliberately inert until VERCEL_TOKEN exists: adding this file changes
+  # nothing by itself, and Vercel's git deploys keep working meanwhile. The
+  # cutover has an order, and reversing it takes the site down:
+  #   1. create a Vercel token and add it as the VERCEL_TOKEN repo secret
+  #   2. push, and check this job actually deploys
+  #   3. only then turn OFF git as a production deployment source in Vercel
+  # Until step 3 both paths publish, and the git one is still ungated.
+  deploy-vercel:
+    name: Deploy site (Vercel production)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [secrets, program, worker, site]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: production
+      url: https://solquicks.com
+    # A deploy that has started should finish, even if a newer push arrives.
+    concurrency:
+      group: vercel-production
+      cancel-in-progress: false
+    env:
+      # Not secrets — identifiers, useless without the token, and this repo is
+      # public. Inline so that setting up the cutover needs one secret, not three.
+      VERCEL_ORG_ID: team_iTf1VabTvsyJD0K9U2PltiFf
+      VERCEL_PROJECT_ID: prj_u7LBPEz6wW77Gz4kiVXPdSyN4rsc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Deploy to Vercel production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "VERCEL_TOKEN is not set, so this job has nothing to do."
+            echo "Vercel's git integration is still deploying this push, and it is"
+            echo "still ungated. See the comment above this job for the cutover."
+            exit 0
+          fi
+          # --force because step 3 of the cutover sets an ignore step that would
+          # otherwise skip this build too; --yes so it never waits for a prompt.
+          npx --yes vercel@48.2.0 deploy \
+            --prod --yes --force \
+            --token="$VERCEL_TOKEN"
