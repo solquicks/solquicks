@@ -3,6 +3,12 @@
   "framework": null,
   "buildCommand": "",
   "outputDirectory": ".",
+  "proxy": {
+    "entrypoint": "middleware.js",
+    "matcher": [
+      "/((?!_next/static|_next/image|favicon.ico|img/|icons/|css/|js/|vendor/|games/moon-rangers/assets/).*)"
+    ]
+  },
   "headers": [
     {
       "source": "/(.*)",
